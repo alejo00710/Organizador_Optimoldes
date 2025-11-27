@@ -19,10 +19,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function setupEventListeners() {
-    document.getElementById('loginBtn')?.addEventListener('click', login);
+    document.getElementById('loginBtn')?. addEventListener('click', login);
     document.getElementById('logoutBtn')?.addEventListener('click', logout);
     
-    document.querySelectorAll('[data-tab]').forEach(tab => {
+    document.querySelectorAll('[data-tab]'). forEach(tab => {
         tab.addEventListener('click', () => showTab(tab.dataset.tab));
     });
     
@@ -40,7 +40,7 @@ async function checkHealth() {
         const data = await response. json();
         
         if (data.status === 'ok') {
-            document.getElementById('status'). classList.remove('disconnected');
+            document.getElementById('status').classList.remove('disconnected');
             document.getElementById('status').textContent = '● Conectado';
         }
     } catch (error) {
@@ -52,7 +52,7 @@ async function checkHealth() {
 function setDefaultDates() {
     const today = new Date();
     const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setDate(tomorrow. getDate() + 1);
     
     const nextMonth = new Date(today);
     nextMonth.setMonth(nextMonth.getMonth() + 1);
@@ -107,7 +107,7 @@ async function loadOperators() {
 
 async function login() {
     const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
+    const password = document. getElementById('password').value;
     const operatorId = document.getElementById('operatorId').value;
     
     const body = { username, password };
@@ -157,21 +157,21 @@ function logout() {
     
     document.getElementById('userInfo').classList.remove('active');
     document.getElementById('loginPanel').querySelector('h2').style.display = 'block';
-    document.querySelectorAll('#loginPanel . form-group').forEach(el => el.style.display = 'block');
+    document.querySelectorAll('#loginPanel .form-group').forEach(el => el.style.display = 'block');
     document.getElementById('loginBtn').style.display = 'block';
     
     alert('Sesión cerrada');
 }
 
 function showUserInfo() {
-    document.getElementById('displayUsername').textContent = currentUser.username;
-    document.getElementById('displayRole').textContent = currentUser. role;
-    document.getElementById('displayOperator').textContent = currentUser. operatorName || 'N/A';
+    document.getElementById('displayUsername').textContent = currentUser. username;
+    document.getElementById('displayRole').textContent = currentUser.role;
+    document.getElementById('displayOperator').textContent = currentUser.operatorName || 'N/A';
     
-    document.getElementById('userInfo').classList. add('active');
-    document. getElementById('loginPanel').querySelector('h2').style.display = 'none';
-    document.querySelectorAll('#loginPanel .form-group').forEach(el => el. style.display = 'none');
-    document.getElementById('loginBtn').style.display = 'none';
+    document.getElementById('userInfo').classList.add('active');
+    document.getElementById('loginPanel').querySelector('h2').style. display = 'none';
+    document.querySelectorAll('#loginPanel .form-group').forEach(el => el.style.display = 'none');
+    document. getElementById('loginBtn').style.display = 'none';
     
     if (currentUser.operatorId) {
         document. getElementById('workOperatorId').value = currentUser. operatorId;
@@ -180,10 +180,10 @@ function showUserInfo() {
 
 function showTab(tabName) {
     document.querySelectorAll('[data-tab]').forEach(tab => tab.classList.remove('active'));
-    document.querySelectorAll('. tab-content').forEach(content => content.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
     
-    document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-    document.getElementById(`tab-${tabName}`).classList. add('active');
+    document.querySelector(`[data-tab="${tabName}"]`).classList. add('active');
+    document. getElementById(`tab-${tabName}`).classList.add('active');
 }
 
 async function loadMachines() {
@@ -213,9 +213,9 @@ async function createPlan() {
     const body = {
         moldId: parseInt(document.getElementById('planMoldId').value),
         partId: parseInt(document.getElementById('planPartId').value),
-        machineId: parseInt(document. getElementById('planMachineId'). value),
-        startDate: document.getElementById('planStartDate').value,
-        totalHours: parseFloat(document. getElementById('planTotalHours'). value)
+        machineId: parseInt(document.getElementById('planMachineId').value),
+        startDate: document. getElementById('planStartDate').value,
+        totalHours: parseFloat(document.getElementById('planTotalHours').value)
     };
     
     try {
@@ -229,23 +229,23 @@ async function createPlan() {
         });
         
         const data = await response.json();
-        displayResponse('planResponse', data, response.ok);
+        displayResponse('planResponse', data, response. ok);
     } catch (error) {
         displayResponse('planResponse', { error: error.message }, false);
     }
 }
 
 async function createWorkLog() {
-    if (! authToken) {
+    if (!authToken) {
         alert('Por favor inicia sesión primero');
         return;
     }
     
     const body = {
-        moldId: parseInt(document.getElementById('workMoldId'). value),
+        moldId: parseInt(document.getElementById('workMoldId').value),
         partId: parseInt(document.getElementById('workPartId').value),
         machineId: parseInt(document.getElementById('workMachineId').value),
-        operatorId: parseInt(document.getElementById('workOperatorId'). value),
+        operatorId: parseInt(document.getElementById('workOperatorId').value),
         hours_worked: parseFloat(document.getElementById('workHours').value),
         note: document.getElementById('workNote').value || null
     };
@@ -257,13 +257,13 @@ async function createWorkLog() {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${authToken}`
             },
-            body: JSON.stringify(body)
+            body: JSON. stringify(body)
         });
         
         const data = await response.json();
-        displayResponse('worklogResponse', data, response.ok);
+        displayResponse('worklogResponse', data, response. ok);
     } catch (error) {
-        displayResponse('worklogResponse', { error: error.message }, false);
+        displayResponse('worklogResponse', { error: error. message }, false);
     }
 }
 
@@ -274,14 +274,14 @@ async function loadCalendar() {
     }
     
     const from = document.getElementById('calendarFrom').value;
-    const to = document.getElementById('calendarTo'). value;
+    const to = document.getElementById('calendarTo').value;
     
     try {
-        const response = await fetch(`${API_URL}/calendar?from=${from}&to=${to}`, {
+        const response = await fetch(`${API_URL}/calendar? from=${from}&to=${to}`, {
             headers: { 'Authorization': `Bearer ${authToken}` }
         });
         
-        const data = await response.json();
+        const data = await response. json();
         displayResponse('calendarResponse', data, response.ok);
     } catch (error) {
         displayResponse('calendarResponse', { error: error.message }, false);
@@ -294,7 +294,7 @@ async function loadReport() {
         return;
     }
     
-    const from = document.getElementById('reportFrom'). value;
+    const from = document.getElementById('reportFrom').value;
     const to = document.getElementById('reportTo').value;
     const moldId = document.getElementById('reportMoldId').value;
     
@@ -319,8 +319,8 @@ async function loadDetailedReport() {
         return;
     }
     
-    const from = document.getElementById('reportFrom'). value;
-    const to = document.getElementById('reportTo').value;
+    const from = document.getElementById('reportFrom').value;
+    const to = document. getElementById('reportTo').value;
     
     let url = `${API_URL}/reports/detailed-deviations?from=${from}&to=${to}`;
     
