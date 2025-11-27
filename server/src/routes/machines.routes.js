@@ -6,23 +6,18 @@ const { ROLES } = require('../utils/constants');
 
 router.get('/', authenticateToken, machinesController.getMachines);
 router.get('/:id', authenticateToken, machinesController.getMachineById);
-router.post(
-  '/',
-  authenticateToken,
-  authorizeRoles(ROLES.ADMIN),
-  machinesController.createMachine
-);
+router.post('/', authenticateToken, authorizeRoles(ROLES.ADMIN), machinesController.createMachine);
 router.put(
-  '/:id',
-  authenticateToken,
-  authorizeRoles(ROLES.ADMIN),
-  machinesController.updateMachine
+    '/:id',
+    authenticateToken,
+    authorizeRoles(ROLES.ADMIN),
+    machinesController.updateMachine
 );
 router.delete(
-  '/:id',
-  authenticateToken,
-  authorizeRoles(ROLES. ADMIN),
-  machinesController. deleteMachine
+    '/:id',
+    authenticateToken,
+    authorizeRoles(ROLES.ADMIN),
+    machinesController.deleteMachine
 );
 
-module. exports = router;
+module.exports = router;

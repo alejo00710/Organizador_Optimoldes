@@ -5,17 +5,17 @@ const { query } = require('../config/database');
  * Obtiene todas las máquinas
  */
 const getMachines = async (req, res, next) => {
-  try {
-    const sql = `
+    try {
+        const sql = `
       SELECT * FROM machines 
       WHERE is_active = TRUE 
       ORDER BY name
     `;
-    const machines = await query(sql);
-    res.json(machines);
-  } catch (error) {
-    next(error);
-  }
+        const machines = await query(sql);
+        res.json(machines);
+    } catch (error) {
+        next(error);
+    }
 };
 
 /**
@@ -23,19 +23,19 @@ const getMachines = async (req, res, next) => {
  * Obtiene una máquina por ID
  */
 const getMachineById = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const sql = 'SELECT * FROM machines WHERE id = ?  AND is_active = TRUE';
-    const machines = await query(sql, [id]);
-    
-    if (machines.length === 0) {
-      return res.status(404). json({ error: 'Máquina no encontrada' });
+    try {
+        const { id } = req.params;
+        const sql = 'SELECT * FROM machines WHERE id = ?  AND is_active = TRUE';
+        const machines = await query(sql, [id]);
+
+        if (machines.length === 0) {
+            return res.status(404).json({ error: 'Máquina no encontrada' });
+        }
+
+        res.json(machines[0]);
+    } catch (error) {
+        next(error);
     }
-    
-    res. json(machines[0]);
-  } catch (error) {
-    next(error);
-  }
 };
 
 /**
@@ -43,40 +43,40 @@ const getMachineById = async (req, res, next) => {
  * Crea una nueva máquina
  */
 const createMachine = async (req, res, next) => {
-  try {
-    const { name, operarios_count, notes } = req.body;
-    
-    if (!name || !operarios_count) {
-      return res.status(400).json({ 
-        error: 'name y operarios_count son requeridos' 
-      });
-    }
-    
-    if (operarios_count < 1) {
-      return res.status(400).json({ 
-        error: 'operarios_count debe ser al menos 1' 
-      });
-    }
-    
-    const sql = `
+    try {
+        const { name, operarios_count, notes } = req.body;
+
+        if (!name || !operarios_count) {
+            return res.status(400).json({
+                error: 'name y operarios_count son requeridos',
+            });
+        }
+
+        if (operarios_count < 1) {
+            return res.status(400).json({
+                error: 'operarios_count debe ser al menos 1',
+            });
+        }
+
+        const sql = `
       INSERT INTO machines (name, operarios_count, notes) 
       VALUES (?, ?, ?)
     `;
-    
-    const result = await query(sql, [name, operarios_count, notes || null]);
-    
-    res.status(201).json({
-      message: 'Máquina creada exitosamente',
-      data: {
-        id: result.insertId,
-        name,
-        operarios_count,
-        notes
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
+
+        const result = await query(sql, [name, operarios_count, notes || null]);
+
+        res.status(201).json({
+            message: 'Máquina creada exitosamente',
+            data: {
+                id: result.insertId,
+                name,
+                operarios_count,
+                notes,
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
 /**
@@ -84,28 +84,28 @@ const createMachine = async (req, res, next) => {
  * Actualiza una máquina
  */
 const updateMachine = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { name, operarios_count, notes } = req.body;
-    
-    const sql = `
+    try {
+        const { id } = req.params;
+        const { name, operarios_count, notes } = req.body;
+
+        const sql = `
       UPDATE machines 
       SET name = COALESCE(?, name),
           operarios_count = COALESCE(?, operarios_count),
           notes = COALESCE(?, notes)
       WHERE id = ? AND is_active = TRUE
     `;
-    
-    const result = await query(sql, [name, operarios_count, notes, id]);
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Máquina no encontrada' });
+
+        const result = await query(sql, [name, operarios_count, notes, id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Máquina no encontrada' });
+        }
+
+        res.json({ message: 'Máquina actualizada exitosamente' });
+    } catch (error) {
+        next(error);
     }
-    
-    res.json({ message: 'Máquina actualizada exitosamente' });
-  } catch (error) {
-    next(error);
-  }
 };
 
 /**
@@ -113,26 +113,26 @@ const updateMachine = async (req, res, next) => {
  * Desactiva una máquina (soft delete)
  */
 const deleteMachine = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    
-    const sql = 'UPDATE machines SET is_active = FALSE WHERE id = ?';
-    const result = await query(sql, [id]);
-    
-    if (result.affectedRows === 0) {
-      return res. status(404).json({ error: 'Máquina no encontrada' });
+    try {
+        const { id } = req.params;
+
+        const sql = 'UPDATE machines SET is_active = FALSE WHERE id = ?';
+        const result = await query(sql, [id]);
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Máquina no encontrada' });
+        }
+
+        res.json({ message: 'Máquina desactivada exitosamente' });
+    } catch (error) {
+        next(error);
     }
-    
-    res.json({ message: 'Máquina desactivada exitosamente' });
-  } catch (error) {
-    next(error);
-  }
 };
 
 module.exports = {
-  getMachines,
-  getMachineById,
-  createMachine,
-  updateMachine,
-  deleteMachine
+    getMachines,
+    getMachineById,
+    createMachine,
+    updateMachine,
+    deleteMachine,
 };
