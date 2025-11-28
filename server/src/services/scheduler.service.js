@@ -37,22 +37,6 @@ const getMachine = async (machineId) => {
     return result[0];
 };
 
-/**
- * Valida que molde y parte existan y estén relacionados
- */
-const validateMoldAndPart = async (moldId, partId) => {
-    const sql = `
-    SELECT mp.* FROM mold_parts mp
-    JOIN molds m ON mp.mold_id = m.id
-    WHERE mp.id = ? AND mp.mold_id = ?  
-    AND mp.is_active = TRUE AND m.is_active = TRUE
-  `;
-    const result = await query(sql, [partId, moldId]);
-    if (result.length === 0) {
-        throw new Error(`Parte ${partId} no pertenece al molde ${moldId} o está inactiva`);
-    }
-    return result[0];
-};
 
 /**
  * Algoritmo principal de planificación
@@ -60,7 +44,6 @@ const validateMoldAndPart = async (moldId, partId) => {
  */
 const scheduleTasks = async (moldId, partId, machineId, startDate, totalHours, createdBy) => {
     // Validaciones
-    await validateMoldAndPart(moldId, partId);
     const machine = await getMachine(machineId);
 
     if (totalHours <= 0) {

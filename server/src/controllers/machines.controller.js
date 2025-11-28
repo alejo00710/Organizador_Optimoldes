@@ -45,35 +45,12 @@ const getMachineById = async (req, res, next) => {
 const createMachine = async (req, res, next) => {
     try {
         const { name, operarios_count, notes } = req.body;
-
         if (!name || !operarios_count) {
-            return res.status(400).json({
-                error: 'name y operarios_count son requeridos',
-            });
+            return res.status(400).json({ error: 'name y operarios_count son requeridos' });
         }
-
-        if (operarios_count < 1) {
-            return res.status(400).json({
-                error: 'operarios_count debe ser al menos 1',
-            });
-        }
-
-        const sql = `
-      INSERT INTO machines (name, operarios_count, notes) 
-      VALUES (?, ?, ?)
-    `;
-
+        const sql = 'INSERT INTO machines (name, operarios_count, notes) VALUES (?, ?, ?)';
         const result = await query(sql, [name, operarios_count, notes || null]);
-
-        res.status(201).json({
-            message: 'Máquina creada exitosamente',
-            data: {
-                id: result.insertId,
-                name,
-                operarios_count,
-                notes,
-            },
-        });
+        res.status(201).json({ id: result.insertId, name, operarios_count });
     } catch (error) {
         next(error);
     }
@@ -128,6 +105,8 @@ const deleteMachine = async (req, res, next) => {
         next(error);
     }
 };
+
+
 
 module.exports = {
     getMachines,

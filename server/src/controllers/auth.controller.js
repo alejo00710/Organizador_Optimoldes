@@ -117,7 +117,44 @@ const getOperators = async (req, res, next) => {
     }
 };
 
+/**
+ * GET /auth/verify
+ * Verifica si el token del usuario es válido y devuelve los datos del usuario.
+ */
+const verify = async (req, res, next) => {
+    try {
+        // El middleware 'authenticateToken' ya validó el token. 
+        // El payload está en 'req.user'.
+        const userPayload = req.user;
+        let operatorName = null;
+
+        // Si es un operario, buscamos su nombre para que el frontend tenga toda la info.
+        if (userPayload.role === 'operator' && userPayload.operatorId) {
+            const operatorSql = 'SELECT name FROM operators WHERE id = ?';
+            const operators = await query(operatorSql, [userPayload.operatorId]);
+            if (operators.length > 0) {
+                operatorName = operators[0].name;
+            }
+        }
+
+        // Devolvemos una respuesta exitosa con los datos del usuario.
+        res.status(200).json({
+            message: 'Token válido',
+            user: {
+                id: userPayload.userId,
+                username: userPayload.username,
+                role: userPayload.role,
+                operatorId: userPayload.operatorId,
+                operatorName: operatorName,
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     login,
     getOperators,
+    verify,
 };

@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { port } = require('./config/env');
 const errorHandler = require('./middleware/errorHandler');
+const { initializeDatabase } = require('./config/setupDatabase');
 
 // Importar rutas
 const authRoutes = require('./routes/auth.routes');
@@ -12,6 +13,7 @@ const calendarRoutes = require('./routes/calendar.routes');
 const reportsRoutes = require('./routes/reports.routes');
 const machinesRoutes = require('./routes/machines.routes');
 const holidaysRoutes = require('./routes/holidays.routes');
+const moldsRoutes = require('./routes/molds.routes');
 
 const app = express();
 
@@ -56,6 +58,7 @@ app.use('/api/calendar', calendarRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/machines', machinesRoutes);
 app.use('/api/holidays', holidaysRoutes);
+app.use('/api/molds', moldsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -78,7 +81,9 @@ app.use((req, res) => {
 // Middleware de manejo de errores (debe ir al final)
 app.use(errorHandler);
 
-// Iniciar servidor
+async function startServer() {
+    await initializeDatabase();
+
 const server = app.listen(port, () => {
     console.log('='.repeat(50));
     console.log('🚀 Servidor de Producción de Moldes iniciado');
@@ -105,6 +110,8 @@ const server = app.listen(port, () => {
     console.log('\n✅ Servidor listo para recibir peticiones\n');
 });
 
+
+
 // Manejo de cierre graceful
 process.on('SIGTERM', () => {
     console.log('\n⚠️  SIGTERM recibido.  Cerrando servidor...');
@@ -121,6 +128,8 @@ process.on('SIGINT', () => {
         process.exit(0);
     });
 });
+
+}startServer();
 
 // Manejo de errores no capturados
 process.on('uncaughtException', (error) => {
