@@ -5,6 +5,12 @@ let currentUser = null;
 const loginContainer = document.getElementById('loginContainer');
 const mainApp = document.getElementById('mainApp');
 
+// Variables para el nuevo calendario
+let currentYear = new Date().getFullYear();
+let currentMonth = new Date().getMonth(); // 0-11
+const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+
 // =================================================================================
 // GESTOR DE INACTIVIDAD
 // =================================================================================
@@ -100,9 +106,11 @@ function initializeUI() {
     document.getElementById('gridStartDate').value = today;
     loadMoldsIntoSelectors();
     loadPlanningGrid();
+    renderCalendar(currentYear, currentMonth); // Renderiza el calendario visual inicial
 }
 
 function setupEventListeners() {
+    // Sesión y UI General
     document.getElementById('loginBtn')?.addEventListener('click', login);
     document.getElementById('logoutBtn')?.addEventListener('click', () => logout(true));
     document.getElementById('username')?.addEventListener('change', handleUsernameChange);
@@ -110,14 +118,26 @@ function setupEventListeners() {
     userActivityEvents.forEach(event => document.addEventListener(event, resetInactivityTimer, { passive: true }));
     document.querySelectorAll('[data-tab]').forEach(tab => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
     
+    // Cuadro Planificador
     document.getElementById('planningGridContainer').addEventListener('input', handleGridInput);
-
     document.getElementById('submitGridPlanBtn')?.addEventListener('click', submitGridPlan);
+
+    // Configuración
     document.getElementById('createMachineBtn')?.addEventListener('click', createMachine);
     document.getElementById('createMoldBtn')?.addEventListener('click', createMold);
     document.getElementById('createPartBtn')?.addEventListener('click', createPart);
+    
+    // Calendario Visual
+    document.getElementById('prev-month-btn')?.addEventListener('click', () => changeMonth(-1));
+    document.getElementById('next-month-btn')?.addEventListener('click', () => changeMonth(1));
+    document.getElementById('calendar-grid')?.addEventListener('click', handleDayClick);
+    document.getElementById('modal-close-btn')?.addEventListener('click', closeModal);
+    document.getElementById('day-details-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'day-details-modal') closeModal();
+    });
+
+    // Otras Pestañas
     document.getElementById('createWorkLogBtn')?.addEventListener('click', createWorkLog);
-    document.getElementById('loadCalendarBtn')?.addEventListener('click', loadCalendar);
     document.getElementById('loadReportBtn')?.addEventListener('click', loadReport);
     document.getElementById('loadDetailedReportBtn')?.addEventListener('click', loadDetailedReport);
 }
@@ -168,12 +188,11 @@ async function checkHealth() {
 }
 
 function setDefaultDates() {
+    // Esta función ahora solo configura los inputs de la pestaña de reportes.
     const today = new Date();
     const nextMonth = new Date(today);
     nextMonth.setMonth(nextMonth.getMonth() + 1);
     const formatDate = (date) => date.toISOString().split('T')[0];
-    document.getElementById('calendarFrom').value = formatDate(today);
-    document.getElementById('calendarTo').value = formatDate(nextMonth);
     document.getElementById('reportFrom').value = formatDate(today);
     document.getElementById('reportTo').value = formatDate(nextMonth);
 }
@@ -280,7 +299,7 @@ async function createPart() {
 }
 
 // =================================================================================
-// LÓGICA PESTAÑA "CUADRO PLANIFICADOR" (LÓGICA DE CÁLCULO ACTUALIZADA)
+// LÓGICA PESTAÑA "CUADRO PLANIFICADOR"
 // =================================================================================
 
 function handleGridInput(event) {
@@ -372,7 +391,7 @@ async function loadPlanningGrid() {
         machines.forEach(m => {
             tableHTML += `<td id="total-machine-${m.id}">0.00</td>`;
         });
-        tableHTML += `<td></td>`; // Celda vacía para el total proyectado
+        tableHTML += `<td></td>`;
         tableHTML += '</tr></tfoot></table>';
 
         container.innerHTML = tableHTML;
@@ -424,6 +443,113 @@ async function submitGridPlan() {
 }
 
 // =================================================================================
+// LÓGICA PESTAÑA "CALENDARIO" (NUEVA VERSIÓN VISUAL)
+// =================================================================================
+
+function changeMonth(direction) {
+    currentMonth += direction;
+    if (currentMonth < 0) {
+        currentMonth = 11;
+        currentYear--;
+    } else if (currentMonth > 11) {
+        currentMonth = 0;
+        currentYear++;
+    }
+    renderCalendar(currentYear, currentMonth);
+}
+
+async function handleDayClick(event) {
+    const dayCell = event.target.closest('.calendar-day');
+    if (dayCell && !dayCell.classList.contains('other-month')) {
+        const day = dayCell.dataset.day;
+        const eventsData = JSON.parse(dayCell.dataset.events || '{}');
+        
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        
+        modalTitle.textContent = `Detalles del ${day} de ${monthNames[currentMonth]} de ${currentYear}`;
+        
+        if (Object.keys(eventsData).length > 0) {
+            let html = '<h4>Tareas Planificadas:</h4>';
+            eventsData.tasks.forEach(task => {
+                html += `<p><strong>Molde:</strong> ${task.mold} <br> <strong>Parte:</strong> ${task.part} <br> <strong>Máquina:</strong> ${task.machine} (${task.hours}h)</p>`;
+            });
+
+            html += '<h4>Uso de Máquinas (Capacidad 8h):</h4><ul>';
+            for (const [machine, hours] of Object.entries(eventsData.machineUsage)) {
+                const percentage = (hours / 8) * 100;
+                const color = percentage > 100 ? 'red' : 'green';
+                html += `<li><strong>${machine}:</strong> ${hours}h / 8h <span style="color:${color}">(${percentage.toFixed(0)}% ocupado)</span></li>`;
+            }
+            html += '</ul>';
+            modalBody.innerHTML = html;
+        } else {
+            modalBody.innerHTML = '<p>No hay tareas planificadas para este día.</p>';
+        }
+
+        document.getElementById('day-details-modal').classList.remove('hidden');
+    }
+}
+
+function closeModal() {
+    document.getElementById('day-details-modal').classList.add('hidden');
+}
+
+async function renderCalendar(year, month) {
+    const calendarGrid = document.getElementById('calendar-grid');
+    const monthYearEl = document.getElementById('calendar-month-year');
+    if (!calendarGrid || !monthYearEl) return;
+    
+    calendarGrid.innerHTML = 'Cargando...';
+    monthYearEl.textContent = `${monthNames[month]} ${year}`;
+
+    const events = await fetchMonthEvents(year, month + 1);
+
+    calendarGrid.innerHTML = '';
+    const firstDayOfMonth = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    for (let i = 0; i < firstDayOfMonth; i++) {
+        calendarGrid.innerHTML += `<div class="calendar-day other-month"></div>`;
+    }
+
+    const today = new Date();
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dayCell = document.createElement('div');
+        dayCell.classList.add('calendar-day');
+        dayCell.dataset.day = day;
+
+        if (year === today.getFullYear() && month === today.getMonth() && day === today.getDate()) {
+            dayCell.classList.add('today');
+        }
+
+        let dayContent = `<div class="day-number">${day}</div>`;
+
+        if (events[day]) {
+            const totalHours = Object.values(events[day].machineUsage).reduce((sum, h) => sum + h, 0);
+            dayContent += `<div class="events-indicator">${totalHours.toFixed(1)}h</div>`;
+            dayCell.dataset.events = JSON.stringify(events[day]);
+        }
+
+        dayCell.innerHTML = dayContent;
+        calendarGrid.appendChild(dayCell);
+    }
+}
+
+async function fetchMonthEvents(year, month) {
+    try {
+        const response = await fetch(`${API_URL}/calendar/month-view?year=${year}&month=${month}`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!response.ok) return {};
+        return await response.json();
+    } catch (error) {
+        console.error('Error al cargar eventos del calendario:', error);
+        return {};
+    }
+}
+
+// =================================================================================
 // OTRAS PESTAÑAS
 // =================================================================================
 
@@ -442,18 +568,6 @@ async function createWorkLog() {
         displayResponse('worklogResponse', await response.json(), response.ok);
     } catch (error) {
         displayResponse('worklogResponse', { error: error.message }, false);
-    }
-}
-
-async function loadCalendar() {
-    if (!authToken) return;
-    const from = document.getElementById('calendarFrom').value;
-    const to = document.getElementById('calendarTo').value;
-    try {
-        const response = await fetch(`${API_URL}/calendar?from=${from}&to=${to}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
-        displayResponse('calendarResponse', await response.json(), response.ok);
-    } catch (error) {
-        displayResponse('calendarResponse', { error: error.message }, false);
     }
 }
 
