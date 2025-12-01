@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const { port } = require('./config/env');
 const errorHandler = require('./middleware/errorHandler');
 const { initializeDatabase } = require('./config/setupDatabase');
+const { loadHolidays } = require('./services/businessDays.service');
 
 // Importar rutas
 const authRoutes = require('./routes/auth.routes');
@@ -83,6 +84,7 @@ app.use(errorHandler);
 
 async function startServer() {
     await initializeDatabase();
+    await loadHolidays();
 
 const server = app.listen(port, () => {
     console.log('='.repeat(50));

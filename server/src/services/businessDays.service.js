@@ -1,76 +1,75 @@
 const { query } = require('../config/database');
 const { WORKING_DAYS } = require('../utils/constants');
 
+// Usamos una variable en memoria para almacenar los festivos y evitar consultas repetidas.
+let holidaysSet = new Set();
+
 /**
- * Verifica si una fecha es festivo
+ * Carga todos los festivos de la base de datos en el Set en memoria.
+ * Esta función se debe llamar UNA SOLA VEZ al iniciar el servidor.
  */
-const isHoliday = async (date) => {
-    const sql = 'SELECT COUNT(*) as count FROM holidays WHERE date = ?';
-    const result = await query(sql, [date]);
-    return result[0].count > 0;
+const loadHolidays = async () => {
+    try {
+        const holidaysData = await query('SELECT date FROM holidays');
+        // Aseguramos que la fecha se guarde en formato 'YYYY-MM-DD'
+        const holidayDates = holidaysData.map(h => new Date(h.date).toISOString().split('T')[0]);
+        holidaysSet = new Set(holidayDates);
+        console.log(`✅ ${holidaysSet.size} festivos cargados y cacheados en memoria.`);
+    } catch (error) {
+        console.error('❌ Error fatal al cargar los festivos en memoria. La planificación puede ser incorrecta.', error);
+        // En un entorno de producción real, podría ser necesario detener el servidor si los festivos son críticos.
+    }
 };
 
 /**
- * Verifica si una fecha es día hábil (Lun-Vie y no festivo)
+ * Verifica si una fecha es día hábil de forma síncrona, usando los datos en memoria.
+ * @param {Date} date - El objeto Date a verificar.
+ * @returns {boolean} - True si es un día laborable.
  */
-const isBusinessDay = async (date) => {
-    const dayOfWeek = date.getDay();
+const isBusinessDay = (date) => {
+    const dayOfWeek = date.getDay(); // 0 (Dom) - 6 (Sáb)
 
-    // Verificar si es fin de semana
-    if (!WORKING_DAYS.includes(dayOfWeek)) {
+    // 1. Verificar si es fin de semana (usando el estándar de JS, no el array de constantes)
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
         return false;
     }
 
-    // Verificar si es festivo
+    // 2. Verificar si es festivo usando el Set en memoria (búsqueda O(1), muy rápido)
     const dateStr = date.toISOString().split('T')[0];
-    return !(await isHoliday(dateStr));
-};
-
-/**
- * Obtiene el siguiente día hábil desde una fecha dada
- */
-const getNextBusinessDay = async (date) => {
-    const current = new Date(date);
-    current.setDate(current.getDate() + 1);
-
-    while (!(await isBusinessDay(current))) {
-        current.setDate(current.getDate() + 1);
+    if (holidaysSet.has(dateStr)) {
+        return false;
     }
 
-    return current;
+    return true;
 };
 
 /**
- * Obtiene todos los días hábiles en un rango
+ * Obtiene el siguiente día hábil de forma síncrona.
+ * @param {Date} date - La fecha desde la cual empezar a buscar.
+ * @returns {Date} - El siguiente día que es laborable.
  */
-const getBusinessDaysInRange = async (startDate, endDate) => {
-    const businessDays = [];
-    const current = new Date(startDate);
-    const end = new Date(endDate);
+const getNextBusinessDay = (date) => {
+    const nextDay = new Date(date);
+    // Empezamos a verificar desde el día SIGUIENTE a la fecha dada.
+    nextDay.setDate(nextDay.getDate() + 1);
 
-    while (current <= end) {
-        if (await isBusinessDay(current)) {
-            businessDays.push(new Date(current));
-        }
-        current.setDate(current.getDate() + 1);
+    while (!isBusinessDay(nextDay)) {
+        nextDay.setDate(nextDay.getDate() + 1);
     }
-
-    return businessDays;
+    return nextDay;
 };
 
 /**
- * Carga todos los festivos en memoria para optimización
+ * Obtiene el Set de festivos cacheados. Útil para el controlador del calendario.
+ * @returns {Set<string>} - Un Set con todas las fechas de festivos.
  */
-const loadHolidays = async () => {
-    const sql = 'SELECT date FROM holidays';
-    const holidays = await query(sql);
-    return new Set(holidays.map((h) => h.date.toISOString().split('T')[0]));
+const getCachedHolidays = () => {
+    return holidaysSet;
 };
 
 module.exports = {
-    isHoliday,
+    loadHolidays,
     isBusinessDay,
     getNextBusinessDay,
-    getBusinessDaysInRange,
-    loadHolidays,
+    getCachedHolidays
 };

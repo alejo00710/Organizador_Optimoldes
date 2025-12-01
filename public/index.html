@@ -2,39 +2,41 @@
 <html lang="es">
 
 <head>
+       
     <meta charset="UTF-8">
+       
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema de Producción de Moldes</title>
+        <title>Sistema de Producción de Moldes</title>
+       
     <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
-    <div class="container">
-        <!-- ===== PANTALLA DE LOGIN ===== -->
-        <div class="login-container" id="loginContainer">
-            <div class="card login-card">
-                <h2>🔐 Iniciar Sesión</h2>
-                <div class="form-group"><label>Usuario</label><select id="username">
+        <div class="container">
+                        <div class="login-container" id="loginContainer">
+                        <div class="card login-card">
+                                <h2>🔐 Iniciar Sesión</h2>
+                                <div class="form-group"><label>Usuario</label><select id="username">
                         <option value="admin">Admin</option>
                         <option value="jefe" selected>Jefe (Planner)</option>
                         <option value="operarios">Operarios</option>
                     </select></div>
-                <div class="form-group"><label>Contraseña</label><input type="password" id="password" value="admin">
-                </div>
-                <div class="form-group hidden" id="operatorSelectGroup"><label>Seleccionar Operario</label><select
-                        id="operatorId">
+                                <div class="form-group"><label>Contraseña</label><input type="password" id="password"
+                        value="admin"></div>
+                                <div class="form-group hidden" id="operatorSelectGroup"><label>Seleccionar
+                        Operario</label><select id="operatorId">
                         <option value="">Cargando...</option>
                     </select></div>
-                <button class="btn" id="loginBtn">Iniciar Sesión</button>
-            </div>
-        </div>
+                                <button class="btn btn-primary" id="loginBtn">Iniciar Sesión</button>
+                            </div>
+                    </div>
 
-        <!-- ===== APLICACIÓN PRINCIPAL ===== -->
-        <div class="main-app hidden" id="mainApp">
+                        <div class="main-app hidden" id="mainApp">
             <div class="header">
                 <div class="header-title">
                     <h1>🏭 Sistema de Producción de Moldes</h1>
                     <p style="color: #666; margin: 0;">Control y Planificación de Producción</p>
+                    <span id="welcomeMessage" style="display: block; margin-top: 5px; font-weight: bold;"></span>
                 </div>
                 <div class="header-right">
                     <div class="user-info" id="userInfo">
@@ -54,11 +56,12 @@
                     <button class="tab" data-tab="calendar">📅 Calendario</button>
                     <button class="tab" data-tab="reports">📈 Reportes</button>
                 </div>
+
                 <div class="tab-content active" id="tab-plan">
                     <h2>📊 Cuadro de Planificación General</h2>
                     <p>Define la cantidad de partes a producir y asigna las horas en las máquinas correspondientes.</p>
                     <div class="planning-controls">
-                        <div class="form-group"><label>1. Selecciona el Molde para este Plan</label><select
+                        <div class="form-group"><label>1. Selecciona el Molde</label><select
                                 id="planMoldSelector"></select></div>
                         <div class="form-group"><label>2. Elige la Fecha de Inicio</label><input type="date"
                                 id="gridStartDate"></div>
@@ -67,13 +70,13 @@
                         <p>Cargando parrilla de planificación...</p>
                     </div>
                     <button class="btn btn-secondary" id="submitGridPlanBtn" style="margin-top: 16px;">Crear
-                        Planificación desde Parrilla</button>
+                        Planificación</button>
                     <div id="gridResponse" class="response-box"></div>
                 </div>
+
                 <div class="tab-content" id="tab-config">
                     <h2>⚙️ Gestión de Datos Maestros</h2>
-                    <p>Usa estos formularios para registrar las máquinas, moldes y partes que se usarán en el
-                        planificador.</p>
+                    <p>Usa estos formularios para registrar las máquinas, moldes y partes del sistema.</p>
                     <div class="form-grid-3-col">
                         <div class="form-column">
                             <h5><span class="emoji">🔧</span> Máquina</h5>
@@ -82,28 +85,65 @@
                             <div class="form-group"><label>ID</label><input type="text" id="newMachineId" readonly
                                     placeholder="Se genera al crear"></div>
                             <div class="form-group"><label>Nº de Operarios</label><input type="number"
-                                    id="newMachineOpCount" value="1" min="1"></div>
-                            <button class="btn btn-secondary" id="createMachineBtn">Registrar Máquina</button>
+                                    id="newMachineOpCount" value="1" min="1"></div><button class="btn btn-secondary"
+                                id="createMachineBtn">Registrar Máquina</button>
                         </div>
                         <div class="form-column">
                             <h5><span class="emoji">📦</span> Molde</h5>
                             <div class="form-group"><label>Nombre</label><input type="text" id="newMoldName"
                                     placeholder="Ej: Molde para pieza X"></div>
                             <div class="form-group"><label>ID</label><input type="text" id="newMoldId" readonly
-                                    placeholder="Se genera al crear"></div>
-                            <button class="btn btn-secondary" id="createMoldBtn">Registrar Molde</button>
+                                    placeholder="Se genera al crear"></div><button class="btn btn-secondary"
+                                id="createMoldBtn">Registrar Molde</button>
                         </div>
                         <div class="form-column">
                             <h5><span class="emoji">🧩</span> Parte</h5>
                             <div class="form-group"><label>Nombre</label><input type="text" id="newPartName"
                                     placeholder="Ej: Componente principal"></div>
                             <div class="form-group"><label>ID</label><input type="text" id="newPartId" readonly
+                                    placeholder="Se genera al crear"></div><button class="btn btn-secondary"
+                                id="createPartBtn">Registrar Parte</button>
+                        </div>
+                    </div>
+
+                    <hr style="margin: 30px 0;">
+
+                    <div class="form-grid-2-col"
+                        style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+                        <div class="form-column">
+                            <h5><span class="emoji">👷</span> Operario</h5>
+                            <p class="text-muted" style="font-size: 0.9rem;">Asigna un operario a un usuario de login
+                                (Ej: 'operarios').</p>
+                            <div class="form-group"><label>Nombre Completo</label><input type="text"
+                                    id="newOperatorName" placeholder="Ej: Juan Pérez"></div>
+                            <div class="form-group"><label>ID</label><input type="text" id="newOperatorId" readonly
                                     placeholder="Se genera al crear"></div>
-                            <button class="btn btn-secondary" id="createPartBtn">Registrar Parte</button>
+                            <div class="form-group"><label>Usuario de Login Asociado</label><select
+                                    id="newOperatorUserId">
+                                    <option value="">Cargando Usuarios...</option>
+                                </select></div>
+                            <button class="btn btn-secondary" id="createOperatorBtn">Registrar Operario</button>
+                        </div>
+
+                        <div class="form-column">
+                            <h5><span class="emoji">🎉</span> Festivo/Día No Laborable</h5>
+                            <p class="text-muted" style="font-size: 0.9rem;">Días que el planificador debe omitir.</p>
+                            <div class="form-group"><label>Fecha</label><input type="date" id="newHolidayDate"></div>
+                            <div class="form-group"><label>Nombre/Motivo</label><input type="text" id="newHolidayName"
+                                    placeholder="Ej: Feriado Nacional"></div>
+                            <button class="btn btn-secondary" id="createHolidayBtn">Registrar Festivo</button>
+                            <hr style="margin: 15px 0;">
+                            <div id="holidaysListContainer">
+                                <h6>Festivos Registrados:</h6>
+                                <p>Cargando lista...</p>
+                                <button class="btn btn-danger btn-sm" id="deleteHolidayBtn"
+                                    style="margin-top: 10px; display: none;">Eliminar Festivo Seleccionado</button>
+                            </div>
                         </div>
                     </div>
                     <div id="configResponse" class="response-box" style="margin-top: 24px;"></div>
                 </div>
+
                 <div class="tab-content" id="tab-worklog">
                     <h2>⏱️ Registrar Trabajo Real</h2>
                     <div class="form-group"><label>ID Molde</label><input type="number" id="workMoldId" min="1"></div>
@@ -119,7 +159,7 @@
                     <button class="btn btn-secondary" id="createWorkLogBtn">Registrar Trabajo</button>
                     <div class="response-box" id="worklogResponse"></div>
                 </div>
-                <!-- Pestaña "Calendario" (MODIFICADA) -->
+
                 <div class="tab-content" id="tab-calendar">
                     <div class="calendar-container">
                         <div class="calendar-header">
@@ -138,24 +178,10 @@
                             <div class="calendar-day-name">Vie</div>
                             <div class="calendar-day-name">Sáb</div>
                         </div>
-                        <div id="calendar-grid" class="calendar-grid">
-                            <!-- Los días del calendario se generarán aquí con JavaScript -->
-                        </div>
+                        <div id="calendar-grid" class="calendar-grid"></div>
                     </div>
                 </div>
 
-                <!-- Estructura de la ventana modal (añadir al final del <body>) -->
-                <div class="modal-overlay hidden" id="day-details-modal">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h3 id="modal-title">Detalles del Día</h3>
-                            <button class="modal-close" id="modal-close-btn">&times;</button>
-                        </div>
-                        <div id="modal-body">
-                            <!-- El contenido de los detalles del día se inyectará aquí -->
-                        </div>
-                    </div>
-                </div>
                 <div class="tab-content" id="tab-reports">
                     <h2>📈 Reportes</h2>
                     <div class="form-group"><label>Fecha Desde</label><input type="date" id="reportFrom"></div>
@@ -168,8 +194,19 @@
                 </div>
             </div>
         </div>
-    </div>
-    <script src="app.js"></script>
+           
+            <div class="modal-overlay hidden" id="day-details-modal">
+                    <div class="modal-content">
+                            <div class="modal-header">
+                                    <h3 id="modal-title"></h3>
+                                    <button class="modal-close" id="modal-close-btn">&times;</button>
+                                </div>
+                            <div id="modal-body"></div>
+                        </div>
+                </div>
+
+           
+        <script src="app.js" defer></script>
 </body>
 
 </html>
