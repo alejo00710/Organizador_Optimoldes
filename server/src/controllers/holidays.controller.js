@@ -1,4 +1,5 @@
 const { query } = require('../config/database');
+const { loadHolidays } = require('../services/businessDays.service');
 
 /**
  * GET /holidays
@@ -8,8 +9,8 @@ const getHolidays = async (req, res, next) => {
     try {
         const { year } = req.query;
 
-        let sql = 'SELECT * FROM holidays';
-        let params = [];
+        let sql = 'SELECT date, name FROM holidays';
+        const params = [];
 
         if (year) {
             sql += ' WHERE YEAR(date) = ?';
@@ -50,6 +51,14 @@ const createHoliday = async (req, res, next) => {
         const sql = 'INSERT INTO holidays (date, name) VALUES (?, ?)';
         await query(sql, [date, name]);
 
+        // Refrescar caché de festivos en memoria
+        try {
+            await loadHolidays();
+        } catch (e) {
+            // No rompemos la respuesta si el refresco del caché falla
+            console.warn('Advertencia: No se pudo recargar el cache de festivos:', e.message);
+        }
+
         res.status(201).json({
             message: 'Festivo creado exitosamente',
             data: { date, name },
@@ -77,6 +86,13 @@ const deleteHoliday = async (req, res, next) => {
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: 'Festivo no encontrado' });
+        }
+
+        // Refrescar caché de festivos en memoria
+        try {
+            await loadHolidays();
+        } catch (e) {
+            console.warn('Advertencia: No se pudo recargar el cache de festivos:', e.message);
         }
 
         res.json({ message: 'Festivo eliminado exitosamente' });

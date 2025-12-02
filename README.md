@@ -1,220 +1,283 @@
-# 📋 Sistema de Planificación y Registro de Producción de Moldes (v2.0)
+# 📋 Sistema de Planificación y Registro de Producción de Moldes (Checkpoint)
 
-## 🎯 Descripción del Proyecto
+Estado a la fecha: 2025-12-02
 
-Sistema web completo para gestionar la planificación y el registro de trabajo en la producción de moldes. La aplicación permite a los jefes de producción crear planificaciones de trabajo de forma inteligente y visual. El sistema distribuye automáticamente las horas de trabajo a lo largo de los días, respetando la capacidad de cada máquina y **excluyendo fines de semana y festivos**, que son gestionados desde la base de datos.
+Este proyecto es una aplicación web para planificar y registrar trabajo de producción de moldes. Incluye:
+- Autenticación por roles con JWT
+- Planificador inteligente que distribuye horas automáticamente en días hábiles
+- Calendario mensual interactivo con festivos y fines de semana
+- Gestión de datos maestros (máquinas, moldes, partes)
+- Reportes de planificado vs real
 
-La interfaz incluye un **calendario interactivo** que ofrece una vista mensual clara de la carga de trabajo, con indicadores visuales y detalles por día, así como un **cuadro planificador** para la entrada masiva de tareas con cálculos automáticos.
+Este README refleja exactamente el estado actual del código.
 
 ---
 
-## 🏗️ Arquitectura del Sistema
+## 🏗️ Arquitectura
 
 ```
 ┌─────────────────────────────────────────────────┐
 │              FRONTEND (Cliente)                  │
-│  HTML + CSS + JavaScript Vanilla                │
-│  Puerto: Archivo local o servidor web estático  │
+│  HTML + CSS + JavaScript (Vanilla)              │
+│  Servido como estáticos desde Express           │
 └─────────────────┬───────────────────────────────┘
                   │ HTTP/REST API
                   │
 ┌─────────────────▼───────────────────────────────┐
 │              BACKEND (Servidor)                  │
-│  Node.js + Express.js                           │
-│  Puerto: 3000                                   │
+│  Node.js + Express                               │
+│  Puerto: 3000                                    │
 └─────────────────┬───────────────────────────────┘
-                  │ SQL Queries
+                  │ MySQL
                   │
 ┌─────────────────▼───────────────────────────────┐
-│           BASE DE DATOS                         │
+│                BASE DE DATOS                    │
 │  MySQL 8.0+                                     │
-│  Puerto: 3306                                   │
 └─────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🛠️ Tecnologías Utilizadas
+## 🛠️ Tecnologías
 
-### **Backend**
-- **Node.js** v18+ - Entorno de ejecución JavaScript
-- **Express.js** v4.18 - Framework web para APIs REST
-- **MySQL2** v3.6 - Driver para conectar con MySQL
-- **bcrypt** v5.1 - Encriptación de contraseñas
-- **jsonwebtoken** v9.0 - Autenticación con JWT
-- **dotenv** v16.3 - Variables de entorno
-- **cors** v2.8 - Manejo de CORS
-- **helmet** v7.1 - Seguridad HTTP
-
-### **Frontend**
-- **HTML5** - Estructura semántica
-- **CSS3** - Estilos modernos (Flexbox, Grid Layout)
-- **JavaScript ES6+** - Lógica del cliente (async/await, Fetch API, manipulación del DOM)
-
-### **Base de Datos**
-- **MySQL** v8.0+ - Base de datos relacional
-
-### **Herramientas de Desarrollo**
-- **nodemon** v3.0+ - Auto-reload del servidor en desarrollo
-- **VS Code** - Editor de código recomendado
+- Backend: Node.js (Express), MySQL2, JWT, Helmet, CORS, dotenv
+- Frontend: HTML5, CSS3, JavaScript ES6+
+- DB: MySQL 8.0+
+- Dev: nodemon
 
 ---
 
-## 📂 Estructura del Proyecto
+## 📂 Estructura
 
 ```
 Organizador_Optimoldes/
-├── public/                      # Frontend (archivos que ve el usuario)
-│   ├── index.html              # Estructura principal de la página
-│   ├── app.js                  # Lógica JavaScript del cliente (el cerebro del frontend)
-│   └── styles.css              # Estilos visuales
+├── public/                      # Frontend
+│   ├── index.html
+│   ├── app.js
+│   └── styles.css
 │
-├── server/                      # Backend (la API que procesa todo)
+├── server/                      # Backend (API)
 │   ├── src/
-│   │   ├── config/             # Configuración de base de datos y entorno
-│   │   ├── middleware/         # Autenticación, manejo de errores, etc.
-│   │   ├── services/           # Lógica de negocio crítica (planificación, días hábiles)
-│   │   ├── controllers/        # Manejan las peticiones HTTP y llaman a los servicios
-│   │   ├── routes/             # Definen las URLs de la API (endpoints)
-│   │   ├── utils/              # Constantes y utilidades
-│   │   └── app.js              # Punto de entrada y configuración del servidor
-│   │
-│   ├── .env                    # Variables de entorno (credenciales, secretos)
-│   ├── package.json            # Dependencias y scripts del proyecto
-│   └── schema.sql              # Definición de las tablas de la base de datos
-│
-└── README.md                   # Este archivo
+│   │   ├── config/              # env, conexión y setup de DB
+│   │   ├── controllers/         # lógica HTTP
+│   │   ├── middleware/          # auth, errores
+│   │   ├── routes/              # endpoints
+│   │   ├── services/            # negocio (scheduler, festivos)
+│   │   ├── utils/               # constantes
+│   │   └── app.js               # arranque del servidor
+│   ├── package.json
+│   └── schema.sql               # esquema de BD
+└── README.md
 ```
 
 ---
 
-## 🔑 Funcionalidades Implementadas
+## 🔑 Funcionalidades actuales
 
-### 1. **Autenticación por Roles**
-- Login con credenciales compartidas (`admin`, `jefe`, `operarios`).
-- **Selector de Operario:** Al usar el login de `operarios`, se debe seleccionar una identidad personal.
-- Sesiones seguras gestionadas con Tokens JWT.
+1) Autenticación y roles
+- Login con usuarios por rol: admin, jefe (planner), operarios
+- JWT con middleware `authenticateToken`
+- Rutas con autorización por rol (`authorizeRoles`)
 
-### 2. **Cuadro Planificador Inteligente**
-- Interfaz de parrilla (grid) para planificar múltiples partes y máquinas a la vez.
-- **Cálculos en Tiempo Real:**
-  - "Total Horas Proyectado" por fila: `Cantidad de Partes * Suma de horas de cada máquina`.
-  - "Total Horas Máquina" por columna: Suma total de horas asignadas a cada máquina.
-- Permite crear una planificación completa con un solo clic.
+2) Planificador (Cuadro planificador)
+- Grid por partes (filas) y máquinas (columnas)
+- Campo “Cantidad de Moldes/Partes a Producir”
+- Cálculo en tiempo real:
+  - Total por fila = (suma horas por máquina) × cantidad
+  - Resumen total superior (proyectado y base por máquina)
+- Envío de planificación: genera múltiples POST /tasks/plan (una por celda con horas > 0)
 
-### 3. **Planificación Automática y Precisa**
-- El backend recibe las horas y las distribuye automáticamente.
-- **Lógica de Días Hábiles:** El sistema salta automáticamente **sábados, domingos y festivos** (cargados desde la base de datos) al planificar.
-- Respeta la capacidad diaria de cada máquina según su número de operarios.
+3) Scheduler (Distribución automática)
+- Distribuye `totalHours` en días hábiles por máquina a partir de `startDate`
+- Capacidad por máquina:
+  - 1 operario: 9h/día
+  - >1 operario: operarios × 8h/día
+- Respeta capacidad ya usada en cada día (suma de `plan_entries`)
+- Días hábiles: excluye sábados, domingos y festivos
 
-### 4. **Calendario Visual e Interactivo**
-- **Vista de Mes en Rejilla:** Muestra el mes actual con un layout claro.
-- **Navegación Intuitiva:** Botones para avanzar y retroceder entre meses.
-- **Indicadores Visuales:**
-  - Los días con tareas muestran un indicador con el total de horas planificadas.
-  - Los **fines de semana** y **festivos** tienen un fondo de color distintivo.
-- **Ventana Modal con Detalles:** Al hacer clic en un día, se abre una ventana que muestra:
-  - Si es festivo y su nombre.
-  - El detalle de cada tarea: Molde, Parte y Máquina.
-  - El uso total de cada máquina para ese día, con un porcentaje de ocupación.
+4) Festivos (automáticos + base de datos)
+- Generación automática de festivos de Colombia (Ley Emiliani + fechas religiosas)
+- Combinación con festivos registrados en DB (empresa)
+- Caché en memoria: se recarga al iniciar el servidor y al crear/eliminar festivos
+- Frontend muestra festivos en el calendario
 
-### 5. **Gestión de Datos Maestros**
-- Formularios simples en la pestaña "Configuración" para añadir nuevas máquinas, moldes y partes al sistema.
+5) Calendario mensual
+- Vista de mes con:
+  - Fines de semana resaltados
+  - Festivos resaltados (nombre visible)
+  - Indicador con total de horas planificadas por día
+  - Modal con detalle de tareas por día
+- Endpoint unificado: GET /api/calendar/month-view → { events, holidays }
 
-### 6. **Registro de Trabajo Real**
-- Formulario para que los operarios registren las horas efectivamente trabajadas en una tarea.
+6) Reportes (backend listo)
+- Reporte planificado vs real (`/reports/planned-vs-actual`)
+- Reporte detallado con combinaciones y alertas (`/reports/detailed-deviations`)
+- Umbral de alerta configurable: 5%
 
 ---
 
-## 🚀 Instalación y Configuración
+## ✅ Correcciones recientes (críticas)
 
-### **Requisitos Previos**
-- **Node.js** v18 o superior ([Descargar](https://nodejs.org/))
-- **MySQL** v8.0 o superior ([Descargar](https://dev.mysql.com/downloads/))
+- SQL corregido (espacios erróneos en alias/columnas) en:
+  - services/calendar.service.js
+  - services/deviation.service.js
+  - controllers/workLogs.controller.js
+- Caché de festivos se recarga en `createHoliday` y `deleteHoliday`
+- Fechas en `calendar.controller` robustas (evita problemas de zona horaria)
+- server/package.json: script `start` corregido (sin espacio en `app.js`)
+- server/src/app.js: `startServer()` corregido (sintaxis y arranque)
 
-### **Paso 1: Clonar o Descargar el Proyecto**
+---
+
+## 🚀 Instalación
+
+Requisitos: Node.js 18+, MySQL 8+
+
+1) Clonar e instalar
 ```bash
 git clone https://github.com/alejo00710/Organizador_Optimoldes.git
-cd Organizador_Optimoldes
+cd Organizador_Optimoldes/server
+npm install
 ```
 
-### **Paso 2: Configurar la Base de Datos**
-1.  Abre tu cliente de MySQL (Workbench, DBeaver, etc.).
-2.  Crea la base de datos:
-    ```sql
-    CREATE DATABASE organizador_taller;
-    ```
-3.  Ejecuta el contenido completo del archivo `server/schema.sql` para crear todas las tablas.
-4.  **(Opcional pero recomendado)** Añade algunos festivos a la tabla `holidays` para probar la funcionalidad:
-    ```sql
-    INSERT INTO holidays (date, name) VALUES ('2025-01-01', 'Año Nuevo');
-    INSERT INTO holidays (date, name) VALUES ('2025-05-01', 'Día del Trabajo');
-    ```
+2) Variables de entorno (server/.env)
+```env
+PORT=3000
+NODE_ENV=development
 
-### **Paso 3: Configurar el Backend**
-1.  Navega a la carpeta del servidor: `cd server`
-2.  Instala las dependencias: `npm install`
-3.  Crea una copia del archivo `.env.example` y renómbralo a `.env`.
-4.  Edita el archivo `.env` con tus credenciales de MySQL:
-    ```env
-    DB_HOST=localhost
-    DB_PORT=3306
-    DB_USER=tu_usuario_mysql
-    DB_PASSWORD=tu_contraseña_mysql
-    DB_NAME=organizador_taller
-    JWT_SECRET=este_es_un_secreto_muy_largo_y_dificil_de_adivinar
-    ```
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=tu_password
+DB_NAME=production_scheduler
 
-### **Paso 4: Iniciar el Backend**
+JWT_SECRET=cambia_este_secreto
+JWT_EXPIRES_IN=8h
+```
+
+3) Base de datos
+- En `NODE_ENV=development`, el servidor:
+  - Crea la BD si no existe
+  - Ejecuta `schema.sql`
+  - Se asegura de crear usuario admin (admin/admin)
+
+4) Iniciar
 ```bash
-# Desde la carpeta /server
 npm run dev
+# Servirá la app en http://localhost:3000
 ```
-El servidor se iniciará en `http://localhost:3000`. La terminal mostrará un mensaje de éxito y cargará los festivos en memoria.
 
-### **Paso 5: Abrir el Frontend**
-La forma más sencilla es abrir el archivo `public/index.html` directamente en tu navegador. No requiere un servidor web adicional.
-
----
-
-## 👤 Usuarios por Defecto
-
-La base de datos viene con usuarios de ejemplo creados por el script `schema.sql`.
-
-| Usuario | Contraseña | Rol | Descripción |
-|---|---|---|---|
-| `admin` | `admin` | Admin | Control total. |
-| `jefe` | `admin` | Planner | Crea planificaciones y ve reportes. |
-| `operarios` | `admin` | Operator | Registra trabajo real. |
-
-**Operarios de ejemplo:** Juan Pérez (ID 1), María García (ID 2), etc.
+5) Frontend
+- Express sirve /public como estáticos
+- Abre http://localhost:3000 en el navegador
 
 ---
 
-## 📖 Guía de Uso Rápido
+## 👤 Usuarios de ejemplo
 
-1.  **Inicia Sesión** con usuario `jefe` y contraseña `admin`.
-2.  **Ve a "Configuración"** y asegúrate de que existen al menos una máquina, un molde y una parte.
-3.  **Ve a "Cuadro Planificador"**:
-    *   Selecciona un molde y una fecha de inicio.
-    *   Introduce una **Cantidad de Partes** (ej: 10) en la primera fila.
-    *   Introduce las **horas** que toma cada máquina para **una sola parte** (ej: 2 horas en "TOR-01", 1.5 horas en "FRE-02").
-    *   Observa cómo el "Total Horas Proyectado" se calcula automáticamente: `10 * (2 + 1.5) = 35 horas`.
-    *   Haz clic en **"Crear Planificación"**.
-4.  **Ve a "Calendario"**:
-    *   Navega al mes correspondiente.
-    *   Verás los días laborables ocupados con las horas planificadas. Los fines de semana y festivos habrán sido omitidos.
-    *   Haz clic en un día con un indicador de horas para ver los detalles.
----
-
-## 🐛 Solución de Problemas
-
--   **Error de conexión a MySQL:** Verifica que el servicio de MySQL esté corriendo y que tus credenciales en el archivo `.env` son correctas.
--   **La aplicación no inicia / Cuadro blanco:** Asegúrate de que el backend está corriendo (`npm run dev` en la carpeta `/server`). Abre la consola del navegador (F12) y revisa si hay errores de red (rojos) al intentar conectar con `http://localhost:3000/api`.
--   **Los festivos no aparecen:** Confirma que has insertado los festivos en la tabla `holidays` de tu base de datos. El servidor los carga al iniciar.
+- admin / admin (rol: admin)
+- Otros usuarios u operarios dependen del seed en `schema.sql` (el backend soporta login para `jefe` y `operarios` si existen en DB)
 
 ---
+
+## 🧪 Endpoints (resumen)
+
+Autenticación
+- POST /api/auth/login
+- GET  /api/auth/operators
+- GET  /api/auth/verify
+
+Planificación
+- POST /api/tasks/plan
+
+Work logs
+- POST   /api/work_logs
+- GET    /api/work_logs
+- PUT    /api/work_logs/:id
+- DELETE /api/work_logs/:id
+
+Calendario
+- GET /api/calendar/month-view?year=YYYY&month=1..12
+
+Reportes
+- GET /api/reports/planned-vs-actual
+- GET /api/reports/detailed-deviations
+
+Datos maestros
+- GET/POST/PUT/DELETE /api/machines
+- GET/POST /api/molds
+- GET/POST /api/molds/parts
+
+Festivos
+- GET    /api/holidays
+- POST   /api/holidays      (admin)
+- DELETE /api/holidays/:date (admin)
+
+Salud
+- GET /health
+
+---
+
+## 🖥️ Uso rápido (planner)
+
+1) Login como `jefe` (si existe) o `admin`
+2) Configuración: valida que haya máquinas, moldes y partes
+3) Cuadro Planificador:
+   - Selecciona Molde y Fecha de Inicio
+   - Ajusta “Cantidad de Moldes/Partes”
+   - Ingresa horas base por máquina (horas para producir UNA parte)
+   - “Crear Planificación” → el sistema distribuye horas en días hábiles
+4) Calendario:
+   - Verás indicadores de horas por día
+   - Festivos y fines de semana resaltados (no se planifica)
+
+---
+
+## ⚙️ Detalles técnicos clave
+
+Días hábiles
+- Fines de semana: siempre excluidos
+- Festivos:
+  - Automáticos (Colombia) generados por `holidaysColombia.service.js`
+  - Festivos en DB se combinan y tienen prioridad en nombre
+  - Caché recargada al iniciar y tras POST/DELETE /holidays
+
+Scheduler
+- Capacidad diaria por máquina:
+  - 1 operario: 9h
+  - >1 operario: operarios × 8h
+- Salta fines de semana y festivos con `isBusinessDay` / `getNextBusinessDay`
+- Respeta capacidad ya ocupada (suma de `plan_entries` por día)
+
+Calendario
+- Backend entrega:
+  - events: { [día-del-mes]: { tasks:[], machineUsage:{} } }
+  - holidays: { 'YYYY-MM-DD': 'Nombre' }
+
+---
+
+## 🐛 Problemas conocidos / siguientes pasos
+
+- Frontend: el registro de trabajo (worklog) está parcialmente simulado en `public/app.js` (backend listo).
+- Parrilla: actualmente lista todas las partes; endpoint ideal: GET /molds/:id/parts.
+- Mejoras UX: toasts/spinners uniformes, tooltips en calendario, botón “Hoy”.
+- Índices recomendados en DB (si no existen): 
+  - plan_entries(date, machine_id), 
+  - work_logs(recorded_at, machine_id), 
+  - holidays(date UNIQUE)
+
+---
+
+## 🧭 Roadmap sugerido
+
+1) Filtros y tooltips en Calendario + botón “Hoy”
+2) Worklog completo en frontend (crear/editar)
+3) Endpoint /molds/:id/parts y filtrado real en parrilla
+4) Reporte de utilización por máquina (semanal/mensual)
+5) Export/Import CSV del grid
+
+---
+
 ## 👨‍💻 Autor
 
-**Alejandro** (@alejo00710)
-- GitHub: [alejo00710](https://github.com/alejo00710)
+- Alejandro (@alejo00710) — GitHub: https://github.com/alejo00710

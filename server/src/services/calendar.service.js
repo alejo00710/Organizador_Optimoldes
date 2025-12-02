@@ -11,7 +11,7 @@ const getCalendarData = async (startDate, endDate) => {
       pe.date,
       pe.hours_planned,
       m.id as mold_id,
-      m. code as mold_code,
+      m.code as mold_code,
       mp.id as part_id,
       mp.part_number,
       ma.id as machine_id,
@@ -21,7 +21,7 @@ const getCalendarData = async (startDate, endDate) => {
     JOIN molds m ON pe.mold_id = m.id
     JOIN mold_parts mp ON pe.part_id = mp.id
     JOIN machines ma ON pe.machine_id = ma.id
-    WHERE pe.date >= ? AND pe. date <= ?
+    WHERE pe.date >= ? AND pe.date <= ?
     ORDER BY pe.date, ma.name
   `;
 
@@ -48,8 +48,8 @@ const getCalendarData = async (startDate, endDate) => {
     JOIN mold_parts mp ON wl.part_id = mp.id
     JOIN machines ma ON wl.machine_id = ma.id
     JOIN operators o ON wl.operator_id = o.id
-    WHERE DATE(wl.recorded_at) >= ? AND DATE(wl. recorded_at) <= ?
-    ORDER BY wl.recorded_at, ma. name
+    WHERE DATE(wl.recorded_at) >= ? AND DATE(wl.recorded_at) <= ?
+    ORDER BY wl.recorded_at, ma.name
   `;
 
     const actualData = await query(actualSql, [startDate, endDate]);
@@ -125,15 +125,15 @@ const getDailySummary = async (startDate, endDate) => {
         0 as actual
       FROM plan_entries pe
       JOIN machines ma ON pe.machine_id = ma.id
-      WHERE pe. date >= ? AND pe.date <= ?
+      WHERE pe.date >= ? AND pe.date <= ?
       GROUP BY pe.date, pe.machine_id
       
       UNION ALL
       
       SELECT 
         DATE(wl.recorded_at) as date,
-        wl. machine_id,
-        ma. name as machine_name,
+        wl.machine_id,
+        ma.name as machine_name,
         0 as planned,
         SUM(wl.hours_worked) as actual
       FROM work_logs wl

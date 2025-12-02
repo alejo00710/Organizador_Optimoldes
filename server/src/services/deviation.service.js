@@ -7,54 +7,42 @@ const { DEVIATION_THRESHOLD } = require('../utils/constants');
 const getPlannedVsActual = async (filters) => {
     const { moldId, partId, machineId, startDate, endDate } = filters;
 
-    let whereClauses = [];
-    let params = [];
+    // Construcción robusta de condiciones
+    const plannedConds = [];
+    const plannedParams = [];
+    const actualConds = [];
+    const actualParams = [];
 
-    if (moldId) {
-        whereClauses.push('mold_id = ?');
-        params.push(moldId);
-    }
-    if (partId) {
-        whereClauses.push('part_id = ?');
-        params.push(partId);
-    }
-    if (machineId) {
-        whereClauses.push('machine_id = ?');
-        params.push(machineId);
-    }
+    if (moldId) { plannedConds.push('mold_id = ?'); plannedParams.push(moldId); }
+    if (partId) { plannedConds.push('part_id = ?'); plannedParams.push(partId); }
+    if (machineId) { plannedConds.push('machine_id = ?'); plannedParams.push(machineId); }
 
-    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    actualConds.push(...plannedConds);
+    actualParams.push(...plannedParams);
+
+    if (startDate) { plannedConds.push('date >= ?'); plannedParams.push(startDate); }
+    if (endDate) { plannedConds.push('date <= ?'); plannedParams.push(endDate); }
+
+    if (startDate) { actualConds.push('DATE(recorded_at) >= ?'); actualParams.push(startDate); }
+    if (endDate) { actualConds.push('DATE(recorded_at) <= ?'); actualParams.push(endDate); }
+
+    const plannedWhere = plannedConds.length ? `WHERE ${plannedConds.join(' AND ')}` : '';
+    const actualWhere = actualConds.length ? `WHERE ${actualConds.join(' AND ')}` : '';
 
     // Horas planificadas
     const plannedSql = `
-    SELECT 
-      COALESCE(SUM(hours_planned), 0) as total_planned
-    FROM plan_entries
-    ${whereClause}
-    ${startDate ? 'AND date >= ?' : ''}
-    ${endDate ? 'AND date <= ?' : ''}
-  `;
-
-    const plannedParams = [...params];
-    if (startDate) plannedParams.push(startDate);
-    if (endDate) plannedParams.push(endDate);
-
+      SELECT COALESCE(SUM(hours_planned), 0) as total_planned
+      FROM plan_entries
+      ${plannedWhere}
+    `;
     const plannedResult = await query(plannedSql, plannedParams);
 
     // Horas reales
     const actualSql = `
-    SELECT 
-      COALESCE(SUM(hours_worked), 0) as total_actual
-    FROM work_logs
-    ${whereClause}
-    ${startDate ? 'AND DATE(recorded_at) >= ?' : ''}
-    ${endDate ? 'AND DATE(recorded_at) <= ?' : ''}
-  `;
-
-    const actualParams = [...params];
-    if (startDate) actualParams.push(startDate);
-    if (endDate) actualParams.push(endDate);
-
+      SELECT COALESCE(SUM(hours_worked), 0) as total_actual
+      FROM work_logs
+      ${actualWhere}
+    `;
     const actualResult = await query(actualSql, actualParams);
 
     const planned = parseFloat(plannedResult[0].total_planned);
@@ -71,7 +59,7 @@ const calculateDeviation = (planned, actual) => {
         return {
             planned,
             actual,
-            deviation: actual > 0 ? 100 : 0,
+            deviation: actual,
             deviationPercent: actual > 0 ? 100 : 0,
             hasAlert: actual > 0,
         };
@@ -105,7 +93,7 @@ const getDetailedDeviationReport = async (startDate, endDate) => {
     const sql = `
     SELECT 
       m.id as mold_id,
-      m. code as mold_code,
+      m.code as mold_code,
       mp.id as part_id,
       mp.part_number,
       ma.id as machine_id,
@@ -113,34 +101,32 @@ const getDetailedDeviationReport = async (startDate, endDate) => {
       COALESCE(SUM(pe.hours_planned), 0) as total_planned,
       COALESCE(SUM(wl.hours_worked), 0) as total_actual
     FROM molds m
-    CROSS JOIN mold_parts mp ON mp.mold_id = m. id
-    CROSS JOIN machines ma
-    LEFT JOIN plan_entries pe ON 
-      pe.mold_id = m.id AND 
-      pe.part_id = mp.id AND 
-      pe.machine_id = ma.id
-      ${startDate ? 'AND pe. date >= ?' : ''}
+    JOIN mold_parts mp ON mp.mold_id = m.id
+    JOIN machines ma ON ma.is_active = TRUE
+    LEFT JOIN plan_entries pe 
+      ON pe.mold_id = m.id 
+      AND pe.part_id = mp.id 
+      AND pe.machine_id = ma.id
+      ${startDate ? 'AND pe.date >= ?' : ''}
       ${endDate ? 'AND pe.date <= ?' : ''}
-    LEFT JOIN work_logs wl ON 
-      wl.mold_id = m. id AND 
-      wl. part_id = mp.id AND 
-      wl.machine_id = ma.id
+    LEFT JOIN work_logs wl 
+      ON wl.mold_id = m.id 
+      AND wl.part_id = mp.id 
+      AND wl.machine_id = ma.id
       ${startDate ? 'AND DATE(wl.recorded_at) >= ?' : ''}
       ${endDate ? 'AND DATE(wl.recorded_at) <= ?' : ''}
     WHERE m.is_active = TRUE 
       AND mp.is_active = TRUE 
-      AND ma. is_active = TRUE
+      AND ma.is_active = TRUE
     GROUP BY m.id, mp.id, ma.id
     HAVING total_planned > 0 OR total_actual > 0
   `;
 
     const params = [];
-    if (startDate) {
-        params.push(startDate, startDate);
-    }
-    if (endDate) {
-        params.push(endDate, endDate);
-    }
+    if (startDate) params.push(startDate);
+    if (endDate) params.push(endDate);
+    if (startDate) params.push(startDate);
+    if (endDate) params.push(endDate);
 
     const results = await query(sql, params);
 

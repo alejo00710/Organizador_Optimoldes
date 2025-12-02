@@ -1,4 +1,4 @@
-const { query, getConnection } = require('../config/database');
+const { query } = require('../config/database');
 const { ROLES, OPERATOR_EDIT_DAYS_LIMIT } = require('../utils/constants');
 
 /**
@@ -68,20 +68,20 @@ const getWorkLogs = async (req, res, next) => {
     try {
         const { startDate, endDate, operatorId, machineId, moldId } = req.query;
 
-        let whereClauses = [];
-        let params = [];
+        const whereClauses = [];
+        const params = [];
 
         // Filtrar por operario si es rol operario
         if (req.user.role === ROLES.OPERATOR) {
             whereClauses.push('wl.operator_id = ?');
             params.push(req.user.operatorId);
         } else if (operatorId) {
-            whereClauses.push('wl. operator_id = ?');
+            whereClauses.push('wl.operator_id = ?');
             params.push(operatorId);
         }
 
         if (machineId) {
-            whereClauses.push('wl. machine_id = ?');
+            whereClauses.push('wl.machine_id = ?');
             params.push(machineId);
         }
 
@@ -173,7 +173,7 @@ const updateWorkLog = async (req, res, next) => {
     `;
 
         await query(updateSql, [
-            hours_worked || log.hours_worked,
+            hours_worked !== undefined ? hours_worked : log.hours_worked,
             note !== undefined ? note : log.note,
             id,
         ]);
