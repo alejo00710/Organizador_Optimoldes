@@ -8,62 +8,151 @@
     --text-color: #2d3748;
     --border-color: #e2e8f0;
 }
+
+/* Evitar scroll horizontal global y asegurar box-sizing */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+html, body {
+    height: 100%;
+    overflow-x: hidden; /* Oculta cualquier overflow horizontal de la página */
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     background-color: var(--background-color);
     color: var(--text-color);
     margin: 0;
-    padding: 1rem;
+    padding: 0;
 }
-.container { max-width: 1200px; margin: auto; }
-.card { background-color: var(--card-background); border-radius: 8px; padding: 2rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06); }
-.login-container { display: flex; justify-content: center; align-items: center; min-height: 80vh; }
+
+/* Contenedor a pantalla completa */
+.container {
+    width: 100%;
+    max-width: none;
+    margin: 0 auto;
+    padding: 0; /* Quita padding para evitar overflow lateral */
+}
+
+.main-app {
+    min-height: 100vh;
+}
+
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+
 .login-card { max-width: 400px; width: 100%; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
-.header-right { display: flex; align-items: center; gap: 1rem; }
+
+.card {
+    background-color: var(--card-background);
+    border-radius: 8px;
+    padding: 2rem;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 0 0 2rem 0;
+    padding: 0 12px; /* ligero padding interno sin provocar overflow */
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;        /* permite que el contenido se contraiga dentro del flex */
+    flex-wrap: nowrap;   /* evita saltos que puedan empujar el ancho */
+}
+
 .user-info p { margin: 0; font-size: 0.9rem; }
-.status { font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 12px; }
+
+/* Badge de estado: evita romper el layout */
+.status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 12px;
+    white-space: nowrap;       /* evita salto de línea del punto y texto */
+}
 .status.disconnected { background-color: #fed7d7; color: var(--danger-color); }
+
 .btn { padding: 0.6rem 1.2rem; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background-color 0.2s; }
 .btn-primary { background-color: var(--primary-color); color: white; }
 .btn-secondary { background-color: #e2e8f0; color: #4a5568; }
 .btn-danger { background-color: var(--danger-color); color: white; }
+
 .hidden { display: none !important; }
+
 .form-group { margin-bottom: 1rem; }
 .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 600; }
 .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; }
-.tabs { display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 1.5rem; }
+
+.tabs { display: flex; border-bottom: 1px solid var(--border-color); margin: 0 12px 1.5rem; }
 .tab { padding: 0.8rem 1.2rem; border: none; background: none; cursor: pointer; border-bottom: 3px solid transparent; }
 .tab.active { border-bottom-color: var(--primary-color); font-weight: bold; }
+
 .tab-content { display: none; }
 .tab-content.active { display: block; }
-.response-box { background-color: #edf2f7; border-left: 4px solid #a0aec0; padding: 1rem; margin-top: 1rem; white-space: pre-wrap; font-family: monospace; max-height: 300px; overflow-y: auto; }
+
+/* Caja de respuestas */
+.response-box {
+    background-color: #edf2f7;
+    border-left: 4px solid #a0aec0;
+    padding: 1rem;
+    margin-top: 1rem;
+    white-space: pre-wrap;
+    font-family: monospace;
+    max-height: 300px;
+    overflow-y: auto;
+}
 .response-box.success { border-left-color: var(--success-color); }
 .response-box.error { border-left-color: var(--danger-color); }
+
+/* Grillas de formularios */
 .form-grid-3-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 24px; margin-top: 16px; }
 .form-column h5 { font-weight: 600; margin-bottom: 12px; color: var(--primary-color); }
 .emoji { margin-right: 8px; }
-.planning-controls { display: flex; gap: 24px; align-items: flex-end; margin-bottom: 16px; }
-.table-container { overflow-x: auto; margin-top: 16px; max-height: 400px; }
+
+.planning-controls { display: flex; gap: 24px; align-items: flex-end; margin: 0 12px 16px; }
+
+/* Tabla del planificador */
+.table-container {
+    overflow-x: auto;      /* scroll horizontal interno si la tabla es muy ancha */
+    margin-top: 16px;
+    width: 100%;
+    max-height: none;
+}
+
 #planningGrid { width: 100%; border-collapse: collapse; font-size: 14px; }
 #planningGrid th, #planningGrid td { border: 1px solid #ddd; padding: 8px; text-align: left; white-space: nowrap; }
-#planningGrid thead th { position: sticky; top: 0; z-index: 2; background-color: #f2f2f2;}
-#planningGrid thead tr:nth-child(2) th { top: 37px; }
+#planningGrid thead th { position: sticky; top: 0; z-index: 2; background-color: #f2f2f2; }
 #planningGrid tfoot { position: sticky; bottom: 0; background-color: #e9ecef; font-weight: bold; z-index: 2; }
 #planningGrid tfoot td { color: #007bff; }
 #planningGrid td:first-child { font-weight: bold; background-color: #f9f9f9; position: sticky; left: 0; }
-#planningGrid input { width: 60px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; text-align: center; }
+#planningGrid input { width: 80px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; text-align: center; }
 .calculated-cell { background-color: #f8f9fa; font-style: italic; color: #6c757d; text-align: center; }
 
 /* Estilos del Calendario Visual */
-.calendar-container { padding: 1rem; background-color: rgba(0, 0, 0, 0.473); }
-.calendar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.calendar-container { padding: 1rem; }
+.calendar-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding: 0 12px; }
 .calendar-header h2 { margin: 0; font-size: 1.5rem; }
 #calendar-nav button { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 0.5rem 1rem; cursor: pointer; transition: background-color 0.2s; }
 #calendar-nav button:hover { background-color: #f0f0f0; }
-.calendar-grid-header { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; background-color: #000000; }
+
+.calendar-grid-header { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin: 0 12px; }
 .calendar-day-name { font-weight: bold; text-align: center; padding: 0.5rem; background-color: #f8f9fa; border-bottom: 2px solid #dee2e6; }
-.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; background-color: #000000; border: 1px solid #e0e0e0; }
+
+.calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; border: 1px solid #e0e0e0; margin: 0 12px; }
 .calendar-day { position: relative; min-height: 100px; padding: 0.5rem; background-color: #fff; cursor: pointer; transition: background-color 0.2s; }
 .calendar-day:hover { background-color: #f0f8ff; }
 .calendar-day .day-number { font-weight: bold; font-size: 0.9rem; }
@@ -71,9 +160,18 @@ body {
 .calendar-day.other-month { background-color: #f7f7f7; color: #ccc; cursor: default; }
 .calendar-day.other-month:hover { background-color: #f7f7f7; }
 .events-indicator { position: absolute; bottom: 5px; right: 5px; padding: 2px 6px; font-size: 0.7rem; border-radius: 8px; background-color: #28a745; color: white; }
+
 .calendar-day.holiday { background-color: #fff3cd; }
 .calendar-day.holiday:hover { background-color: #ffeeba; }
 .holiday-name { position: absolute; bottom: 5px; left: 5px; font-size: 0.7rem; color: #856404; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80%; }
+
+/* Fines de semana */
+.calendar-day.weekend {
+    background-color: #f0f0f0;
+    color: #a0a0a0;
+    cursor: default;
+}
+.calendar-day.weekend:hover { background-color: #e0e0e0; }
 
 /* Estilos de la Ventana Modal */
 .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 1000; }
@@ -81,32 +179,3 @@ body {
 .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #dee2e6; padding-bottom: 1rem; margin-bottom: 1rem; }
 .modal-header h3 { margin: 0; }
 .modal-close { font-size: 1.5rem; font-weight: bold; border: none; background: none; cursor: pointer; }
-
-/* public/styles.css */
-
-/* --- Estilos Adicionales para el Calendario (Punto 2) --- */
-
-/* Estilos para Fines de Semana (Sábados y Domingos) */
-.calendar-day.weekend {
-    background-color: #f0f0f0; /* Un gris claro */
-    color: #a0a0a0;
-    cursor: default;
-}
-.calendar-day.weekend:hover {
-    background-color: #e0e0e0;
-}
-
-/* Si un día es festivo, le damos prioridad al estilo de festivo (ya existía) */
-.calendar-day.holiday {
-    background-color: #fff3cd; /* Amarillo claro */
-    border: 1px dashed #ffeeba;
-    cursor: pointer; /* Lo mantenemos interactivo por si hay algo planificado */
-}
-.calendar-day.holiday:hover {
-    background-color: #ffeeba;
-}
-
-/* Asegurar que el indicador de eventos se vea sobre el color de fondo */
-.calendar-day.weekend .events-indicator {
-    background-color: #5cb85c; /* Un verde más visible en fondo gris */
-}

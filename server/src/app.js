@@ -15,6 +15,9 @@ const reportsRoutes = require('./routes/reports.routes');
 const machinesRoutes = require('./routes/machines.routes');
 const holidaysRoutes = require('./routes/holidays.routes');
 const moldsRoutes = require('./routes/molds.routes');
+const workingRoutes = require('./routes/working.routes');
+const datosRoutes = require('./routes/datos.routes');
+const importRoutes = require('./routes/import.routes');
 
 const app = express();
 
@@ -60,6 +63,9 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/machines', machinesRoutes);
 app.use('/api/holidays', holidaysRoutes);
 app.use('/api/molds', moldsRoutes);
+app.use('/api/working', workingRoutes);
+app.use('/api/datos', datosRoutes);
+app.use('/api/import', importRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
