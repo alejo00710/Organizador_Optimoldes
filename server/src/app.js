@@ -18,6 +18,8 @@ const moldsRoutes = require('./routes/molds.routes');
 const workingRoutes = require('./routes/working.routes');
 const datosRoutes = require('./routes/datos.routes');
 const importRoutes = require('./routes/import.routes');
+const moldRoutes = require('./routes/mold.routes');
+const catalogRoutes = require('./routes/catalog.routes');
 
 const app = express();
 
@@ -66,6 +68,9 @@ app.use('/api/molds', moldsRoutes);
 app.use('/api/working', workingRoutes);
 app.use('/api/datos', datosRoutes);
 app.use('/api/import', importRoutes);
+app.use('/api/molds', moldRoutes);
+app.use('/api/catalogs', catalogRoutes);
+
 
 // Health check
 app.get('/health', (req, res) => {

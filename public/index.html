@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sistema de Producción de Moldes</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🏭%3C/text%3E%3C/svg%3E">
 </head>
 
 <body>
@@ -27,9 +28,7 @@
         </div>
         <div class="form-group hidden" id="operatorSelectGroup">
           <label>Seleccionar Operario</label>
-          <select id="operatorId">
-            <option value="">Cargando...</option>
-          </select>
+          <select id="operatorId"><option value="">Cargando...</option></select>
         </div>
         <button class="btn btn-primary" id="loginBtn">Iniciar Sesión</button>
       </div>
@@ -42,13 +41,11 @@
         </div>
         <div class="header-right">
           <span class="status disconnected" id="status">● Desconectado</span>
-
           <div class="user-info" id="userInfo">
             <p><strong>Usuario:</strong> <span id="displayUsername"></span></p>
             <p><strong>Rol:</strong> <span id="displayRole"></span></p>
             <p><strong>Operario:</strong> <span id="displayOperator">N/A</span></p>
           </div>
-
           <button class="btn btn-danger" id="logoutBtn">Cerrar Sesión</button>
         </div>
       </div>
@@ -64,24 +61,25 @@
           <button class="tab" data-tab="reports">📈 Reportes</button>
         </div>
 
-        <!-- Plan -->
+        <!-- Planificador simplificado -->
         <div class="tab-content active" id="tab-plan">
-          <h2>📊 Cuadro de Planificación General</h2>
-          <p>Define la cantidad de partes a producir y asigna las horas en las máquinas correspondientes.</p>
-          <div class="planning-controls">
-            <div class="form-group">
-              <label>1. Selecciona el Molde</label>
-              <select id="planMoldSelector"></select>
+          <h2>📊 Cuadro Planificador</h2>
+          <p>Molde con búsqueda, Fecha de inicio y parrilla con Partes y Máquinas fijas.</p>
+          <div class="planning-controls" style="display:flex;gap:12px;align-items:end;">
+            <div class="form-group" style="flex:1">
+              <label>Molde (escribe para buscar)</label>
+              <input type="text" id="planMoldInput" list="planMoldDatalist" placeholder="Ingresa o selecciona molde">
+              <datalist id="planMoldDatalist"></datalist>
             </div>
             <div class="form-group">
-              <label>2. Elige la Fecha de Inicio</label>
+              <label>Fecha de inicio</label>
               <input type="date" id="gridStartDate">
             </div>
+            <div class="form-group">
+              <button class="btn btn-secondary" id="submitGridPlanBtn">Crear Planificación</button>
+            </div>
           </div>
-          <div id="planningGridContainer" class="table-container">
-            <p>Cargando parrilla de planificación...</p>
-          </div>
-          <button class="btn btn-secondary" id="submitGridPlanBtn" style="margin-top: 16px;">Crear Planificación</button>
+          <div id="planningGridContainer" class="table-container" style="margin-top:12px">Cargando parrilla...</div>
           <div id="gridResponse" class="response-box"></div>
         </div>
 
@@ -154,14 +152,12 @@
             <div class="form-group"><label>Operario</label><input list="tmOperarios" id="tmOperario"><datalist id="tmOperarios"></datalist></div>
             <div class="form-group"><label>Proceso</label><input list="tmProcesos" id="tmProceso"><datalist id="tmProcesos"></datalist></div>
 
-            <!-- Molde con filtro + select -->
             <div class="form-group">
               <label>Molde</label>
               <input type="text" id="tmMoldeFilter" placeholder="Filtrar moldes...">
               <select id="tmMoldeSelect" size="8"></select>
             </div>
 
-            <!-- Parte con filtro + select -->
             <div class="form-group">
               <label>Parte</label>
               <input type="text" id="tmParteFilter" placeholder="Filtrar partes...">
@@ -176,7 +172,7 @@
           <div class="response-box" id="tmResponse"></div>
         </div>
 
-        <!-- Importar + diagnóstico -->
+        <!-- Importar -->
         <div class="tab-content" id="tab-importar">
           <h2>📥 Importar Datos</h2>
           <div class="form-group">
@@ -203,7 +199,7 @@
           </details>
         </div>
 
-        <!-- Config -->
+         <!-- Config -->
         <div class="tab-content" id="tab-config">
           <h2>⚙️ Gestión de Datos Maestros</h2>
           <p>Usa estos formularios para registrar las máquinas, moldes y partes del sistema.</p>
@@ -263,19 +259,6 @@
           <div id="configResponse" class="response-box" style="margin-top: 24px;"></div>
         </div>
 
-        <!-- Trabajo -->
-        <div class="tab-content" id="tab-worklog">
-          <h2>⏱️ Registrar Trabajo Real</h2>
-          <div class="form-group"><label>ID Molde</label><input type="number" id="workMoldId" min="1"></div>
-          <div class="form-group"><label>ID Parte</label><input type="number" id="workPartId" min="1"></div>
-          <div class="form-group"><label>ID Máquina</label><input type="number" id="workMachineId" min="1"></div>
-          <div class="form-group"><label>ID Operario</label><input type="number" id="workOperatorId" readonly></div>
-          <div class="form-group"><label>Horas Trabajadas</label><input type="number" id="workHours" step="0.5" min="0.5"></div>
-          <div class="form-group"><label>Nota (opcional)</label><textarea id="workNote" rows="3" placeholder="Ej: Trabajo completado sin problemas"></textarea></div>
-          <button class="btn btn-secondary" id="createWorkLogBtn">Registrar Trabajo</button>
-          <div class="response-box" id="worklogResponse"></div>
-        </div>
-
         <!-- Calendario -->
         <div class="tab-content" id="tab-calendar">
           <div class="calendar-container">
@@ -299,7 +282,6 @@
           </div>
         </div>
 
-        <!-- Reportes -->
         <div class="tab-content" id="tab-reports">
           <h2>📈 Reportes</h2>
           <div class="form-group"><label>Fecha Desde</label><input type="date" id="reportFrom"></div>
@@ -309,6 +291,7 @@
           <button class="btn" id="loadDetailedReportBtn">Reporte Detallado</button>
           <div class="response-box" id="reportResponse"></div>
         </div>
+
       </div>
     </div>
 

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS operators (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
-  user_id INT NOT NULL,
+  user_id INT NULL,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -144,4 +144,32 @@ CREATE TABLE IF NOT EXISTS datos (
 CREATE TABLE IF NOT EXISTS working_overrides (
   date DATE PRIMARY KEY,
   is_working TINYINT(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Crear tabla de recetas por molde
+CREATE TABLE IF NOT EXISTS mold_recipes (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  mold_id INT NOT NULL,
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (mold_id) REFERENCES molds(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_mold_recipes_mold (mold_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Líneas de receta (una por parte/máquina)
+CREATE TABLE IF NOT EXISTS mold_recipe_lines (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  recipe_id BIGINT NOT NULL,
+  part_id INT NULL,
+  part_name VARCHAR(255) NULL,
+  machine_id INT NULL,
+  machine_name VARCHAR(255) NULL,
+  base_hours DECIMAL(6,2) NULL,
+  sequence INT DEFAULT 0,
+  FOREIGN KEY (recipe_id) REFERENCES mold_recipes(id) ON DELETE CASCADE,
+  FOREIGN KEY (part_id) REFERENCES mold_parts(id) ON DELETE SET NULL,
+  FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE SET NULL,
+  INDEX idx_recipe_seq (recipe_id, sequence)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
