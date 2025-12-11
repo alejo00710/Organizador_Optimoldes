@@ -2,18 +2,18 @@ const { query } = require('../config/database');
 
 /**
  * Obtiene datos del calendario (plan + real) para un rango de fechas
+ * Ajustado al schema actual: molds.name y mold_parts.name
  */
 const getCalendarData = async (startDate, endDate) => {
-    // Obtener plan
     const planSql = `
     SELECT 
       pe.id,
       pe.date,
       pe.hours_planned,
       m.id as mold_id,
-      m.code as mold_code,
+      m.name as mold_name,
       mp.id as part_id,
-      mp.part_number,
+      mp.name as part_name,
       ma.id as machine_id,
       ma.name as machine_name,
       'plan' as type
@@ -24,10 +24,8 @@ const getCalendarData = async (startDate, endDate) => {
     WHERE pe.date >= ? AND pe.date <= ?
     ORDER BY pe.date, ma.name
   `;
-
     const planData = await query(planSql, [startDate, endDate]);
 
-    // Obtener datos reales
     const actualSql = `
     SELECT 
       wl.id,
@@ -35,9 +33,9 @@ const getCalendarData = async (startDate, endDate) => {
       wl.hours_worked,
       wl.note,
       m.id as mold_id,
-      m.code as mold_code,
+      m.name as mold_name,
       mp.id as part_id,
-      mp.part_number,
+      mp.name as part_name,
       ma.id as machine_id,
       ma.name as machine_name,
       o.id as operator_id,
@@ -51,26 +49,23 @@ const getCalendarData = async (startDate, endDate) => {
     WHERE DATE(wl.recorded_at) >= ? AND DATE(wl.recorded_at) <= ?
     ORDER BY wl.recorded_at, ma.name
   `;
-
     const actualData = await query(actualSql, [startDate, endDate]);
 
-    // Formatear para calendario (compatible con FullCalendar)
     const events = [];
 
-    // Eventos de planificación
     planData.forEach((row) => {
         events.push({
             id: `plan-${row.id}`,
-            title: `${row.mold_code} - ${row.part_number} (Plan: ${row.hours_planned}h)`,
+            title: `${row.mold_name} - ${row.part_name} (Plan: ${row.hours_planned}h)`,
             start: row.date,
             allDay: true,
             backgroundColor: '#3788d8',
             extendedProps: {
                 type: 'plan',
                 moldId: row.mold_id,
-                moldCode: row.mold_code,
+                moldName: row.mold_name,
                 partId: row.part_id,
-                partNumber: row.part_number,
+                partName: row.part_name,
                 machineId: row.machine_id,
                 machineName: row.machine_name,
                 hours: row.hours_planned,
@@ -78,20 +73,19 @@ const getCalendarData = async (startDate, endDate) => {
         });
     });
 
-    // Eventos reales
     actualData.forEach((row) => {
         events.push({
             id: `actual-${row.id}`,
-            title: `${row.mold_code} - ${row.part_number} (Real: ${row.hours_worked}h)`,
+            title: `${row.mold_name} - ${row.part_name} (Real: ${row.hours_worked}h)`,
             start: row.date,
             allDay: true,
             backgroundColor: '#28a745',
             extendedProps: {
                 type: 'actual',
                 moldId: row.mold_id,
-                moldCode: row.mold_code,
+                moldName: row.mold_name,
                 partId: row.part_id,
-                partNumber: row.part_number,
+                partName: row.part_name,
                 machineId: row.machine_id,
                 machineName: row.machine_name,
                 operatorId: row.operator_id,
@@ -106,7 +100,7 @@ const getCalendarData = async (startDate, endDate) => {
 };
 
 /**
- * Obtiene resumen agregado por día
+ * Obtiene resumen agregado por día (ajustado a names)
  */
 const getDailySummary = async (startDate, endDate) => {
     const sql = `

@@ -19,10 +19,18 @@ const toStr = (v) => {
   return s === '' ? null : s;
 };
 
-// GET /datos (historial)
+// GET /datos (historial) con paginación segura (interpolando limit y offset)
 const listDatos = async (req, res, next) => {
   try {
     const { operario, molde, parte, maquina, proceso } = req.query;
+
+    // Paginación: validar e interpolar como enteros
+    let limit = parseInt(req.query.limit ?? '20', 10);
+    let offset = parseInt(req.query.offset ?? '0', 10);
+    if (!Number.isInteger(limit) || limit <= 0) limit = 20;
+    if (limit > 1000) limit = 1000;
+    if (!Number.isInteger(offset) || offset < 0) offset = 0;
+
     const where = [];
     const params = [];
     if (operario) { where.push('nombre_operario = ?'); params.push(operario); }
@@ -31,20 +39,28 @@ const listDatos = async (req, res, next) => {
     if (maquina) { where.push('maquina = ?'); params.push(maquina); }
     if (proceso) { where.push('tipo_proceso = ?'); params.push(proceso); }
 
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    // Total
+    const countSql = `SELECT COUNT(*) AS total FROM datos ${whereSql}`;
+    const [{ total }] = await query(countSql, params);
+
+    // Interpolar limit/offset (ya validados) directamente en el SQL
     const sql = `
       SELECT id, dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas,
              source, created_at
       FROM datos
-      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ${whereSql}
       ORDER BY created_at DESC, id DESC
-      LIMIT 1000
+      LIMIT ${limit} OFFSET ${offset}
     `;
     const rows = await query(sql, params);
-    res.json(rows);
+
+    res.json({ total, limit, offset, items: rows });
   } catch (e) { next(e); }
 };
 
-// POST /datos (alta manual, admite parciales)
+// POST /datos
 const createDato = async (req, res, next) => {
   try {
     const userId = req.user?.id || null;
@@ -85,7 +101,6 @@ const createDato = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-// PUT /datos/:id (parciales; '' -> NULL; undefined -> mantener)
 const updateDato = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -120,7 +135,6 @@ const updateDato = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-// DELETE /datos/:id
 const deleteDato = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -130,7 +144,6 @@ const deleteDato = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-// GET /datos/meta (incluye years dinámicos)
 const getMeta = async (req, res, next) => {
   try {
     const uniques = async (col) =>

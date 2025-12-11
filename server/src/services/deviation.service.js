@@ -1,13 +1,9 @@
 const { query } = require('../config/database');
 const { DEVIATION_THRESHOLD } = require('../utils/constants');
 
-/**
- * Calcula horas planificadas y reales para un molde/parte/máquina en un rango
- */
 const getPlannedVsActual = async (filters) => {
     const { moldId, partId, machineId, startDate, endDate } = filters;
 
-    // Construcción robusta de condiciones
     const plannedConds = [];
     const plannedParams = [];
     const actualConds = [];
@@ -29,7 +25,6 @@ const getPlannedVsActual = async (filters) => {
     const plannedWhere = plannedConds.length ? `WHERE ${plannedConds.join(' AND ')}` : '';
     const actualWhere = actualConds.length ? `WHERE ${actualConds.join(' AND ')}` : '';
 
-    // Horas planificadas
     const plannedSql = `
       SELECT COALESCE(SUM(hours_planned), 0) as total_planned
       FROM plan_entries
@@ -37,7 +32,6 @@ const getPlannedVsActual = async (filters) => {
     `;
     const plannedResult = await query(plannedSql, plannedParams);
 
-    // Horas reales
     const actualSql = `
       SELECT COALESCE(SUM(hours_worked), 0) as total_actual
       FROM work_logs
@@ -51,9 +45,6 @@ const getPlannedVsActual = async (filters) => {
     return { planned, actual };
 };
 
-/**
- * Calcula el porcentaje de desviación y determina si excede el umbral
- */
 const calculateDeviation = (planned, actual) => {
     if (planned === 0) {
         return {
@@ -78,30 +69,24 @@ const calculateDeviation = (planned, actual) => {
     };
 };
 
-/**
- * Obtiene desviaciones por molde/parte/máquina
- */
 const getDeviationReport = async (filters) => {
     const { planned, actual } = await getPlannedVsActual(filters);
     return calculateDeviation(planned, actual);
 };
 
-/**
- * Obtiene reporte detallado con desviaciones por cada combinación
- */
 const getDetailedDeviationReport = async (startDate, endDate) => {
     const sql = `
     SELECT 
       m.id as mold_id,
-      m.code as mold_code,
+      m.name as mold_name,
       mp.id as part_id,
-      mp.part_number,
+      mp.name as part_name,
       ma.id as machine_id,
       ma.name as machine_name,
       COALESCE(SUM(pe.hours_planned), 0) as total_planned,
       COALESCE(SUM(wl.hours_worked), 0) as total_actual
     FROM molds m
-    JOIN mold_parts mp ON mp.mold_id = m.id
+    JOIN mold_parts mp ON mp.is_active = TRUE
     JOIN machines ma ON ma.is_active = TRUE
     LEFT JOIN plan_entries pe 
       ON pe.mold_id = m.id 
@@ -138,11 +123,11 @@ const getDetailedDeviationReport = async (startDate, endDate) => {
         return {
             mold: {
                 id: row.mold_id,
-                code: row.mold_code,
+                name: row.mold_name,
             },
             part: {
                 id: row.part_id,
-                partNumber: row.part_number,
+                name: row.part_name,
             },
             machine: {
                 id: row.machine_id,

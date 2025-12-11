@@ -21,10 +21,12 @@ CREATE TABLE IF NOT EXISTS operators (
   INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Máquinas con capacidad diaria por máquina (daily_capacity)
 CREATE TABLE IF NOT EXISTS machines (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100) NOT NULL UNIQUE,
   operarios_count INT NOT NULL DEFAULT 1,
+  daily_capacity DECIMAL(5,2) NULL,           -- Capacidad diaria específica por máquina (horas/día). Si NULL, el scheduler no limita.
   notes TEXT,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -57,7 +59,9 @@ CREATE TABLE IF NOT EXISTS plan_entries (
   FOREIGN KEY (mold_id) REFERENCES molds(id) ON DELETE CASCADE,
   FOREIGN KEY (part_id) REFERENCES mold_parts(id) ON DELETE CASCADE,
   FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE,
-  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
+  INDEX idx_plan_entries_date_machine (date, machine_id),
+  INDEX idx_plan_entries_mold_part_machine (mold_id, part_id, machine_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS work_logs (
@@ -73,7 +77,9 @@ CREATE TABLE IF NOT EXISTS work_logs (
   FOREIGN KEY (mold_id) REFERENCES molds(id) ON DELETE CASCADE,
   FOREIGN KEY (part_id) REFERENCES mold_parts(id) ON DELETE CASCADE,
   FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE,
-  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE RESTRICT
+  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE RESTRICT,
+  INDEX idx_work_logs_recorded_at (recorded_at),
+  INDEX idx_work_logs_machine_date (machine_id, recorded_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS holidays (
@@ -91,7 +97,8 @@ CREATE TABLE IF NOT EXISTS import_batches (
   fail_count INT NOT NULL DEFAULT 0,
   created_by INT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_import_batches_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Errores de importación (diagnóstico)
@@ -112,7 +119,7 @@ CREATE TABLE IF NOT EXISTS import_errors (
   INDEX idx_import_errors_batch_row (batch_id, row_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- DATOS
+-- DATOS (registro libre/importado)
 CREATE TABLE IF NOT EXISTS datos (
   id INT AUTO_INCREMENT PRIMARY KEY,
   dia TINYINT NULL,
@@ -146,7 +153,7 @@ CREATE TABLE IF NOT EXISTS working_overrides (
   is_working TINYINT(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Crear tabla de recetas por molde
+-- Recetas por molde
 CREATE TABLE IF NOT EXISTS mold_recipes (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   mold_id INT NOT NULL,

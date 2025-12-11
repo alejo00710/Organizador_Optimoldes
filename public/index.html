@@ -6,31 +6,45 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sistema de Producción de Moldes</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🏭%3C/text%3E%3C/svg%3E">
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🏭%3C/text%3E%3C/svg%3E">
 </head>
 
 <body>
   <div class="container">
     <div class="login-container" id="loginContainer">
-      <div class="card login-card">
-        <h2>🔐 Iniciar Sesión</h2>
+      <div class="login-card">
+        <div class="login-icon">🏭</div>
+        <h2>Sistema de Producción</h2>
+        <p class="login-subtitle">
+          <span>⚙️</span>
+          <span>Control Industrial de Moldes</span>
+        </p>
+
         <div class="form-group">
           <label>Usuario</label>
           <select id="username">
-            <option value="admin">Admin</option>
+            <option value="admin">Administrador</option>
             <option value="jefe" selected>Jefe (Planner)</option>
             <option value="operarios">Operarios</option>
           </select>
         </div>
+
         <div class="form-group">
           <label>Contraseña</label>
-          <input type="password" id="password" value="admin">
+          <input type="password" id="password" value="admin" placeholder="Ingrese su contraseña">
         </div>
+
         <div class="form-group hidden" id="operatorSelectGroup">
           <label>Seleccionar Operario</label>
-          <select id="operatorId"><option value="">Cargando...</option></select>
+          <select id="operatorId">
+            <option value="">Cargando...</option>
+          </select>
         </div>
-        <button class="btn btn-primary" id="loginBtn">Iniciar Sesión</button>
+
+        <button class="btn btn-primary" id="loginBtn" style="width: 100%; margin-top: 1rem;">
+          Iniciar Sesión
+        </button>
       </div>
     </div>
 
@@ -75,8 +89,11 @@
               <label>Fecha de inicio</label>
               <input type="date" id="gridStartDate">
             </div>
-            <div class="form-group">
+            <div class="form-group" style="display:flex;gap:8px;">
               <button class="btn btn-secondary" id="submitGridPlanBtn">Crear Planificación</button>
+              <!-- NUEVO: botón limpiar parrilla -->
+              <button class="btn btn-danger" id="clearPlannerBtn" title="Borrar cantidades y horas">Limpiar
+                parrilla</button>
             </div>
           </div>
           <div id="planningGridContainer" class="table-container" style="margin-top:12px">Cargando parrilla...</div>
@@ -103,13 +120,18 @@
                 <input type="number" id="datoAnio" placeholder="Ej: 2025" min="2016" max="2100">
               </div>
 
-              <div class="form-group"><label>Operario</label><input type="text" id="datoOperario" placeholder="Nombre de operario"></div>
-              <div class="form-group"><label>Proceso</label><input type="text" id="datoProceso" placeholder="Tipo de proceso"></div>
+              <div class="form-group"><label>Operario</label><input type="text" id="datoOperario"
+                  placeholder="Nombre de operario"></div>
+              <div class="form-group"><label>Proceso</label><input type="text" id="datoProceso"
+                  placeholder="Tipo de proceso"></div>
               <div class="form-group"><label>Molde</label><input type="text" id="datoMolde" placeholder="Molde"></div>
               <div class="form-group"><label>Parte</label><input type="text" id="datoParte" placeholder="Parte"></div>
-              <div class="form-group"><label>Máquina</label><input type="text" id="datoMaquina" placeholder="Máquina"></div>
-              <div class="form-group"><label>Operación</label><input type="text" id="datoOperacion" placeholder="Operación"></div>
-              <div class="form-group"><label>Horas</label><input type="number" id="datoHoras" step="0.25" min="0.25" max="12" placeholder="0.25"></div>
+              <div class="form-group"><label>Máquina</label><input type="text" id="datoMaquina" placeholder="Máquina">
+              </div>
+              <div class="form-group"><label>Operación</label><input type="text" id="datoOperacion"
+                  placeholder="Operación"></div>
+              <div class="form-group"><label>Horas</label><input type="number" id="datoHoras" step="0.25" min="0.25"
+                  max="12" placeholder="0.25"></div>
               <button class="btn btn-secondary" id="datoCrearBtn">Guardar</button>
             </div>
             <div class="response-box" id="datoCrearResponse"></div>
@@ -118,11 +140,14 @@
           <h3 style="margin-top: 16px;">Historial</h3>
 
           <div class="form-grid-3-col">
-            <div class="form-group"><label>Operario</label><input type="text" id="datosOperario" placeholder="Filtrar"></div>
+            <div class="form-group"><label>Operario</label><input type="text" id="datosOperario" placeholder="Filtrar">
+            </div>
             <div class="form-group"><label>Molde</label><input type="text" id="datosMolde" placeholder="Filtrar"></div>
             <div class="form-group"><label>Parte</label><input type="text" id="datosParte" placeholder="Filtrar"></div>
-            <div class="form-group"><label>Máquina</label><input type="text" id="datosMaquina" placeholder="Filtrar"></div>
-            <div class="form-group"><label>Proceso</label><input type="text" id="datosProceso" placeholder="Filtrar"></div>
+            <div class="form-group"><label>Máquina</label><input type="text" id="datosMaquina" placeholder="Filtrar">
+            </div>
+            <div class="form-group"><label>Proceso</label><input type="text" id="datosProceso" placeholder="Filtrar">
+            </div>
             <button class="btn btn-secondary" id="datosBuscarBtn">Buscar</button>
           </div>
 
@@ -130,13 +155,28 @@
             <table id="datosTable">
               <thead>
                 <tr>
-                  <th>Día</th><th>Mes</th><th>Año</th><th>Operario</th><th>Proceso</th><th>Molde</th>
-                  <th>Parte</th><th>Máquina</th><th>Operación</th><th>Horas</th>
-                  <th>Fuente</th><th>Creado</th><th>Acciones</th>
+                  <th>Día</th>
+                  <th>Mes</th>
+                  <th>Año</th>
+                  <th>Operario</th>
+                  <th>Proceso</th>
+                  <th>Molde</th>
+                  <th>Parte</th>
+                  <th>Máquina</th>
+                  <th>Operación</th>
+                  <th>Horas</th>
+                  <th>Fuente</th>
+                  <th>Creado</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody></tbody>
             </table>
+            <div style="display:flex; gap:8px; align-items:center; margin-top: 12px;">
+              <div id="datosVerMasContainer"></div>
+              <button class="btn" id="datosMostrarTodosBtn" title="Cargar todos los registros pendientes">Mostrar
+                todos</button>
+            </div>
           </div>
           <div class="response-box" id="datosResponse"></div>
         </div>
@@ -149,8 +189,10 @@
             <div class="form-group"><label>Mes</label><select id="tmMes"></select></div>
             <div class="form-group"><label>Año</label><select id="tmAnio"></select></div>
 
-            <div class="form-group"><label>Operario</label><input list="tmOperarios" id="tmOperario"><datalist id="tmOperarios"></datalist></div>
-            <div class="form-group"><label>Proceso</label><input list="tmProcesos" id="tmProceso"><datalist id="tmProcesos"></datalist></div>
+            <div class="form-group"><label>Operario</label><input list="tmOperarios" id="tmOperario"><datalist
+                id="tmOperarios"></datalist></div>
+            <div class="form-group"><label>Proceso</label><input list="tmProcesos" id="tmProceso"><datalist
+                id="tmProcesos"></datalist></div>
 
             <div class="form-group">
               <label>Molde</label>
@@ -164,9 +206,12 @@
               <select id="tmParteSelect" size="8"></select>
             </div>
 
-            <div class="form-group"><label>Máquina</label><input list="tmMaquinas" id="tmMaquina"><datalist id="tmMaquinas"></datalist></div>
-            <div class="form-group"><label>Operación</label><input list="tmOperaciones" id="tmOperacion"><datalist id="tmOperaciones"></datalist></div>
-            <div class="form-group"><label>Horas</label><input type="number" id="tmHoras" step="0.25" min="0.25" max="12" placeholder="0.25"></div>
+            <div class="form-group"><label>Máquina</label><input list="tmMaquinas" id="tmMaquina"><datalist
+                id="tmMaquinas"></datalist></div>
+            <div class="form-group"><label>Operación</label><input list="tmOperaciones" id="tmOperacion"><datalist
+                id="tmOperaciones"></datalist></div>
+            <div class="form-group"><label>Horas</label><input type="number" id="tmHoras" step="0.25" min="0.25"
+                max="12" placeholder="0.25"></div>
             <button class="btn btn-secondary" id="tmGuardarBtn">Guardar</button>
           </div>
           <div class="response-box" id="tmResponse"></div>
@@ -188,39 +233,55 @@
             <div class="table-container">
               <table id="importDiagTable">
                 <thead>
-                <tr>
-                  <th>Fila</th><th>Operario</th><th>Proceso</th><th>Molde</th><th>Parte</th><th>Máquina</th><th>Operación</th><th>Horas</th><th>Motivo</th>
-                </tr>
+                  <tr>
+                    <th>Fila</th>
+                    <th>Operario</th>
+                    <th>Proceso</th>
+                    <th>Molde</th>
+                    <th>Parte</th>
+                    <th>Máquina</th>
+                    <th>Operación</th>
+                    <th>Horas</th>
+                    <th>Motivo</th>
+                  </tr>
                 </thead>
                 <tbody></tbody>
               </table>
             </div>
-            <button class="btn btn-secondary" id="importDiagDownloadBtn" disabled>Descargar diagnóstico completo</button>
+            <button class="btn btn-secondary" id="importDiagDownloadBtn" disabled>Descargar diagnóstico
+              completo</button>
           </details>
         </div>
 
-         <!-- Config -->
+        <!-- Config -->
         <div class="tab-content" id="tab-config">
           <h2>⚙️ Gestión de Datos Maestros</h2>
           <p>Usa estos formularios para registrar las máquinas, moldes y partes del sistema.</p>
           <div class="form-grid-3-col">
             <div class="form-column">
               <h5><span class="emoji">🔧</span> Máquina</h5>
-              <div class="form-group"><label>Nombre</label><input type="text" id="newMachineName" placeholder="Ej: TOR-01"></div>
-              <div class="form-group"><label>ID</label><input type="text" id="newMachineId" readonly placeholder="Se genera al crear"></div>
-              <div class="form-group"><label>Nº de Operarios</label><input type="number" id="newMachineOpCount" value="1" min="1"></div>
+              <div class="form-group"><label>Nombre</label><input type="text" id="newMachineName"
+                  placeholder="Ej: TOR-01"></div>
+              <div class="form-group"><label>ID</label><input type="text" id="newMachineId" readonly
+                  placeholder="Se genera al crear"></div>
+              <div class="form-group"><label>Nº de Operarios</label><input type="number" id="newMachineOpCount"
+                  value="1" min="1"></div>
               <button class="btn btn-secondary" id="createMachineBtn">Registrar Máquina</button>
             </div>
             <div class="form-column">
               <h5><span class="emoji">📦</span> Molde</h5>
-              <div class="form-group"><label>Nombre</label><input type="text" id="newMoldName" placeholder="Ej: Molde para pieza X"></div>
-              <div class="form-group"><label>ID</label><input type="text" id="newMoldId" readonly placeholder="Se genera al crear"></div>
+              <div class="form-group"><label>Nombre</label><input type="text" id="newMoldName"
+                  placeholder="Ej: Molde para pieza X"></div>
+              <div class="form-group"><label>ID</label><input type="text" id="newMoldId" readonly
+                  placeholder="Se genera al crear"></div>
               <button class="btn btn-secondary" id="createMoldBtn">Registrar Molde</button>
             </div>
             <div class="form-column">
               <h5><span class="emoji">🧩</span> Parte</h5>
-              <div class="form-group"><label>Nombre</label><input type="text" id="newPartName" placeholder="Ej: Componente principal"></div>
-              <div class="form-group"><label>ID</label><input type="text" id="newPartId" readonly placeholder="Se genera al crear"></div>
+              <div class="form-group"><label>Nombre</label><input type="text" id="newPartName"
+                  placeholder="Ej: Componente principal"></div>
+              <div class="form-group"><label>ID</label><input type="text" id="newPartId" readonly
+                  placeholder="Se genera al crear"></div>
               <button class="btn btn-secondary" id="createPartBtn">Registrar Parte</button>
             </div>
           </div>
@@ -230,9 +291,12 @@
           <div class="form-grid-2-col" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
             <div class="form-column">
               <h5><span class="emoji">👷</span> Operario</h5>
-              <p class="text-muted" style="font-size: 0.9rem;">Asigna un operario a un usuario de login (Ej: 'operarios').</p>
-              <div class="form-group"><label>Nombre Completo</label><input type="text" id="newOperatorName" placeholder="Ej: Juan Pérez"></div>
-              <div class="form-group"><label>ID</label><input type="text" id="newOperatorId" readonly placeholder="Se genera al crear"></div>
+              <p class="text-muted" style="font-size: 0.9rem;">Asigna un operario a un usuario de login (Ej:
+                'operarios').</p>
+              <div class="form-group"><label>Nombre Completo</label><input type="text" id="newOperatorName"
+                  placeholder="Ej: Juan Pérez"></div>
+              <div class="form-group"><label>ID</label><input type="text" id="newOperatorId" readonly
+                  placeholder="Se genera al crear"></div>
               <div class="form-group">
                 <label>Usuario de Login Asociado</label>
                 <select id="newOperatorUserId">
@@ -246,13 +310,15 @@
               <h5><span class="emoji">🎉</span> Festivo/Día No Laborable</h5>
               <p class="text-muted" style="font-size: 0.9rem;">Días que el planificador debe omitir.</p>
               <div class="form-group"><label>Fecha</label><input type="date" id="newHolidayDate"></div>
-              <div class="form-group"><label>Nombre/Motivo</label><input type="text" id="newHolidayName" placeholder="Ej: Feriado Nacional"></div>
+              <div class="form-group"><label>Nombre/Motivo</label><input type="text" id="newHolidayName"
+                  placeholder="Ej: Feriado Nacional"></div>
               <button class="btn btn-secondary" id="createHolidayBtn">Registrar Festivo</button>
               <hr style="margin: 15px 0;">
               <div id="holidaysListContainer">
                 <h6>Festivos Registrados:</h6>
                 <p>Cargando lista...</p>
-                <button class="btn btn-danger btn-sm" id="deleteHolidayBtn" style="margin-top: 10px; display: none;">Eliminar Festivo Seleccionado</button>
+                <button class="btn btn-danger btn-sm" id="deleteHolidayBtn"
+                  style="margin-top: 10px; display: none;">Eliminar Festivo Seleccionado</button>
               </div>
             </div>
           </div>
@@ -286,7 +352,8 @@
           <h2>📈 Reportes</h2>
           <div class="form-group"><label>Fecha Desde</label><input type="date" id="reportFrom"></div>
           <div class="form-group"><label>Fecha Hasta</label><input type="date" id="reportTo"></div>
-          <div class="form-group"><label>ID Molde (opcional)</label><input type="number" id="reportMoldId" placeholder="Dejar vacío para todos" min="1"></div>
+          <div class="form-group"><label>ID Molde (opcional)</label><input type="number" id="reportMoldId"
+              placeholder="Dejar vacío para todos" min="1"></div>
           <button class="btn btn-secondary" id="loadReportBtn">Generar Reporte</button>
           <button class="btn" id="loadDetailedReportBtn">Reporte Detallado</button>
           <div class="response-box" id="reportResponse"></div>

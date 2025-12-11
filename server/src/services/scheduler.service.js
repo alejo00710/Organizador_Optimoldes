@@ -1,9 +1,13 @@
 const { query, getConnection } = require('../config/database');
 const businessDaysService = require('./businessDays.service');
-const { SINGLE_OPERATOR_HOURS, MULTI_OPERATOR_HOURS_PER_PERSON } = require('../utils/constants');
 
-const getMachineCapacity = (operariosCount) => {
-    return operariosCount === 1 ? SINGLE_OPERATOR_HOURS : operariosCount * MULTI_OPERATOR_HOURS_PER_PERSON;
+// Capacidad diaria estricta: debe existir y ser > 0
+const getMachineCapacityFromRow = (machineRow) => {
+    const c = machineRow.daily_capacity !== null && machineRow.daily_capacity !== undefined
+        ? parseFloat(machineRow.daily_capacity)
+        : NaN;
+    if (!isNaN(c) && c > 0) return c;
+    throw new Error(`La máquina "${machineRow.name}" no tiene capacidad diaria configurada (daily_capacity).`);
 };
 
 const getUsedCapacity = async (machineId, dateStr) => {
@@ -23,14 +27,12 @@ const scheduleTasks = async (moldId, partId, machineId, startDate, totalHours, c
     const machine = await getMachine(machineId);
     if (totalHours <= 0) throw new Error('totalHours debe ser mayor que 0');
 
-    const machineCapacity = getMachineCapacity(machine.operarios_count);
+    const machineCapacity = getMachineCapacityFromRow(machine);
     let remainingHours = totalHours;
     const planEntries = [];
 
-    // Fecha de inicio en UTC para evitar desplazamientos por TZ
+    // Fecha de inicio en UTC y avanzar al siguiente día hábil si aplica
     let currentDate = new Date(startDate + 'T00:00:00Z');
-
-    // Asegurar que la fecha de inicio sea hábil; si no, avanzar
     while (!businessDaysService.isBusinessDay(currentDate)) {
         currentDate.setUTCDate(currentDate.getUTCDate() + 1);
     }
@@ -38,7 +40,7 @@ const scheduleTasks = async (moldId, partId, machineId, startDate, totalHours, c
     while (remainingHours > 0) {
         const dateStr = currentDate.toISOString().split('T')[0];
         const usedCapacity = await getUsedCapacity(machineId, dateStr);
-        const availableCapacity = machineCapacity - usedCapacity;
+        const availableCapacity = Math.max(0, machineCapacity - usedCapacity);
 
         if (availableCapacity > 0) {
             const hoursToSchedule = Math.min(remainingHours, availableCapacity);
@@ -46,14 +48,13 @@ const scheduleTasks = async (moldId, partId, machineId, startDate, totalHours, c
                 moldId,
                 partId,
                 machineId,
-                date: new Date(currentDate), // UTC date
+                date: new Date(currentDate),
                 hoursPlanned: parseFloat(hoursToSchedule.toFixed(2)),
                 createdBy
             });
             remainingHours -= hoursToSchedule;
         }
 
-        // Avanzar al siguiente día hábil (UTC)
         currentDate = businessDaysService.getNextBusinessDay(currentDate);
     }
 
@@ -101,7 +102,7 @@ const createSchedule = async (moldId, partId, machineId, startDate, totalHours, 
 };
 
 module.exports = {
-    getMachineCapacity,
+    getMachineCapacityFromRow,
     getUsedCapacity,
     getMachine,
     scheduleTasks,

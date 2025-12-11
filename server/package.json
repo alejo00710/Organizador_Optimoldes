@@ -4,7 +4,7 @@
   "description": "Sistema de planificación y registro de producción de moldes",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app. js",
+    "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "format": "prettier --write \"src/**/*.js\"",
     "check-format": "prettier --check \"src/**/*.js\"",

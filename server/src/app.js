@@ -32,7 +32,8 @@ app.use(
                 scriptSrc: ["'self'", "'unsafe-inline'"],
                 styleSrc: ["'self'", "'unsafe-inline'"],
                 imgSrc: ["'self'", 'data:', 'https:'],
-                connectSrc: ["'self'"],
+                // Permitir llamadas desde el origen del front (Live Server)
+                connectSrc: ["'self'", 'http://127.0.0.1:5500'],
                 fontSrc: ["'self'"],
                 objectSrc: ["'none'"],
                 mediaSrc: ["'self'"],
@@ -71,7 +72,6 @@ app.use('/api/import', importRoutes);
 app.use('/api/molds', moldRoutes);
 app.use('/api/catalogs', catalogRoutes);
 
-
 // Health check
 app.get('/health', (req, res) => {
     res.status(200).json({
@@ -97,52 +97,51 @@ async function startServer() {
     await initializeDatabase();
     await loadHolidays();
 
-const server = app.listen(port, () => {
-    console.log('='.repeat(50));
-    console.log('🚀 Servidor de Producción de Moldes iniciado');
-    console.log('='.repeat(50));
-    console.log(`📡 Puerto: ${port}`);
-    console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🕐 Hora: ${new Date().toLocaleString('es-CO')}`);
-    console.log(`🌐 Interfaz web: http://localhost:${port}`);
-    console.log('='.repeat(50));
-    console.log('\n📋 Endpoints disponibles:');
-    console.log('  POST   /api/auth/login');
-    console.log('  GET    /api/auth/operators');
-    console.log('  POST   /api/tasks/plan');
-    console.log('  POST   /api/work_logs');
-    console.log('  GET    /api/work_logs');
-    console.log('  PUT    /api/work_logs/:id');
-    console.log('  DELETE /api/work_logs/:id');
-    console.log('  GET    /api/calendar');
-    console.log('  GET    /api/reports/planned-vs-actual');
-    console.log('  GET    /api/reports/detailed-deviations');
-    console.log('  GET    /api/machines');
-    console.log('  GET    /api/holidays');
-    console.log('  GET    /health');
-    console.log('\n✅ Servidor listo para recibir peticiones\n');
-});
-
-
-
-// Manejo de cierre graceful
-process.on('SIGTERM', () => {
-    console.log('\n⚠️  SIGTERM recibido.  Cerrando servidor...');
-    server.close(() => {
-        console.log('✅ Servidor cerrado correctamente');
-        process.exit(0);
+    const server = app.listen(port, () => {
+        console.log('='.repeat(50));
+        console.log('🚀 Servidor de Producción de Moldes iniciado');
+        console.log('='.repeat(50));
+        console.log(`📡 Puerto: ${port}`);
+        console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
+        console.log(`🕐 Hora: ${new Date().toLocaleString('es-CO')}`);
+        console.log(`🌐 Interfaz web: http://localhost:${port}`);
+        console.log('='.repeat(50));
+        console.log('\n📋 Endpoints disponibles:');
+        console.log('  POST   /api/auth/login');
+        console.log('  GET    /api/auth/operators');
+        console.log('  POST   /api/tasks/plan');
+        console.log('  POST   /api/work_logs');
+        console.log('  GET    /api/work_logs');
+        console.log('  PUT    /api/work_logs/:id');
+        console.log('  DELETE /api/work_logs/:id');
+        console.log('  GET    /api/calendar/month-view');
+        console.log('  GET    /api/reports/planned-vs-actual');
+        console.log('  GET    /api/reports/detailed-deviations');
+        console.log('  GET    /api/machines');
+        console.log('  GET    /api/holidays');
+        console.log('  GET    /api/datos/meta');
+        console.log('  GET    /health');
+        console.log('\n✅ Servidor listo para recibir peticiones\n');
     });
-});
 
-process.on('SIGINT', () => {
-    console.log('\n⚠️  SIGINT recibido (Ctrl+C). Cerrando servidor...');
-    server.close(() => {
-        console.log('✅ Servidor cerrado correctamente');
-        process.exit(0);
+    // Manejo de cierre graceful
+    process.on('SIGTERM', () => {
+        console.log('\n⚠️  SIGTERM recibido.  Cerrando servidor...');
+        server.close(() => {
+            console.log('✅ Servidor cerrado correctamente');
+            process.exit(0);
+        });
     });
-});
 
-}startServer();
+    process.on('SIGINT', () => {
+        console.log('\n⚠️  SIGINT recibido (Ctrl+C). Cerrando servidor...');
+        server.close(() => {
+            console.log('✅ Servidor cerrado correctamente');
+            process.exit(0);
+        });
+    });
+}
+startServer();
 
 // Manejo de errores no capturados
 process.on('uncaughtException', (error) => {

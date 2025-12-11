@@ -1,6 +1,7 @@
 // =================================================================================
-// public/app.js - Planificador simplificado con molde typeahead, máquinas fijas y partes fijas
-// Incluye render forzado de Plan y Calendario para evitar vistas vacías.
+// public/app.js - Planificación por máquina con persistencia local y timeout configurable
+// - Persiste entradas del planificador (molde, fecha, cantidades, horas por máquina/parte) en localStorage.
+// - Aumenta y hace configurable el tiempo de inactividad.
 // =================================================================================
 
 const API_URL = 'http://localhost:3000/api';
@@ -12,21 +13,26 @@ let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth(); // 0-11
 const monthNames = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 
-const INACTIVITY_TIMEOUT = 15 * 60 * 1000;
+// Timeout configurable de inactividad (por defecto 60 min) y persistente en localStorage
+const DEFAULT_INACTIVITY_MINUTES = 60;
+let INACTIVITY_TIMEOUT = (parseInt(localStorage.getItem('inactivityMinutes') || DEFAULT_INACTIVITY_MINUTES, 10) || DEFAULT_INACTIVITY_MINUTES) * 60 * 1000;
+
 let inactivityTimer = null;
 const HEALTH_INTERVAL_MS = 30000;
 let healthTimer = null;
 
-// Máquinas fijas con disponibilidad
+// Máquinas fijas con disponibilidad (actualizado)
 const FIXED_MACHINES = [
-  { id: 'CNC',                name: 'CNC',                hoursAvailable: 30 },
-  { id: 'TORNO_CNC',         name: 'Torno CNC',          hoursAvailable: 9.5 },
-  { id: 'EROSIONADORA',      name: 'Erosionadora',       hoursAvailable: 14 },
-  { id: 'FRESADORA',         name: 'Fresadora',          hoursAvailable: 28 },
-  { id: 'RECTIFICADORA',     name: 'Rectificadora',      hoursAvailable: 14 },
-  { id: 'TORNO',             name: 'Torno',              hoursAvailable: 14 },
-  { id: 'TALADRO_RADIAL',    name: 'Taladro radial',     hoursAvailable: 14 },
-  { id: 'PULIDA',            name: 'Pulida',             hoursAvailable: 9.5 }
+  { id: 'CNC_VF3_1', name: 'CNC VF3 #1', hoursAvailable: 15 },
+  { id: 'CNC_VF3_2', name: 'CNC VF3 #2', hoursAvailable: 15 },
+  { id: 'FRESADORA_1', name: 'Fresadora #1', hoursAvailable: 14 },
+  { id: 'FRESADORA_2', name: 'Fresadora #2', hoursAvailable: 14 },
+  { id: 'TORNO_CNC', name: 'Torno CNC', hoursAvailable: 9.5 },
+  { id: 'EROSIONADORA', name: 'Erosionadora', hoursAvailable: 14 },
+  { id: 'RECTIFICADORA', name: 'Rectificadora', hoursAvailable: 14 },
+  { id: 'TORNO', name: 'Torno', hoursAvailable: 14 },
+  { id: 'TALADRO_RADIAL', name: 'Taladro radial', hoursAvailable: 14 },
+  { id: 'PULIDA', name: 'Pulida', hoursAvailable: 9.5 }
 ];
 
 // Partes fijas
@@ -43,6 +49,12 @@ const FIXED_PARTS = [
 ];
 
 let cachedMolds = []; // strings
+
+// Claves de localStorage para persistencia del planificador y timeout
+const LS_KEYS = {
+  plannerState: 'plannerState',       // JSON con molde, fecha, cantidades, horas por máquina
+  inactivityMinutes: 'inactivityMinutes'
+};
 
 // Helpers
 function displayResponse(id, data, success=true){ const el=document.getElementById(id); if(!el) return; el.className=`response-box ${success?'success':'error'}`; el.textContent = JSON.stringify(data,null,2); }
@@ -136,21 +148,13 @@ function showMainApp(user) {
   startHealthCheck();
   startInactivityTimer();
 
-  // Preload molds for search
   preloadMoldsForSearch();
 
-  // AHORA SÍ renderizar - después de que todo esté listo
   const defaultTab = 'plan';
   openTab(defaultTab);
-  
-  // Forzar render inicial con manejo de errores visible
   setTimeout(() => {
-    try { 
-      renderFixedPlanningGrid(); 
-      console.log('✅ Parrilla renderizada');
-    } catch(e) { 
-      console.error('❌ Error renderizando parrilla:', e); 
-    }
+    try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch(e) { console.error('Error renderizando/restaurando parrilla:', e); }
+    try { loadCalendar(); } catch(e) { console.error('Error cargando calendario:', e); }
   }, 100);
 }
 
@@ -202,34 +206,21 @@ function logout(){ showLoginScreen('Logout'); }
 
 // Tabs
 function openTab(tabName) {
-  // Remover active de todos los tabs
   document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
-  
-  // Ocultar todos los contenidos
   document.querySelectorAll('.tab-content').forEach(content => {
     content.classList.remove('active');
     content.classList.add('hidden');
   });
-
-  // Activar tab seleccionado
   const tabBtn = document.querySelector(`button[data-tab="${tabName}"]`);
   if (tabBtn) tabBtn.classList.add('active');
-  
-  // Mostrar contenido seleccionado
   const tabContent = document.getElementById(`tab-${tabName}`);
   if (tabContent) {
     tabContent.classList.add('active');
-    tabContent.classList.remove('hidden'); // CRÍTICO: remover hidden
-    console.log(`✅ Tab ${tabName} ahora visible`);
+    tabContent.classList.remove('hidden');
   }
 
-  // Cargar datos específicos del tab
-  if (tabName === 'calendar') {
-    try { loadCalendar(); } catch(e){ console.warn('loadCalendar error', e); renderCalendar(currentYear, currentMonth, {}, {}); }
-  }
-  if (tabName === 'plan') {
-    try { renderFixedPlanningGrid(); } catch(e){ console.warn('renderFixedPlanningGrid error', e); }
-  }
+  if (tabName === 'calendar') try { loadCalendar(); } catch(e){ renderCalendar(currentYear,currentMonth,{},{}); }
+  if (tabName === 'plan') try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch(e){}
   if (tabName === 'worklog') try { loadWorkLogData(); } catch(e){}
   if (tabName === 'tiempos') try { loadDatosMeta(); } catch(e){}
   if (tabName === 'datos') try { loadDatos(); } catch(e){}
@@ -266,17 +257,9 @@ async function loadPlannerData() {
 }
 function renderFixedPlanningGrid() {
   const container = document.getElementById('planningGridContainer');
-  console.log('🔍 Buscando contenedor:', container);
-  
-  if (!container) {
-    console.error('❌ No se encontró planningGridContainer');
-    return;
-  }
-  
+  if (!container) return;
   const machines = FIXED_MACHINES;
   const parts = FIXED_PARTS;
-  
-  console.log('📊 Renderizando con:', machines.length, 'máquinas y', parts.length, 'partes');
 
   let html = `
     <table id="planningGridFixed">
@@ -310,23 +293,23 @@ function renderFixedPlanningGrid() {
       </tfoot>
     </table>
   `;
-  
   container.innerHTML = html;
-  console.log('✅ HTML insertado en contenedor');
+
+  const moldInput = document.getElementById('planMoldInput');
+  const startDateEl = document.getElementById('gridStartDate');
+  if (moldInput) moldInput.addEventListener('input', persistPlannerStateToStorage);
+  if (startDateEl) startDateEl.addEventListener('input', persistPlannerStateToStorage);
 
   const inputs = container.querySelectorAll('.qty-input, .hours-input');
-  console.log('🎯 Inputs encontrados:', inputs.length);
-  
   inputs.forEach(input => {
     input.addEventListener('input', () => {
       const row = input.closest('tr');
       updateFixedRowTotal(row);
       updateFixedColumnTotals();
       updateFixedGrandTotal();
+      persistPlannerStateToStorage();
     });
   });
-  
-  console.log('✅ Event listeners agregados');
 }
 function updateFixedRowTotal(row) {
   const qtyInput = row.querySelector('.qty-input');
@@ -347,7 +330,9 @@ function updateFixedColumnTotals() {
     let colSum = 0;
     grid.querySelectorAll(`tbody .hours-input[data-machine-id="${m.id}"]`).forEach(inp => {
       const v = parseFloat(inp.value);
-      colSum += isNaN(v) ? 0 : v;
+      const row = inp.closest('tr');
+      const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+      colSum += (isNaN(v) ? 0 : v) * qty;
     });
     const cell = document.getElementById(`total-machine-${m.id}`);
     if (cell) cell.textContent = colSum.toFixed(2);
@@ -365,7 +350,60 @@ function updateFixedGrandTotal() {
   if (totalEl) totalEl.textContent = grand.toFixed(2);
 }
 
-// Planificación
+// Persistencia local del estado del planificador
+function persistPlannerStateToStorage() {
+  const state = {
+    moldName: document.getElementById('planMoldInput')?.value || '',
+    startDate: document.getElementById('gridStartDate')?.value || '',
+    rows: [] // { partName, qty, hoursByMachine: { machineId: value } }
+  };
+  const grid = document.getElementById('planningGridFixed');
+  if (grid) {
+    grid.querySelectorAll('tbody tr').forEach(row => {
+      const partName = row.getAttribute('data-part-name');
+      const qty = row.querySelector('.qty-input')?.value || '';
+      const hoursByMachine = {};
+      row.querySelectorAll('.hours-input').forEach(inp => {
+        const mid = inp.getAttribute('data-machine-id');
+        hoursByMachine[mid] = inp.value || '';
+      });
+      state.rows.push({ partName, qty, hoursByMachine });
+    });
+  }
+  try { localStorage.setItem(LS_KEYS.plannerState, JSON.stringify(state)); } catch {}
+}
+function restorePlannerStateFromStorage() {
+  let raw;
+  try { raw = localStorage.getItem(LS_KEYS.plannerState); } catch {}
+  if (!raw) return;
+  let state;
+  try { state = JSON.parse(raw); } catch { return; }
+  const moldInput = document.getElementById('planMoldInput');
+  const startDateEl = document.getElementById('gridStartDate');
+  if (moldInput && typeof state.moldName === 'string') moldInput.value = state.moldName;
+  if (startDateEl && typeof state.startDate === 'string' && state.startDate) startDateEl.value = state.startDate;
+
+  const grid = document.getElementById('planningGridFixed');
+  if (!grid || !Array.isArray(state.rows)) return;
+  const rows = grid.querySelectorAll('tbody tr');
+  state.rows.forEach((savedRow, idx) => {
+    const row = rows[idx];
+    if (!row) return;
+    const qtyInput = row.querySelector('.qty-input');
+    if (qtyInput) qtyInput.value = savedRow.qty || '';
+    row.querySelectorAll('.hours-input').forEach(inp => {
+      const mid = inp.getAttribute('data-machine-id');
+      if (savedRow.hoursByMachine && savedRow.hoursByMachine[mid] !== undefined) {
+        inp.value = savedRow.hoursByMachine[mid] || '';
+      }
+    });
+    updateFixedRowTotal(row);
+  });
+  updateFixedColumnTotals();
+  updateFixedGrandTotal();
+}
+
+// Planificación por máquina
 async function submitGridPlan(e) {
   if (e) e.preventDefault();
   const moldName = document.getElementById('planMoldInput') ? document.getElementById('planMoldInput').value.trim() : '';
@@ -376,10 +414,10 @@ async function submitGridPlan(e) {
   const canStart = await isDateLaborable(startDate);
   if (!canStart) return alert('La fecha de inicio seleccionada no es laborable.');
 
-  const tasksToPlan = [];
   const grid = document.getElementById('planningGridFixed');
   if (!grid) return alert('La parrilla no está lista.');
 
+  const tasksToPlan = [];
   grid.querySelectorAll('tbody tr').forEach(row => {
     const partName = row.getAttribute('data-part-name');
     const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
@@ -387,9 +425,9 @@ async function submitGridPlan(e) {
     row.querySelectorAll('.hours-input').forEach(inp => {
       const base = parseFloat(inp.value) || 0;
       if (base > 0) {
-        const machineId = inp.getAttribute('data-machine-id');
-        const totalHours = base * qty;
-        tasksToPlan.push({ moldName, partName, machineId, startDate, totalHours });
+        const machineName = FIXED_MACHINES.find(m => m.id === inp.getAttribute('data-machine-id'))?.name || inp.getAttribute('data-machine-id');
+        const totalHours = Math.round((base * qty) / 0.25) * 0.25;
+        tasksToPlan.push({ moldName, partName, machineName, startDate, totalHours });
       }
     });
   });
@@ -514,8 +552,16 @@ function setupFilterListener(filterInputId, selectId){
   });
 }
 
-// Datos: historial (se mantiene como antes, con carga bajo demanda)
-async function loadDatos(){
+// Datos: historial
+// Estado de paginación para la pestaña Datos
+let datosPagination = { limit: 20, offset: 0, total: 0, items: [] };
+
+async function loadDatos(reset = true){
+  if (reset) {
+    datosPagination.offset = 0;
+    datosPagination.items = [];
+    datosPagination.total = 0;
+  }
   const qs = new URLSearchParams();
   const operario = document.getElementById('datosOperario') ? document.getElementById('datosOperario').value : '';
   const molde = document.getElementById('datosMolde') ? document.getElementById('datosMolde').value : '';
@@ -527,45 +573,136 @@ async function loadDatos(){
   if (parte) qs.append('parte', parte);
   if (maquina) qs.append('maquina', maquina);
   if (proceso) qs.append('proceso', proceso);
+  qs.append('limit', String(datosPagination.limit));
+  qs.append('offset', String(datosPagination.offset));
 
   try{
     const res = await fetch(`${API_URL}/datos?${qs.toString()}`, { headers:{'Authorization':`Bearer ${authToken}`} });
-    let data;
-    try { data = await res.json(); } catch { return displayResponse('datosResponse', { error:'No se pudo parsear la respuesta', status:res.status }, false); }
-    if (!res.ok || !Array.isArray(data)) {
+    const data = await res.json();
+    if (!res.ok || !data || !Array.isArray(data.items)) {
       return displayResponse('datosResponse', { error:'Error cargando datos', status:res.status, body:data }, false);
     }
-    const tbody = document.querySelector('#datosTable tbody'); if (!tbody) return;
-    tbody.innerHTML = data.map(r => {
-      const disabled = r.source === 'import' ? 'disabled' : '';
-      const showSave = r.source !== 'import';
-      const createdAt = r.created_at ? new Date(r.created_at).toLocaleString() : '';
-      return `
-        <tr data-id="${r.id}" data-source="${r.source || ''}">
-          <td><input type="number" min="1" max="31" value="${r.dia ?? ''}" ${disabled}></td>
-          <td><input type="text" value="${r.mes ? (capitalize(r.mes)) : ''}" ${disabled}></td>
-          <td><input type="number" min="2016" max="2100" value="${r.anio ?? ''}" ${disabled}></td>
-          <td><input type="text" value="${escapeHtml(r.nombre_operario ?? '')}" ${disabled}></td>
-          <td><input type="text" value="${escapeHtml(r.tipo_proceso ?? '')}" ${disabled}></td>
-          <td><input type="text" value="${escapeHtml(r.molde ?? '')}" ${disabled}></td>
-          <td><input type="text" value="${escapeHtml(r.parte ?? '')}" ${disabled}></td>
-          <td><input type="text" value="${escapeHtml(r.maquina ?? '')}" ${disabled}></td>
-          <td><input type="text" value="${escapeHtml(r.operacion ?? '')}" ${disabled}></td>
-          <td><input type="number" step="0.25" min="0" max="12" value="${r.horas != null ? Number(r.horas).toFixed(2) : ''}" ${disabled}></td>
-          <td>${r.source === 'import' ? 'Importado' : 'Manual'}</td>
-          <td>${createdAt}</td>
-          <td>
-            ${showSave ? `<button class="btn btn-primary btn-sm" onclick="saveDatoRow(${r.id})">Guardar</button>` : ''}
-            <button class="btn btn-danger btn-sm" onclick="deleteDatoRow(${r.id})">Eliminar</button>
-          </td>
-        </tr>
-      `;
-    }).join('');
-    displayResponse('datosResponse', { count: data.length }, true);
+
+    // Actualizar estado
+    datosPagination.total = data.total || 0;
+    datosPagination.offset += data.items.length;
+    datosPagination.items = datosPagination.items.concat(data.items);
+
+    // Renderizar acumulado
+    renderDatosTable(datosPagination.items);
+
+    // Botón Ver más
+    const verMasContainer = document.getElementById('datosVerMasContainer');
+    if (verMasContainer) {
+      const remaining = Math.max(0, datosPagination.total - datosPagination.items.length);
+      verMasContainer.innerHTML = remaining > 0
+        ? `<button class="btn btn-secondary" id="datosVerMasBtn">Ver más (${remaining} restantes)</button>`
+        : `<span style="color:#6c757d">No hay más resultados</span>`;
+      const btn = document.getElementById('datosVerMasBtn');
+      if (btn) btn.onclick = () => loadDatos(false);
+    }
+
+    displayResponse('datosResponse', { total: datosPagination.total, shown: datosPagination.items.length }, true);
   } catch(e){
     displayResponse('datosResponse', { error:'Error de conexión', details:String(e) }, false);
   }
 }
+
+function renderDatosTable(items){
+  const tbody = document.querySelector('#datosTable tbody'); if (!tbody) return;
+  tbody.innerHTML = items.map(r => {
+    const disabled = r.source === 'import' ? 'disabled' : '';
+    const showSave = r.source !== 'import';
+    const createdAt = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+    return `
+      <tr data-id="${r.id}" data-source="${r.source || ''}">
+        <td><input type="number" min="1" max="31" value="${r.dia ?? ''}" ${disabled}></td>
+        <td><input type="text" value="${r.mes ? (capitalize(r.mes)) : ''}" ${disabled}></td>
+        <td><input type="number" min="2016" max="2100" value="${r.anio ?? ''}" ${disabled}></td>
+        <td><input type="text" value="${escapeHtml(r.nombre_operario ?? '')}" ${disabled}></td>
+        <td><input type="text" value="${escapeHtml(r.tipo_proceso ?? '')}" ${disabled}></td>
+        <td><input type="text" value="${escapeHtml(r.molde ?? '')}" ${disabled}></td>
+        <td><input type="text" value="${escapeHtml(r.parte ?? '')}" ${disabled}></td>
+        <td><input type="text" value="${escapeHtml(r.maquina ?? '')}" ${disabled}></td>
+        <td><input type="text" value="${escapeHtml(r.operacion ?? '')}" ${disabled}></td>
+        <td><input type="number" step="0.25" min="0" max="12" value="${r.horas != null ? Number(r.horas).toFixed(2) : ''}" ${disabled}></td>
+        <td>${r.source === 'import' ? 'Importado' : 'Manual'}</td>
+        <td>${createdAt}</td>
+        <td>
+          ${showSave ? `<button class="btn btn-primary btn-sm" onclick="saveDatoRow(${r.id})">Guardar</button>` : ''}
+          <button class="btn btn-danger btn-sm" onclick="deleteDatoRow(${r.id})">Eliminar</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// NUEVO: Mostrar todos los registros restantes
+async function mostrarTodosDatos() {
+  try {
+    // Si ya tenemos todo, no hacer nada
+    if (datosPagination.items.length >= datosPagination.total) return;
+
+    // Mantener filtros actuales
+    const operario = document.getElementById('datosOperario') ? document.getElementById('datosOperario').value : '';
+    const molde = document.getElementById('datosMolde') ? document.getElementById('datosMolde').value : '';
+    const parte = document.getElementById('datosParte') ? document.getElementById('datosParte').value : '';
+    const maquina = document.getElementById('datosMaquina') ? document.getElementById('datosMaquina').value : '';
+    const proceso = document.getElementById('datosProceso') ? document.getElementById('datosProceso').value : '';
+
+    // Cargar en lotes grandes para minimizar llamadas
+    const batchLimit = 1000; // puedes subir si quieres
+    while (datosPagination.items.length < datosPagination.total) {
+      const qs = new URLSearchParams();
+      if (operario) qs.append('operario', operario);
+      if (molde) qs.append('molde', molde);
+      if (parte) qs.append('parte', parte);
+      if (maquina) qs.append('maquina', maquina);
+      if (proceso) qs.append('proceso', proceso);
+      qs.append('limit', String(batchLimit));
+      qs.append('offset', String(datosPagination.items.length)); // pedir desde donde vamos
+
+      const res = await fetch(`${API_URL}/datos?${qs.toString()}`, { headers:{'Authorization':`Bearer ${authToken}`} });
+      const data = await res.json();
+      if (!res.ok || !data || !Array.isArray(data.items)) {
+        displayResponse('datosResponse', { error:'Error cargando datos (mostrar todos)', status:res.status, body:data }, false);
+        break;
+      }
+      datosPagination.total = data.total || 0;
+      datosPagination.items = datosPagination.items.concat(data.items);
+
+      renderDatosTable(datosPagination.items);
+
+      // Actualizar UI de Ver más
+      const verMasContainer = document.getElementById('datosVerMasContainer');
+      if (verMasContainer) {
+        const remaining = Math.max(0, datosPagination.total - datosPagination.items.length);
+        verMasContainer.innerHTML = remaining > 0
+          ? `<button class="btn btn-secondary" id="datosVerMasBtn">Ver más (${remaining} restantes)</button>`
+          : `<span style="color:#6c757d">No hay más resultados</span>`;
+        const btn = document.getElementById('datosVerMasBtn');
+        if (btn) btn.onclick = () => loadDatos(false);
+      }
+
+      // Si el backend devuelve menos que batchLimit, habremos llegado al final
+      if (data.items.length < batchLimit) break;
+    }
+
+    displayResponse('datosResponse', { total: datosPagination.total, shown: datosPagination.items.length }, true);
+  } catch (e) {
+    displayResponse('datosResponse', { error:'Error de conexión (mostrar todos)', details:String(e) }, false);
+  }
+}
+
+// Conectar botón Mostrar todos
+document.addEventListener('DOMContentLoaded', () => {
+  // ... tus otros listeners ...
+  const btnMostrarTodos = document.getElementById('datosMostrarTodosBtn');
+  if (btnMostrarTodos) btnMostrarTodos.addEventListener('click', mostrarTodosDatos);
+
+  const datosBuscarBtn = document.getElementById('datosBuscarBtn');
+  if (datosBuscarBtn) datosBuscarBtn.addEventListener('click', () => loadDatos(true));
+});
 async function createDatoManual(){
   const payload = {};
   const map = [
@@ -674,7 +811,7 @@ async function loadCalendar(){
   if(display) display.textContent=`${capitalize(monthNames[currentMonth])} ${currentYear}`;
   if(grid) grid.innerHTML='Cargando...';
   try {
-    const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth+1}`, { headers:{'Authorization':`Bearer ${authToken}`} });
+    const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth+1}`, { headers:{'Authorization':`Bearer ${authToken}`}, cache:'no-store' });
     const data = await res.json();
     if (res.ok) renderCalendar(currentYear,currentMonth,data.events || {}, data.holidays || {});
     else if (grid) grid.innerHTML = '<p>Error cargar calendario</p>';
@@ -747,20 +884,29 @@ function showDayDetails(date, events, holiday){
 }
 function hideModal(){ const modal=document.getElementById('day-details-modal'); if (modal) modal.classList.add('hidden'); }
 
-// Worklog (stubs)
-async function loadWorkLogData(){ }
-async function createWorkLogEntry(e){ if(e) e.preventDefault(); alert('Registro de trabajo enviado (demo).'); }
-
-// Inactividad
+// Inactividad configurable
 function resetInactivityTimer(){ clearTimeout(inactivityTimer); if(authToken) inactivityTimer=setTimeout(logout, INACTIVITY_TIMEOUT); }
 function startInactivityTimer(){ window.onclick=resetInactivityTimer; window.onkeypress=resetInactivityTimer; resetInactivityTimer(); }
+
+// UI para configurar timeout (opcional: añade un input en Configuración si lo deseas)
+function setInactivityMinutes(minutes){
+  const m = parseInt(minutes, 10);
+  if (!isNaN(m) && m > 0) {
+    INACTIVITY_TIMEOUT = m * 60 * 1000;
+    localStorage.setItem(LS_KEYS.inactivityMinutes, String(m));
+    resetInactivityTimer();
+  }
+}
 
 // Entry
 document.addEventListener('DOMContentLoaded', () => {
   setupEventListeners();
 
   const dateInput = document.getElementById('gridStartDate');
-  if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+  if (dateInput) {
+    const saved = JSON.parse(localStorage.getItem(LS_KEYS.plannerState) || '{}')?.startDate;
+    dateInput.value = saved || new Date().toISOString().split('T')[0];
+  }
 
   populateDayMonthYear('tmDia','tmMes','tmAnio');
 
@@ -771,16 +917,30 @@ document.addEventListener('DOMContentLoaded', () => {
   else showLoginScreen();
 });
 
+// Limpia la parrilla: borra cantidades y horas, recalcula totales, limpia storage
+function clearPlannerGrid() {
+  const grid = document.getElementById('planningGridFixed');
+  if (!grid) return;
+  // Limpiar inputs
+  grid.querySelectorAll('.qty-input').forEach(inp => { inp.value = ''; });
+  grid.querySelectorAll('.hours-input').forEach(inp => { inp.value = ''; });
+
+  // Recalcular totales de filas
+  grid.querySelectorAll('tbody tr').forEach(row => updateFixedRowTotal(row));
+  // Recalcular totales de columnas y general
+  updateFixedColumnTotals();
+  updateFixedGrandTotal();
+
+  // Limpiar estado en localStorage y respuesta
+  try { localStorage.removeItem(LS_KEYS.plannerState); } catch {}
+  displayResponse('gridResponse', { message: 'Parrilla limpiada' }, true);
+}
+
 // Listeners
 function setupEventListeners() {
-  const loginBtn = document.getElementById('loginBtn'); 
-  if (loginBtn) loginBtn.addEventListener('click', login);
-  
-  const usernameSel = document.getElementById('username'); 
-  if (usernameSel) usernameSel.addEventListener('change', updateOperatorSelection);
-  
-  const logoutBtn = document.getElementById('logoutBtn'); 
-  if (logoutBtn) logoutBtn.addEventListener('click', logout);
+  const loginBtn = document.getElementById('loginBtn'); if (loginBtn) loginBtn.addEventListener('click', login);
+  const usernameSel = document.getElementById('username'); if (usernameSel) usernameSel.addEventListener('change', updateOperatorSelection);
+  const logoutBtn = document.getElementById('logoutBtn'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
 
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', (e) => openTab(e.target.getAttribute('data-tab')));
@@ -789,32 +949,26 @@ function setupEventListeners() {
   // Planificador
   const moldInput = document.getElementById('planMoldInput');
   const moldList = document.getElementById('planMoldDatalist');
-  if (moldInput && moldList) moldInput.addEventListener('input', handleMoldTypeahead);
-  
+  if (moldInput && moldList) moldInput.addEventListener('input', () => { handleMoldTypeahead({ target: moldInput }); persistPlannerStateToStorage(); });
   const submitPlanBtn = document.getElementById('submitGridPlanBtn');
   if (submitPlanBtn) submitPlanBtn.addEventListener('click', (e)=> submitGridPlan(e));
 
+  // NUEVO: botón limpiar parrilla
+  const clearPlannerBtn = document.getElementById('clearPlannerBtn');
+  if (clearPlannerBtn) clearPlannerBtn.addEventListener('click', clearPlannerGrid);
+
   // Calendario
-  const prevMonthBtn = document.getElementById('prev-month-btn'); 
-  if (prevMonthBtn) prevMonthBtn.addEventListener('click', () => changeMonth(-1));
-  
-  const nextMonthBtn = document.getElementById('next-month-btn'); 
-  if (nextMonthBtn) nextMonthBtn.addEventListener('click', () => changeMonth(1));
-  
-  const modalCloseBtn = document.getElementById('modal-close-btn'); 
-  if (modalCloseBtn) modalCloseBtn.addEventListener('click', hideModal);
+  const prevMonthBtn = document.getElementById('prev-month-btn'); if (prevMonthBtn) prevMonthBtn.addEventListener('click', () => changeMonth(-1));
+  const nextMonthBtn = document.getElementById('next-month-btn'); if (nextMonthBtn) nextMonthBtn.addEventListener('click', () => changeMonth(1));
+  const modalCloseBtn = document.getElementById('modal-close-btn'); if (modalCloseBtn) modalCloseBtn.addEventListener('click', hideModal);
 
   // Datos/Tiempos/Import
-  const datosBuscarBtn = document.getElementById('datosBuscarBtn'); 
-  if (datosBuscarBtn) datosBuscarBtn.addEventListener('click', loadDatos);
-  
-  const tmGuardarBtn = document.getElementById('tmGuardarBtn'); 
-  if (tmGuardarBtn) tmGuardarBtn.addEventListener('click', (e)=>{ e.preventDefault(); saveTiempoMolde(); });
-  
-  const importBtn = document.getElementById('importBtn'); 
-  if (importBtn) importBtn.addEventListener('click', importDatosCSV);
-  
-  const datoCrearBtn = document.getElementById('datoCrearBtn'); 
-  if (datoCrearBtn) datoCrearBtn.addEventListener('click', createDatoManual);
+  const datosBuscarBtn = document.getElementById('datosBuscarBtn'); if (datosBuscarBtn) datosBuscarBtn.addEventListener('click', loadDatos);
+  const tmGuardarBtn = document.getElementById('tmGuardarBtn'); if (tmGuardarBtn) tmGuardarBtn.addEventListener('click', (e)=>{ e.preventDefault(); saveTiempoMolde(); });
+  const importBtn = document.getElementById('importBtn'); if (importBtn) importBtn.addEventListener('click', importDatosCSV);
+  const datoCrearBtn = document.getElementById('datoCrearBtn'); if (datoCrearBtn) datoCrearBtn.addEventListener('click', createDatoManual);
 
+  // Si quieres exponer un control para ajustar el tiempo de inactividad:
+  // const inactivityInput = document.getElementById('inactivityMinutesInput');
+  // if (inactivityInput) inactivityInput.addEventListener('change', (e) => setInactivityMinutes(e.target.value));
 }
