@@ -26,6 +26,34 @@ function toHours(v) {
   return isNaN(num) ? null : num;
 }
 
+/**
+ * Asegura (busca o crea) un registro por nombre en la tabla dada y retorna su id.
+ * - operators: INSERT (name, user_id NULL, is_active TRUE)
+ * - machines:  INSERT (name, is_active TRUE)  [daily_capacity quedará NULL para editar luego en Config]
+ * - otras:     INSERT (name, is_active TRUE)
+ */
+async function ensureIdByName(table, name) {
+  const n = toStrGeneral(name);
+  if (!n) return null;
+  const rows = await query(`SELECT id FROM ${table} WHERE LOWER(name)=LOWER(?) LIMIT 1`, [n]);
+  if (rows.length) return rows[0].id;
+
+  if (table === 'operators') {
+    const res = await query(`INSERT INTO operators (name, user_id, is_active) VALUES (?, NULL, TRUE)`, [n]);
+    return res.insertId;
+  }
+  if (table === 'machines') {
+    const res = await query(`INSERT INTO machines (name, is_active) VALUES (?, TRUE)`, [n]);
+    return res.insertId;
+  }
+  const res = await query(`INSERT INTO ${table} (name, is_active) VALUES (?, TRUE)`, [n]);
+  return res.insertId;
+}
+
+/**
+ * Inserta una fila en "datos", resolviendo y creando catálogos por nombre cuando falten.
+ * Guarda tanto texto libre como referencias por ID.
+ */
 async function insertDatoRow(row, batchId, userId) {
   const {
     dia, mes, anio,
@@ -46,18 +74,40 @@ async function insertDatoRow(row, batchId, userId) {
   const normOperacion = toStrGeneral(operacion);
   const normHoras = toHours(horas);
 
-  const provided = [normDia, normMes, normAnio, normOperario, normProceso, normMolde, normParte, normMaquina, normOperacion, normHoras]
-    .filter(v => v !== null);
+  // Resolver/crear catálogos y obtener IDs
+  let operator_id = null, process_id = null, mold_id = null, part_id = null, machine_id = null, operation_id = null;
+  try {
+    operator_id  = await ensureIdByName('operators',  normOperario);
+    process_id   = await ensureIdByName('processes',  normProceso);
+    mold_id      = await ensureIdByName('molds',      normMolde);
+    part_id      = await ensureIdByName('mold_parts', normParte);
+    machine_id   = await ensureIdByName('machines',   normMaquina);
+    operation_id = await ensureIdByName('operations', normOperacion);
+  } catch (err) {
+    return { inserted: false, reason: `Error resolviendo catálogos: ${err.message || err}` };
+  }
+
+  // Validar que haya al menos algún dato útil para insertar
+  const provided = [normDia, normMes, normAnio, normOperario, normProceso, normMolde, normParte, normMaquina, normOperacion, normHoras,
+                    operator_id, process_id, mold_id, part_id, machine_id, operation_id]
+    .filter(v => v !== null && v !== undefined);
   if (provided.length === 0) {
     return { inserted: false, reason: 'Fila vacía (sin datos útiles)' };
   }
 
   try {
     await query(`
-      INSERT INTO datos (dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas, source, import_batch_id, created_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?,'import',?,?)
+      INSERT INTO datos (
+        dia, mes, anio,
+        nombre_operario, tipo_proceso, molde, parte, maquina, operacion,
+        operator_id, process_id, mold_id, part_id, machine_id, operation_id,
+        horas, source, import_batch_id, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'import', ?, ?)
     `, [
-      normDia, normMes, normAnio, normOperario, normProceso, normMolde, normParte, normMaquina, normOperacion, normHoras, batchId, userId
+      normDia, normMes, normAnio,
+      normOperario, normProceso, normMolde, normParte, normMaquina, normOperacion,
+      operator_id, process_id, mold_id, part_id, machine_id, operation_id,
+      normHoras, batchId, userId
     ]);
     return { inserted: true };
   } catch (e) {
@@ -117,6 +167,7 @@ exports.importDatos = async (req, res, next) => {
       const headerText = readHeaderText(colIndex);
       const normalizedHeader = headerText.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const expLabel = expectedCols[i].label.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      // Acepta header aproximado; si no coincide, igual mapear para no romper
       if (normalizedHeader.includes(expLabel.split(' ')[0])) {
         colMap[colIndex] = expectedCols[i].key;
       } else {
@@ -125,7 +176,7 @@ exports.importDatos = async (req, res, next) => {
     }
 
     let total = 0, ok = 0, fail = 0;
-    const failSamples = []; // para devolver en respuesta (primeras N)
+    const failSamples = [];
     const MAX_SAMPLES = 25;
 
     for (let r = dataStartRow; r <= range.e.r; r++) {
@@ -156,9 +207,9 @@ exports.importDatos = async (req, res, next) => {
         fail++;
         // guardar en tabla import_errors
         await query(`
-  INSERT INTO import_errors (batch_id, row_no, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas_original, reason)
-  VALUES (?,?,?,?,?,?,?,?,?,?)
-`, [
+          INSERT INTO import_errors (batch_id, row_no, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas_original, reason)
+          VALUES (?,?,?,?,?,?,?,?,?,?)
+        `, [
           batchId, (r + 1), // fila 1-based
           toStrGeneral(rowObj.nombre_operario),
           toStrGeneral(rowObj.tipo_proceso),
@@ -206,7 +257,6 @@ exports.importDatos = async (req, res, next) => {
 exports.getImportErrors = async (req, res, next) => {
   try {
     const { batchId } = req.params;
-    // Ordenar por la columna correcta: row_no
     const rows = await query(`SELECT * FROM import_errors WHERE batch_id = ? ORDER BY row_no ASC`, [batchId]);
     res.json(rows);
   } catch (e) { next(e); }

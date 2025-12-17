@@ -1,7 +1,6 @@
 // =================================================================================
-// public/app.js - Planificación por máquina con persistencia local y timeout configurable
-// - Persiste entradas del planificador (molde, fecha, cantidades, horas por máquina/parte) en localStorage.
-// - Aumenta y hace configurable el tiempo de inactividad.
+// public/app.js - Planificación, persistencia, timeout, Datos (sin filtros), Configuración
+// (edición de máquinas), Calendario y NUEVO: Indicadores (KPIs) con exportación CSV.
 // =================================================================================
 
 const API_URL = 'http://localhost:3000/api';
@@ -10,10 +9,9 @@ let authToken = null;
 let currentUser = null;
 
 let currentYear = new Date().getFullYear();
-let currentMonth = new Date().getMonth(); // 0-11
-const monthNames = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+let currentMonth = new Date().getMonth();
+const monthNames = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
-// Timeout configurable de inactividad (por defecto 60 min) y persistente en localStorage
 const DEFAULT_INACTIVITY_MINUTES = 60;
 let INACTIVITY_TIMEOUT = (parseInt(localStorage.getItem('inactivityMinutes') || DEFAULT_INACTIVITY_MINUTES, 10) || DEFAULT_INACTIVITY_MINUTES) * 60 * 1000;
 
@@ -21,7 +19,7 @@ let inactivityTimer = null;
 const HEALTH_INTERVAL_MS = 30000;
 let healthTimer = null;
 
-// Máquinas fijas con disponibilidad (actualizado)
+// Máquinas fijas
 const FIXED_MACHINES = [
   { id: 'CNC_VF3_1', name: 'CNC VF3 #1', hoursAvailable: 15 },
   { id: 'CNC_VF3_2', name: 'CNC VF3 #2', hoursAvailable: 15 },
@@ -37,56 +35,64 @@ const FIXED_MACHINES = [
 
 // Partes fijas
 const FIXED_PARTS = [
-  "Anillo de Expulsion","Anillo de Registro","Boquilla Principal","Botador inclinado","Buje de Expulsion",
-  "Buje Principal","Bujes de Rama","Correderas","Deflector de Refrigeración","Devolvedores","Electrodos",
-  "Flanche actuador hidraulico","Guia actuadur hidraulico","Guia Principal","Guias de expulsion","Guias de Rama",
-  "Haladores","Hembra","Hembra empotrada","Limitadores de Placa Flotante","Macho","Macho Central","Macho empotrado",
-  "Molde completo","Nylon","Paralelas Porta Macho","Pilares Soporte","Placa anillos expulsores","Placa de Expulsion",
-  "Placa Expulsion de Rama","Placa Portahembras","Placa Portamachos","placa respaldo anillos expulsores",
-  "Placa Respaldo de Expulsion","Placa Respaldo Hembras","Placa Respaldo Inferior","Placa Respaldo Machos",
-  "Placa respaldo portamachos","Placa Respaldo Superior","Placa Tope","Porta Fondo","Retenedores de Rama",
-  "Soporte correderas","Soporte nylon","Tapones de Enfriamiento","Techos"
+  "Anillo de Expulsion", "Anillo de Registro", "Boquilla Principal", "Botador inclinado", "Buje de Expulsion",
+  "Buje Principal", "Bujes de Rama", "Correderas", "Deflector de Refrigeración", "Devolvedores", "Electrodos",
+  "Flanche actuador hidraulico", "Guia actuadur hidraulico", "Guia Principal", "Guias de expulsion", "Guias de Rama",
+  "Haladores", "Hembra", "Hembra empotrada", "Limitadores de Placa Flotante", "Macho", "Macho Central", "Macho empotrado",
+  "Molde completo", "Nylon", "Paralelas Porta Macho", "Pilares Soporte", "Placa anillos expulsores", "Placa de Expulsion",
+  "Placa Expulsion de Rama", "Placa Portahembras", "Placa Portamachos", "placa respaldo anillos expulsores",
+  "Placa Respaldo de Expulsion", "Placa Respaldo Hembras", "Placa Respaldo Inferior", "Placa Respaldo Machos",
+  "Placa respaldo portamachos", "Placa Respaldo Superior", "Placa Tope", "Porta Fondo", "Retenedores de Rama",
+  "Soporte correderas", "Soporte nylon", "Tapones de Enfriamiento", "Techos"
 ];
 
-let cachedMolds = []; // strings
+let cachedMolds = [];
 
-// Claves de localStorage para persistencia del planificador y timeout
 const LS_KEYS = {
-  plannerState: 'plannerState',       // JSON con molde, fecha, cantidades, horas por máquina
+  plannerState: 'plannerState',
   inactivityMinutes: 'inactivityMinutes'
 };
 
 // Helpers
-function displayResponse(id, data, success=true){ const el=document.getElementById(id); if(!el) return; el.className=`response-box ${success?'success':'error'}`; el.textContent = JSON.stringify(data,null,2); }
-function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function capitalize(s){ return s ? (s.charAt(0).toUpperCase()+s.slice(1)) : ''; }
-function hoursToPayload(v){ if (v==='') return ''; const n = parseFloat(v); return isNaN(n) ? '' : Math.round(n/0.25)*0.25; }
-async function isDateLaborable(dateStr){ try { const res=await fetch(`${API_URL}/working/check?date=${encodeURIComponent(dateStr)}`, { headers:{'Authorization':`Bearer ${authToken}`} }); if(!res.ok) return false; const data=await res.json(); return !!data.laborable; } catch { return false; } }
+function displayResponse(id, data, success = true) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = `response-box ${success ? 'success' : 'error'}`;
+  try { el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2); }
+  catch { el.textContent = String(data); }
+}
+function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
+function capitalize(s) { return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : ''; }
+function hoursToPayload(v) { if (v === '') return ''; const n = parseFloat(v); return isNaN(n) ? '' : Math.round(n / 0.25) * 0.25; }
+async function isDateLaborable(dateStr) {
+  try {
+    const res = await fetch(`${API_URL}/working/check?date=${encodeURIComponent(dateStr)}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data.laborable;
+  } catch { return false; }
+}
 
-// Fecha util
-function populateDayMonthYear(dayId, monthId, yearId, minYear=2016, maxYear=2027) {
+// Fecha útil
+function populateDayMonthYear(dayId, monthId, yearId, minYear = 2016, maxYear = 2027) {
   const daySel = document.getElementById(dayId);
   const monthSel = document.getElementById(monthId);
   const yearSel = document.getElementById(yearId);
   if (daySel) {
-    let html = '';
-    for (let i=1;i<=31;i++) html += `<option value="${i}">${i}</option>`;
-    daySel.innerHTML = html;
-    daySel.value = new Date().getDate();
+    let html = ''; for (let i = 1; i <= 31; i++) html += `<option value="${i}">${i}</option>`;
+    daySel.innerHTML = html; daySel.value = new Date().getDate();
   }
   if (monthSel) {
-    monthSel.innerHTML = monthNames.map(m=>`<option value="${m}">${capitalize(m)}</option>`).join('');
+    monthSel.innerHTML = monthNames.map(m => `<option value="${m}">${capitalize(m)}</option>`).join('');
     monthSel.value = monthNames[new Date().getMonth()];
   }
   if (yearSel) {
-    let html = '';
-    for (let y=minYear; y<=maxYear; y++) html += `<option value="${y}">${y}</option>`;
-    yearSel.innerHTML = html;
-    yearSel.value = new Date().getFullYear();
+    let html = ''; for (let y = minYear; y <= maxYear; y++) html += `<option value="${y}">${y}</option>`;
+    yearSel.innerHTML = html; yearSel.value = new Date().getFullYear();
   }
 }
 
-// Session/connection
+// Conexión
 function updateConnectionStatus(connected) {
   const el = document.getElementById('status');
   if (!el) return;
@@ -96,18 +102,14 @@ function updateConnectionStatus(connected) {
 function startHealthCheck() {
   stopHealthCheck();
   const check = async () => {
-    try {
-      const res = await fetch(`${SERVER_URL}/health`, { cache: 'no-store' });
-      updateConnectionStatus(res.ok);
-    } catch {
-      updateConnectionStatus(false);
-    }
+    try { const res = await fetch(`${SERVER_URL}/health`, { cache: 'no-store' }); updateConnectionStatus(res.ok); }
+    catch { updateConnectionStatus(false); }
   };
   check();
   healthTimer = setInterval(check, HEALTH_INTERVAL_MS);
 }
 function stopHealthCheck() { if (healthTimer) clearInterval(healthTimer); healthTimer = null; }
-function showLoginScreen(message='') {
+function showLoginScreen(message = '') {
   const loginContainer = document.getElementById('loginContainer');
   const mainApp = document.getElementById('mainApp');
   if (loginContainer) loginContainer.classList.remove('hidden');
@@ -115,14 +117,14 @@ function showLoginScreen(message='') {
   if (message) console.error(message);
   const pwd = document.getElementById('password'); if (pwd) pwd.value = 'admin';
   const opSel = document.getElementById('operatorSelectGroup'); if (opSel) opSel.classList.add('hidden');
-  authToken=null; currentUser=null;
+  authToken = null; currentUser = null;
   localStorage.removeItem('authToken');
   updateConnectionStatus(false);
   stopHealthCheck();
   resetInactivityTimer();
 }
 function showMainApp(user) {
-  currentUser = user; 
+  currentUser = user;
   authToken = localStorage.getItem('authToken');
 
   const usrEl = document.getElementById('displayUsername');
@@ -153,58 +155,63 @@ function showMainApp(user) {
   const defaultTab = 'plan';
   openTab(defaultTab);
   setTimeout(() => {
-    try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch(e) { console.error('Error renderizando/restaurando parrilla:', e); }
-    try { loadCalendar(); } catch(e) { console.error('Error cargando calendario:', e); }
+    try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch (e) { }
+    try { loadCalendar(); } catch (e) { }
   }, 100);
 }
 
-// Auth helpers
-async function updateOperatorSelection(){
-  const username=document.getElementById('username').value;
-  const group=document.getElementById('operatorSelectGroup');
-  const select=document.getElementById('operatorId');
-  if (username==='operarios'){
+// Auth
+async function updateOperatorSelection() {
+  const username = document.getElementById('username').value;
+  const group = document.getElementById('operatorSelectGroup');
+  const select = document.getElementById('operatorId');
+  if (username === 'operarios') {
     if (group) group.classList.remove('hidden');
-    if (select) select.innerHTML='<option>Cargando...</option>';
-    try{ const res=await fetch(`${API_URL}/auth/operators?username=${username}`); const ops=await res.json(); let html='<option value="">Selecciona...</option>'; ops.forEach(o=> html+=`<option value="${o.id}">${escapeHtml(o.name)}</option>` ); if (select) select.innerHTML=html; }
-    catch(e){ console.error(e); if (select) select.innerHTML='<option value="">Error</option>'; }
+    if (select) select.innerHTML = '<option>Cargando...</option>';
+    try {
+      const res = await fetch(`${API_URL}/auth/operators?username=${username}`);
+      const ops = await res.json();
+      let html = '<option value="">Selecciona...</option>';
+      ops.forEach(o => html += `<option value="${o.id}">${escapeHtml(o.name)}</option>`);
+      if (select) select.innerHTML = html;
+    } catch (e) { if (select) select.innerHTML = '<option value="">Error</option>'; }
   } else {
     if (group) group.classList.add('hidden');
-    if (select) select.value='';
+    if (select) select.value = '';
   }
 }
-async function login(e){
-  if(e) e.preventDefault();
-  const username=document.getElementById('username').value;
-  const password=document.getElementById('password').value;
-  const operatorId=document.getElementById('operatorId') ? document.getElementById('operatorId').value : null;
-  const body={ username, password };
-  if (username==='operarios'){
-    if(!operatorId) return alert('Selecciona un operario');
-    body.operatorId=operatorId;
+async function login(e) {
+  if (e) e.preventDefault();
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+  const operatorId = document.getElementById('operatorId') ? document.getElementById('operatorId').value : null;
+  const body = { username, password };
+  if (username === 'operarios') {
+    if (!operatorId) return alert('Selecciona un operario');
+    body.operatorId = operatorId;
   }
-  try{
-    const res=await fetch(`${API_URL}/auth/login`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    const data=await res.json();
-    if(res.ok){ localStorage.setItem('authToken', data.token); verifySession(data.token); }
+  try {
+    const res = await fetch(`${API_URL}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (res.ok) { localStorage.setItem('authToken', data.token); verifySession(data.token); }
     else { alert(data.error || 'Error login'); updateConnectionStatus(false); }
-  } catch(e){ alert('Error conexión'); updateConnectionStatus(false); }
+  } catch (e) { alert('Error conexión'); updateConnectionStatus(false); }
 }
-async function verifySession(token){
-  try{
-    const res=await fetch(`${API_URL}/auth/verify`, { headers:{'Authorization':`Bearer ${token}`} });
-    if(res.ok){
-      const data=await res.json();
+async function verifySession(token) {
+  try {
+    const res = await fetch(`${API_URL}/auth/verify`, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (res.ok) {
+      const data = await res.json();
       authToken = token;
       showMainApp(data.user);
     } else {
       showLoginScreen('Sesión inválida');
     }
-  } catch(e){ showLoginScreen('Error conexión'); }
+  } catch (e) { showLoginScreen('Error conexión'); }
 }
-function logout(){ showLoginScreen('Logout'); }
+function logout() { showLoginScreen('Logout'); }
 
-// Tabs
+// Tabs (única definición)
 function openTab(tabName) {
   document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(content => {
@@ -219,26 +226,27 @@ function openTab(tabName) {
     tabContent.classList.remove('hidden');
   }
 
-  if (tabName === 'calendar') try { loadCalendar(); } catch(e){ renderCalendar(currentYear,currentMonth,{},{}); }
-  if (tabName === 'plan') try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch(e){}
-  if (tabName === 'worklog') try { loadWorkLogData(); } catch(e){}
-  if (tabName === 'tiempos') try { loadDatosMeta(); } catch(e){}
-  if (tabName === 'datos') try { loadDatos(); } catch(e){}
+  if (tabName === 'calendar') try { loadCalendar(); } catch (e) {}
+  if (tabName === 'plan') try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch (e) {}
+  if (tabName === 'tiempos') try { loadDatosMeta(); } catch (e) {}
+  if (tabName === 'datos') try { loadDatos(true); } catch (e) {}
+  if (tabName === 'config') try { loadMachinesList(); } catch (e) {}
+  if (tabName === 'indicators') try { defaultDateRangeForIndicators(); } catch (e) {}
 }
 
 // Planificador
 async function preloadMoldsForSearch() {
   try {
-    const res = await fetch(`${API_URL}/datos/meta`, { headers:{'Authorization':`Bearer ${authToken}`} });
+    const res = await fetch(`${API_URL}/datos/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
     if (res.ok) {
       const meta = await res.json();
       const moldes = Array.isArray(meta.moldes) ? meta.moldes : [];
-      cachedMolds = Array.from(new Set(moldes.map(m => String(m).trim()))).sort((a,b)=>a.localeCompare(b));
+      cachedMolds = Array.from(new Set(moldes.map(m => String(m).trim()))).sort((a, b) => a.localeCompare(b));
       const datalist = document.getElementById('planMoldDatalist');
       if (datalist) datalist.innerHTML = cachedMolds.slice(0, 1000).map(m => `<option value="${escapeHtml(m)}">`).join('');
       return;
     }
-  } catch (_) {}
+  } catch (_) { }
   cachedMolds = [];
 }
 function handleMoldTypeahead(e) {
@@ -251,9 +259,6 @@ function handleMoldTypeahead(e) {
   }
   const filtered = cachedMolds.filter(m => m.toLowerCase().includes(q)).slice(0, 1000);
   datalist.innerHTML = filtered.map(m => `<option value="${escapeHtml(m)}">`).join('');
-}
-async function loadPlannerData() {
-  renderFixedPlanningGrid();
 }
 function renderFixedPlanningGrid() {
   const container = document.getElementById('planningGridContainer');
@@ -313,7 +318,7 @@ function renderFixedPlanningGrid() {
 }
 function updateFixedRowTotal(row) {
   const qtyInput = row.querySelector('.qty-input');
-  const qty = qtyInput ? (parseFloat(qtyInput.value)||0) : 0;
+  const qty = qtyInput ? (parseFloat(qtyInput.value) || 0) : 0;
   let sumBase = 0;
   row.querySelectorAll('.hours-input').forEach(inp => {
     const v = parseFloat(inp.value);
@@ -325,7 +330,7 @@ function updateFixedRowTotal(row) {
 }
 function updateFixedColumnTotals() {
   const grid = document.getElementById('planningGridFixed');
-  if(!grid) return;
+  if (!grid) return;
   FIXED_MACHINES.forEach(m => {
     let colSum = 0;
     grid.querySelectorAll(`tbody .hours-input[data-machine-id="${m.id}"]`).forEach(inp => {
@@ -340,7 +345,7 @@ function updateFixedColumnTotals() {
 }
 function updateFixedGrandTotal() {
   const grid = document.getElementById('planningGridFixed');
-  if(!grid) return;
+  if (!grid) return;
   let grand = 0;
   grid.querySelectorAll('tbody .total-hours-cell').forEach(cell => {
     const v = parseFloat(cell.textContent);
@@ -350,12 +355,12 @@ function updateFixedGrandTotal() {
   if (totalEl) totalEl.textContent = grand.toFixed(2);
 }
 
-// Persistencia local del estado del planificador
+// Persistencia local
 function persistPlannerStateToStorage() {
   const state = {
     moldName: document.getElementById('planMoldInput')?.value || '',
     startDate: document.getElementById('gridStartDate')?.value || '',
-    rows: [] // { partName, qty, hoursByMachine: { machineId: value } }
+    rows: []
   };
   const grid = document.getElementById('planningGridFixed');
   if (grid) {
@@ -370,11 +375,11 @@ function persistPlannerStateToStorage() {
       state.rows.push({ partName, qty, hoursByMachine });
     });
   }
-  try { localStorage.setItem(LS_KEYS.plannerState, JSON.stringify(state)); } catch {}
+  try { localStorage.setItem(LS_KEYS.plannerState, JSON.stringify(state)); } catch { }
 }
 function restorePlannerStateFromStorage() {
   let raw;
-  try { raw = localStorage.getItem(LS_KEYS.plannerState); } catch {}
+  try { raw = localStorage.getItem(LS_KEYS.plannerState); } catch { }
   if (!raw) return;
   let state;
   try { state = JSON.parse(raw); } catch { return; }
@@ -403,55 +408,190 @@ function restorePlannerStateFromStorage() {
   updateFixedGrandTotal();
 }
 
-// Planificación por máquina
+// ================================
+// Helpers de FECHA (LOCAL, NO UTC)
+// ================================
+function getTodayISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// ================================
+// SUBMIT GRID PLAN (DEBUG MODE)
+// ================================
 async function submitGridPlan(e) {
   if (e) e.preventDefault();
-  const moldName = document.getElementById('planMoldInput') ? document.getElementById('planMoldInput').value.trim() : '';
+
+  console.clear();
+  console.log('========== SUBMIT GRID PLAN ==========');
+
+  // ---------------------------
+  // INPUTS PRINCIPALES
+  // ---------------------------
+  const moldInput = document.getElementById('planMoldInput');
   const startDateEl = document.getElementById('gridStartDate');
+  const priorityEl = document.getElementById('prioritySwitch');
+
+  const moldName = moldInput ? moldInput.value.trim() : '';
   const startDate = startDateEl ? startDateEl.value : '';
-  if (!moldName || !startDate) return alert('Ingresa/selecciona un Molde y una Fecha de inicio.');
+  const isPriority = !!priorityEl?.checked;
 
-  const canStart = await isDateLaborable(startDate);
-  if (!canStart) return alert('La fecha de inicio seleccionada no es laborable.');
+  console.log('moldName:', moldName);
+  console.log('startDate (raw):', startDate);
+  console.log('isPriority:', isPriority);
 
+  if (!moldName) {
+    alert('Ingresa/selecciona un Molde.');
+    return;
+  }
+
+  // ---------------------------
+  // VALIDACIÓN DE FECHA
+  // ---------------------------
+  const todayLocal = getTodayISO();
+
+  console.log('todayLocal:', todayLocal);
+  console.log('Comparación startDate < todayLocal:', startDate < todayLocal);
+
+  if (!isPriority) {
+    if (!startDate) {
+      alert('Selecciona una Fecha de inicio.');
+      return;
+    }
+    if (startDate < todayLocal) {
+      alert(`Fecha pasada detectada\nstartDate=${startDate}\ntoday=${todayLocal}`);
+      return;
+    }
+
+    const laborable = await isDateLaborable(startDate);
+    console.log('laborable:', laborable);
+
+    if (!laborable) {
+      alert('La fecha seleccionada no es laborable.');
+      return;
+    }
+  } else if (startDate) {
+    if (startDate < todayLocal) {
+      alert(`Fecha pasada detectada (priority)\nstartDate=${startDate}\ntoday=${todayLocal}`);
+      return;
+    }
+
+    const laborable = await isDateLaborable(startDate);
+    console.log('laborable (priority):', laborable);
+
+    if (!laborable) {
+      alert('La fecha seleccionada no es laborable.');
+      return;
+    }
+  }
+
+  // ---------------------------
+  // GRID
+  // ---------------------------
   const grid = document.getElementById('planningGridFixed');
-  if (!grid) return alert('La parrilla no está lista.');
+  if (!grid) {
+    alert('La parrilla no está lista.');
+    return;
+  }
 
-  const tasksToPlan = [];
+  // ---------------------------
+  // CONSTRUCCIÓN DE TASKS
+  // ---------------------------
+  const tasks = [];
+
   grid.querySelectorAll('tbody tr').forEach(row => {
     const partName = row.getAttribute('data-part-name');
-    const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
-    if (qty <= 0) return;
+    if (!partName) return;
+
+    const qty = parseFloat(row.querySelector('.qty-input')?.value);
+    if (isNaN(qty) || qty <= 0) return;
+
     row.querySelectorAll('.hours-input').forEach(inp => {
-      const base = parseFloat(inp.value) || 0;
-      if (base > 0) {
-        const machineName = FIXED_MACHINES.find(m => m.id === inp.getAttribute('data-machine-id'))?.name || inp.getAttribute('data-machine-id');
-        const totalHours = Math.round((base * qty) / 0.25) * 0.25;
-        tasksToPlan.push({ moldName, partName, machineName, startDate, totalHours });
+      const base = parseFloat(inp.value);
+      if (isNaN(base) || base <= 0) return;
+
+      const machineId = inp.getAttribute('data-machine-id');
+      const machineName =
+        (window.FIXED_MACHINES || []).find(m => String(m.id) === String(machineId))?.name
+        || machineId;
+
+      const totalHours = Math.round((base * qty) / 0.25) * 0.25;
+
+      if (totalHours > 0) {
+        tasks.push({ partName, machineName, totalHours });
       }
     });
   });
 
-  if (!tasksToPlan.length) return alert('No hay datos para planificar.');
-  const responseBox = document.getElementById('gridResponse');
-  if (responseBox) responseBox.textContent = 'Enviando planificación...';
+  console.log('tasks construidas:', tasks);
 
-  let ok = 0, fail = 0;
-  for (const task of tasksToPlan) {
-    try {
-      const res = await fetch(`${API_URL}/tasks/plan`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
-        body: JSON.stringify(task)
-      });
-      if (res.ok) ok++; else fail++;
-    } catch { fail++; }
+  if (!tasks.length) {
+    alert('No hay datos para planificar.');
+    return;
   }
-  displayResponse('gridResponse', { message:`Proceso finalizado. Éxitos: ${ok}, Errores: ${fail}` }, ok>0);
+
+  // ---------------------------
+  // PAYLOAD
+  // ---------------------------
+  const payload = {
+    moldName,
+    startDate: startDate || null,
+    tasks
+  };
+
+  console.log('PAYLOAD ENVIADO:', payload);
+
+  const endpoint = isPriority
+    ? `${API_URL}/tasks/plan/priority`
+    : `${API_URL}/tasks/plan/block`;
+
+  console.log('ENDPOINT:', endpoint);
+
+  const responseBox = document.getElementById('gridResponse');
+  if (responseBox) {
+    responseBox.textContent = isPriority
+      ? 'Reprogramando con prioridad...'
+      : 'Enviando planificación...';
+  }
+
+  // ---------------------------
+  // FETCH
+  // ---------------------------
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+
+    console.log('STATUS:', res.status);
+    console.log('RESPUESTA BACKEND:', data);
+
+    displayResponse('gridResponse', data, res.ok);
+
+    if (res.ok) {
+      console.log('✔ PLANIFICACIÓN OK');
+      loadCalendar();
+    } else {
+      console.warn('✖ ERROR BACKEND');
+    }
+
+  } catch (err) {
+    console.error('ERROR FETCH:', err);
+    displayResponse('gridResponse', { error: 'Error al planificar', details: String(err) }, false);
+  }
 }
 
-// Tiempos de Moldes
-async function saveTiempoMolde(){
+// Tiempos de Moldes (mantiene autocompletar y filtros propios)
+async function saveTiempoMolde() {
   const diaSel = document.getElementById('tmDia');
   const mesSel = document.getElementById('tmMes');
   const anioSel = document.getElementById('tmAnio');
@@ -473,7 +613,7 @@ async function saveTiempoMolde(){
   const horas = horasEl ? parseFloat(horasEl.value) : NaN;
 
   if (isNaN(dia) || !mes || isNaN(anio) || !operario || !proceso || !molde || !parte || !maquina || !operacion || isNaN(horas)) {
-    return displayResponse('tmResponse', { error:'Completa todos los campos' }, false);
+    return displayResponse('tmResponse', { error: 'Completa todos los campos' }, false);
   }
 
   const payload = {
@@ -484,22 +624,22 @@ async function saveTiempoMolde(){
     horas: Math.round(horas / 0.25) * 0.25
   };
 
-  try{
-    const res = await fetch(`${API_URL}/datos`, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`}, body: JSON.stringify(payload) });
+  try {
+    const res = await fetch(`${API_URL}/datos`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }, body: JSON.stringify(payload) });
     const data = await res.json();
     displayResponse('tmResponse', data, res.ok);
     if (res.ok) loadDatosMeta();
-  } catch(e){
-    displayResponse('tmResponse', { error:'Error de conexión' }, false);
+  } catch (e) {
+    displayResponse('tmResponse', { error: 'Error de conexión' }, false);
   }
 }
 
-// Datos Meta (Tiempos)
-async function loadDatosMeta(){
-  try{
-    const res=await fetch(`${API_URL}/datos/meta`, { headers:{'Authorization':`Bearer ${authToken}`} });
+// Datos Meta (para Tiempos)
+async function loadDatosMeta() {
+  try {
+    const res = await fetch(`${API_URL}/datos/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
     if (!res.ok) return;
-    const meta=await res.json();
+    const meta = await res.json();
 
     fillDatalist('tmOperarios', meta.operarios);
     fillDatalist('tmProcesos', meta.procesos);
@@ -511,8 +651,8 @@ async function loadDatosMeta(){
 
     const tmAnioSel = document.getElementById('tmAnio');
     if (tmAnioSel) {
-      const base = []; for (let y=2016; y<=2027; y++) base.push(y);
-      const merged = Array.from(new Set([...(meta.years || []), ...base])).sort((a,b)=>b-a);
+      const base = []; for (let y = 2016; y <= 2027; y++) base.push(y);
+      const merged = Array.from(new Set([...(meta.years || []), ...base])).sort((a, b) => b - a);
       tmAnioSel.innerHTML = merged.map(y => `<option value="${y}">${y}</option>`).join('');
       const currentY = new Date().getFullYear();
       tmAnioSel.value = merged.includes(currentY) ? currentY : String(merged[0]);
@@ -521,14 +661,14 @@ async function loadDatosMeta(){
     setupFilterListener('tmMoldeFilter', 'tmMoldeSelect');
     setupFilterListener('tmParteFilter', 'tmParteSelect');
 
-  } catch(e){ console.error('loadDatosMeta', e); }
+  } catch (e) { /* noop */ }
 }
-function fillDatalist(id, items){
-  const dl=document.getElementById(id);
-  if(!dl) return;
-  dl.innerHTML=(items||[]).map(v=>`<option value="${escapeHtml(v)}">`).join('');
+function fillDatalist(id, items) {
+  const dl = document.getElementById(id);
+  if (!dl) return;
+  dl.innerHTML = (items || []).map(v => `<option value="${escapeHtml(v)}">`).join('');
 }
-function populateSelectWithFilter(selectId, filterInputId, items){
+function populateSelectWithFilter(selectId, filterInputId, items) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
   sel.dataset.allItems = JSON.stringify(items || []);
@@ -537,7 +677,7 @@ function populateSelectWithFilter(selectId, filterInputId, items){
   const filterInput = document.getElementById(filterInputId);
   if (filterInput) filterInput.value = '';
 }
-function setupFilterListener(filterInputId, selectId){
+function setupFilterListener(filterInputId, selectId) {
   const input = document.getElementById(filterInputId);
   const sel = document.getElementById(selectId);
   if (!input || !sel) return;
@@ -552,46 +692,32 @@ function setupFilterListener(filterInputId, selectId){
   });
 }
 
-// Datos: historial
-// Estado de paginación para la pestaña Datos
+// Datos: historial (SIN filtros)
 let datosPagination = { limit: 20, offset: 0, total: 0, items: [] };
 
-async function loadDatos(reset = true){
+async function loadDatos(reset = true) {
   if (reset) {
     datosPagination.offset = 0;
     datosPagination.items = [];
     datosPagination.total = 0;
   }
   const qs = new URLSearchParams();
-  const operario = document.getElementById('datosOperario') ? document.getElementById('datosOperario').value : '';
-  const molde = document.getElementById('datosMolde') ? document.getElementById('datosMolde').value : '';
-  const parte = document.getElementById('datosParte') ? document.getElementById('datosParte').value : '';
-  const maquina = document.getElementById('datosMaquina') ? document.getElementById('datosMaquina').value : '';
-  const proceso = document.getElementById('datosProceso') ? document.getElementById('datosProceso').value : '';
-  if (operario) qs.append('operario', operario);
-  if (molde) qs.append('molde', molde);
-  if (parte) qs.append('parte', parte);
-  if (maquina) qs.append('maquina', maquina);
-  if (proceso) qs.append('proceso', proceso);
   qs.append('limit', String(datosPagination.limit));
   qs.append('offset', String(datosPagination.offset));
 
-  try{
-    const res = await fetch(`${API_URL}/datos?${qs.toString()}`, { headers:{'Authorization':`Bearer ${authToken}`} });
+  try {
+    const res = await fetch(`${API_URL}/datos?${qs.toString()}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     if (!res.ok || !data || !Array.isArray(data.items)) {
-      return displayResponse('datosResponse', { error:'Error cargando datos', status:res.status, body:data }, false);
+      return displayResponse('datosResponse', { error: 'Error cargando datos', status: res.status, body: data }, false);
     }
 
-    // Actualizar estado
     datosPagination.total = data.total || 0;
     datosPagination.offset += data.items.length;
     datosPagination.items = datosPagination.items.concat(data.items);
 
-    // Renderizar acumulado
     renderDatosTable(datosPagination.items);
 
-    // Botón Ver más
     const verMasContainer = document.getElementById('datosVerMasContainer');
     if (verMasContainer) {
       const remaining = Math.max(0, datosPagination.total - datosPagination.items.length);
@@ -603,12 +729,11 @@ async function loadDatos(reset = true){
     }
 
     displayResponse('datosResponse', { total: datosPagination.total, shown: datosPagination.items.length }, true);
-  } catch(e){
-    displayResponse('datosResponse', { error:'Error de conexión', details:String(e) }, false);
+  } catch (e) {
+    displayResponse('datosResponse', { error: 'Error de conexión', details: String(e) }, false);
   }
 }
-
-function renderDatosTable(items){
+function renderDatosTable(items) {
   const tbody = document.querySelector('#datosTable tbody'); if (!tbody) return;
   tbody.innerHTML = items.map(r => {
     const disabled = r.source === 'import' ? 'disabled' : '';
@@ -636,44 +761,23 @@ function renderDatosTable(items){
     `;
   }).join('');
 }
-
-// NUEVO: Mostrar todos los registros restantes
 async function mostrarTodosDatos() {
   try {
-    // Si ya tenemos todo, no hacer nada
     if (datosPagination.items.length >= datosPagination.total) return;
-
-    // Mantener filtros actuales
-    const operario = document.getElementById('datosOperario') ? document.getElementById('datosOperario').value : '';
-    const molde = document.getElementById('datosMolde') ? document.getElementById('datosMolde').value : '';
-    const parte = document.getElementById('datosParte') ? document.getElementById('datosParte').value : '';
-    const maquina = document.getElementById('datosMaquina') ? document.getElementById('datosMaquina').value : '';
-    const proceso = document.getElementById('datosProceso') ? document.getElementById('datosProceso').value : '';
-
-    // Cargar en lotes grandes para minimizar llamadas
-    const batchLimit = 1000; // puedes subir si quieres
+    const batchLimit = 1000;
     while (datosPagination.items.length < datosPagination.total) {
       const qs = new URLSearchParams();
-      if (operario) qs.append('operario', operario);
-      if (molde) qs.append('molde', molde);
-      if (parte) qs.append('parte', parte);
-      if (maquina) qs.append('maquina', maquina);
-      if (proceso) qs.append('proceso', proceso);
       qs.append('limit', String(batchLimit));
-      qs.append('offset', String(datosPagination.items.length)); // pedir desde donde vamos
-
-      const res = await fetch(`${API_URL}/datos?${qs.toString()}`, { headers:{'Authorization':`Bearer ${authToken}`} });
+      qs.append('offset', String(datosPagination.items.length));
+      const res = await fetch(`${API_URL}/datos?${qs.toString()}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
       const data = await res.json();
       if (!res.ok || !data || !Array.isArray(data.items)) {
-        displayResponse('datosResponse', { error:'Error cargando datos (mostrar todos)', status:res.status, body:data }, false);
+        displayResponse('datosResponse', { error: 'Error cargando datos (mostrar todos)', status: res.status, body: data }, false);
         break;
       }
       datosPagination.total = data.total || 0;
       datosPagination.items = datosPagination.items.concat(data.items);
-
       renderDatosTable(datosPagination.items);
-
-      // Actualizar UI de Ver más
       const verMasContainer = document.getElementById('datosVerMasContainer');
       if (verMasContainer) {
         const remaining = Math.max(0, datosPagination.total - datosPagination.items.length);
@@ -683,65 +787,50 @@ async function mostrarTodosDatos() {
         const btn = document.getElementById('datosVerMasBtn');
         if (btn) btn.onclick = () => loadDatos(false);
       }
-
-      // Si el backend devuelve menos que batchLimit, habremos llegado al final
       if (data.items.length < batchLimit) break;
     }
-
     displayResponse('datosResponse', { total: datosPagination.total, shown: datosPagination.items.length }, true);
   } catch (e) {
-    displayResponse('datosResponse', { error:'Error de conexión (mostrar todos)', details:String(e) }, false);
+    displayResponse('datosResponse', { error: 'Error de conexión (mostrar todos)', details: String(e) }, false);
   }
 }
 
-// Conectar botón Mostrar todos
-document.addEventListener('DOMContentLoaded', () => {
-  // ... tus otros listeners ...
-  const btnMostrarTodos = document.getElementById('datosMostrarTodosBtn');
-  if (btnMostrarTodos) btnMostrarTodos.addEventListener('click', mostrarTodosDatos);
-
-  const datosBuscarBtn = document.getElementById('datosBuscarBtn');
-  if (datosBuscarBtn) datosBuscarBtn.addEventListener('click', () => loadDatos(true));
-});
-async function createDatoManual(){
+// Registro manual: sin Operario/Molde/Parte/Máquina
+async function createDatoManual() {
   const payload = {};
   const map = [
-    ['datoDia','dia', v => parseInt(v,10)],
-    ['datoMes','mes', v => String(v).toLowerCase()],
-    ['datoAnio','anio', v => parseInt(v,10)],
-    ['datoOperario','nombre_operario', v => v],
-    ['datoProceso','tipo_proceso', v => v],
-    ['datoMolde','molde', v => v],
-    ['datoParte','parte', v => v],
-    ['datoMaquina','maquina', v => v],
-    ['datoOperacion','operacion', v => v],
-    ['datoHoras','horas', v => Math.round(parseFloat(v)/0.25)*0.25]
+    ['datoDia', 'dia', v => parseInt(v, 10)],
+    ['datoMes', 'mes', v => String(v).toLowerCase()],
+    ['datoAnio', 'anio', v => parseInt(v, 10)],
+    ['datoProceso', 'tipo_proceso', v => v],
+    ['datoOperacion', 'operacion', v => v],
+    ['datoHoras', 'horas', v => Math.round(parseFloat(v) / 0.25) * 0.25]
   ];
   for (const [id, key, fmt] of map) {
     const el = document.getElementById(id);
     if (el && el.value !== '') payload[key] = fmt(el.value);
   }
   if (Object.keys(payload).length === 0) {
-    return displayResponse('datoCrearResponse', { error:'Ingresa al menos un campo antes de guardar.' }, false);
+    return displayResponse('datoCrearResponse', { error: 'Ingresa al menos un campo antes de guardar.' }, false);
   }
-  try{
+  try {
     const res = await fetch(`${API_URL}/datos`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
     displayResponse('datoCrearResponse', data, res.ok);
     if (res.ok) {
-      map.forEach(([id])=>{ const el=document.getElementById(id); if (el) el.value=''; });
-      loadDatos();
+      map.forEach(([id]) => { const el = document.getElementById(id); if (el) el.value = ''; });
+      loadDatos(true);
       loadDatosMeta();
     }
-  } catch(e){
-    displayResponse('datoCrearResponse', { error:'Error de conexión' }, false);
+  } catch (e) {
+    displayResponse('datoCrearResponse', { error: 'Error de conexión' }, false);
   }
 }
-async function saveDatoRow(id){
+async function saveDatoRow(id) {
   const row = document.querySelector(`#datosTable tbody tr[data-id="${id}"]`);
   if (!row) return;
   const inputs = row.querySelectorAll('input');
@@ -750,104 +839,108 @@ async function saveDatoRow(id){
     dia: diaEl.value !== '' ? parseInt(diaEl.value, 10) : '',
     mes: mesEl.value !== '' ? mesEl.value.toLowerCase() : '',
     anio: anioEl.value !== '' ? parseInt(anioEl.value, 10) : '',
-    nombre_operario: operarioEl.value,
     tipo_proceso: procesoEl.value,
-    molde: moldeEl.value,
-    parte: parteEl.value,
-    maquina: maquinaEl.value,
     operacion: operacionEl.value,
     horas: hoursToPayload(horasEl.value)
   };
-
-  try{
+  try {
     const res = await fetch(`${API_URL}/datos/${id}`, {
-      method:'PUT',
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
     displayResponse('datosResponse', data, res.ok);
     if (res.ok) loadDatosMeta();
-  } catch(e){
-    displayResponse('datosResponse', { error:'Error guardando fila' }, false);
+  } catch (e) {
+    displayResponse('datosResponse', { error: 'Error guardando fila' }, false);
   }
 }
-async function deleteDatoRow(id){
+async function deleteDatoRow(id) {
   if (!confirm('¿Eliminar este registro?')) return;
-  try{
-    const res = await fetch(`${API_URL}/datos/${id}`, { method:'DELETE', headers:{'Authorization':`Bearer ${authToken}`} });
+  try {
+    const res = await fetch(`${API_URL}/datos/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     displayResponse('datosResponse', data, res.ok);
-    if (res.ok) loadDatos();
-  } catch(e){
-    displayResponse('datosResponse', { error:'Error eliminando registro' }, false);
+    if (res.ok) loadDatos(true);
+  } catch (e) {
+    displayResponse('datosResponse', { error: 'Error eliminando registro' }, false);
   }
 }
 
 // Importar
-async function importDatosCSV(){
-  const fileInput=document.getElementById('importFile'); const file=fileInput?.files?.[0];
-  if(!file) return displayResponse('importResponse', { error:'Selecciona un archivo' }, false);
-  const btn=document.getElementById('importBtn'); if(btn) btn.disabled=true;
-  const form=new FormData(); form.append('file', file);
-  try{
-    const res=await fetch(`${API_URL}/import/datos`, { method:'POST', headers:{'Authorization':`Bearer ${authToken}`}, body:form });
-    const data=await res.json();
+async function importDatosCSV() {
+  const fileInput = document.getElementById('importFile'); const file = fileInput?.files?.[0];
+  if (!file) return displayResponse('importResponse', { error: 'Selecciona un archivo' }, false);
+  const btn = document.getElementById('importBtn'); if (btn) btn.disabled = true;
+  const form = new FormData(); form.append('file', file);
+  try {
+    const res = await fetch(`${API_URL}/import/datos`, { method: 'POST', headers: { 'Authorization': `Bearer ${authToken}` }, body: form });
+    const data = await res.json();
     displayResponse('importResponse', data, res.ok);
-  } catch(e){
-    displayResponse('importResponse', { error:'Error de conexión' }, false);
-  } finally{
-    if(btn) btn.disabled=false;
+  } catch (e) {
+    displayResponse('importResponse', { error: 'Error de conexión' }, false);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
-function renderImportDiagnostics(resp){}
+function renderImportDiagnostics(resp) { }
 
 // Calendario
-function changeMonth(delta){ currentMonth+=delta; if(currentMonth>11){ currentMonth=0; currentYear++; } else if(currentMonth<0){ currentMonth=11; currentYear--; } loadCalendar(); }
-async function loadCalendar(){ 
-  if(!authToken) return;
-  const display=document.getElementById('calendar-month-year');
-  const grid=document.getElementById('calendar-grid');
-  if(display) display.textContent=`${capitalize(monthNames[currentMonth])} ${currentYear}`;
-  if(grid) grid.innerHTML='Cargando...';
+function changeMonth(delta) {
+  currentMonth += delta;
+  if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+  else if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+  loadCalendar();
+}
+async function loadCalendar() {
+  if (!authToken) return;
+  const display = document.getElementById('calendar-month-year');
+  const grid = document.getElementById('calendar-grid');
+  if (display) display.textContent = `${capitalize(monthNames[currentMonth])} ${currentYear}`;
+  if (grid) grid.innerHTML = 'Cargando...';
   try {
-    const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth+1}`, { headers:{'Authorization':`Bearer ${authToken}`}, cache:'no-store' });
+    const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth + 1}`, { headers: { 'Authorization': `Bearer ${authToken}` }, cache: 'no-store' });
     const data = await res.json();
-    if (res.ok) renderCalendar(currentYear,currentMonth,data.events || {}, data.holidays || {});
+    if (res.ok) renderCalendar(currentYear, currentMonth, data.events || {}, data.holidays || {});
     else if (grid) grid.innerHTML = '<p>Error cargar calendario</p>';
-  } catch(e){
-    if(grid) grid.innerHTML='Error cargar calendario';
+  } catch (e) {
+    if (grid) grid.innerHTML = 'Error cargar calendario';
   }
 }
-function renderCalendar(year, month, events={}, holidays={}) {
-  const grid=document.getElementById('calendar-grid');
-  if(!grid) return;
-  grid.innerHTML='';
-  const todayStr=new Date().toISOString().split('T')[0];
-  const firstDay=new Date(year, month, 1);
+function renderCalendar(year, month, events = {}, holidays = {}) {
+  const grid = document.getElementById('calendar-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const todayStr = new Date().toISOString().split('T')[0];
+  const firstDay = new Date(year, month, 1);
   const startDayIndex = firstDay.getDay();
-  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  for(let i=0;i<startDayIndex;i++){ const d=document.createElement('div'); d.className='calendar-day other-month'; grid.appendChild(d); }
+  for (let i = 0; i < startDayIndex; i++) { const d = document.createElement('div'); d.className = 'calendar-day other-month'; grid.appendChild(d); }
 
-  for(let d=1; d<=daysInMonth; d++){
-    const date=new Date(year, month, d);
-    const dateStr=date.toISOString().split('T')[0];
-    const cell=document.createElement('div'); cell.className='calendar-day';
-    cell.innerHTML=`<div class="day-number">${d}</div>`;
-    if(dateStr===todayStr) cell.classList.add('today');
-    if(date.getDay()===0||date.getDay()===6) cell.classList.add('weekend');
-    if(holidays[dateStr]){ cell.classList.add('holiday'); cell.innerHTML += `<div class="holiday-name">${escapeHtml(holidays[dateStr])}</div>`; }
-    if(events && events[d]){ const total = Object.values(events[d].machineUsage || {}).reduce((a,b)=>a+(b||0),0); cell.classList.add('has-events'); cell.innerHTML += `<div class="events-indicator">${total.toFixed(1)}h</div>`; }
-    cell.addEventListener('click', ()=> showDayDetails(date, events[d], holidays[dateStr]));
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
+    const dateStr = date.toISOString().split('T')[0];
+    const cell = document.createElement('div'); cell.className = 'calendar-day';
+    cell.innerHTML = `<div class="day-number">${d}</div>`;
+    if (dateStr === todayStr) cell.classList.add('today');
+    if (date.getDay() === 0 || date.getDay() === 6) cell.classList.add('weekend');
+    if (holidays[dateStr]) { cell.classList.add('holiday'); cell.innerHTML += `<div class="holiday-name">${escapeHtml(holidays[dateStr])}</div>`; }
+    if (events && events[d]) {
+      const total = Object.values(events[d].machineUsage || {}).reduce((a, b) => a + (b || 0), 0);
+      cell.classList.add('has-events');
+      cell.innerHTML += `<div class="events-indicator">${total.toFixed(1)}h</div>`;
+    }
+    cell.addEventListener('click', () => showDayDetails(date, events[d], holidays[dateStr]));
     grid.appendChild(cell);
   }
 }
-function showDayDetails(date, events, holiday){
-  const modal=document.getElementById('day-details-modal');
-  const body=document.getElementById('modal-body');
-  const titleEl=document.getElementById('modal-title');
-  const dateStr=date.toISOString().split('T')[0];
+function showDayDetails(date, events, holiday) {
+  const modal = document.getElementById('day-details-modal');
+  const body = document.getElementById('modal-body');
+  const titleEl = document.getElementById('modal-title');
+  const dateStr = date.toISOString().split('T')[0];
   if (titleEl) titleEl.textContent = date.toLocaleDateString();
   let html = '';
   if (holiday) html += `<p>🎉 ${escapeHtml(holiday)}</p>`;
@@ -861,17 +954,17 @@ function showDayDetails(date, events, holiday){
   html += `<div style="margin-top:12px;"><button class="btn btn-secondary" id="toggleWorkingBtn">Cargando estado...</button><small style="display:block; margin-top:6px;">Esto crea una excepción para este día.</small></div>`;
   if (body) body.innerHTML = html;
 
-  (async()=>{
+  (async () => {
     const laborable = await isDateLaborable(dateStr);
     const btn = document.getElementById('toggleWorkingBtn');
-    if(!btn) return;
+    if (!btn) return;
     btn.textContent = laborable ? 'Deshabilitar día' : 'Habilitar día';
     btn.onclick = async () => {
       const desired = !laborable;
       try {
         const res = await fetch(`${API_URL}/working/override`, {
-          method:'POST',
-          headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
           body: JSON.stringify({ date: dateStr, isWorking: desired })
         });
         if (res.ok) { alert(`Día ${desired ? 'habilitado' : 'deshabilitado'} correctamente.`); hideModal(); loadCalendar(); }
@@ -882,20 +975,266 @@ function showDayDetails(date, events, holiday){
 
   if (modal) modal.classList.remove('hidden');
 }
-function hideModal(){ const modal=document.getElementById('day-details-modal'); if (modal) modal.classList.add('hidden'); }
+function hideModal() { const modal = document.getElementById('day-details-modal'); if (modal) modal.classList.add('hidden'); }
 
-// Inactividad configurable
-function resetInactivityTimer(){ clearTimeout(inactivityTimer); if(authToken) inactivityTimer=setTimeout(logout, INACTIVITY_TIMEOUT); }
-function startInactivityTimer(){ window.onclick=resetInactivityTimer; window.onkeypress=resetInactivityTimer; resetInactivityTimer(); }
-
-// UI para configurar timeout (opcional: añade un input en Configuración si lo deseas)
-function setInactivityMinutes(minutes){
+// Inactividad
+function resetInactivityTimer() { clearTimeout(inactivityTimer); if (authToken) inactivityTimer = setTimeout(logout, INACTIVITY_TIMEOUT); }
+function startInactivityTimer() { window.onclick = resetInactivityTimer; window.onkeypress = resetInactivityTimer; resetInactivityTimer(); }
+function setInactivityMinutes(minutes) {
   const m = parseInt(minutes, 10);
   if (!isNaN(m) && m > 0) {
     INACTIVITY_TIMEOUT = m * 60 * 1000;
     localStorage.setItem(LS_KEYS.inactivityMinutes, String(m));
     resetInactivityTimer();
   }
+}
+
+// ================================
+// Configuración: Máquinas (listar/editar)
+// ================================
+let machinesCache = [];
+
+async function loadMachinesList() {
+  try {
+    const res = await fetch(`${API_URL}/config/machines`, { headers:{'Authorization':`Bearer ${authToken}`} });
+    if (!res.ok) throw new Error('No se pudo cargar máquinas');
+    machinesCache = await res.json(); // [{id,name,daily_capacity,is_active,created_at}]
+    renderMachinesTable();
+  } catch (e) {
+    displayResponse('configResponse', { error: 'Error cargando máquinas', details: String(e) }, false);
+  }
+}
+function renderMachinesTable() {
+  const tbody = document.querySelector('#machinesTable tbody'); if (!tbody) return;
+  const q = (document.getElementById('machineFilter')?.value || '').toLowerCase().trim();
+  const list = q ? machinesCache.filter(m => (m.name || '').toLowerCase().includes(q)) : machinesCache;
+
+  tbody.innerHTML = list.map(m => `
+    <tr data-id="${m.id}">
+      <td>${m.id}</td>
+      <td><input type="text" class="mc-name" value="${escapeHtml(m.name || '')}"></td>
+      <td><input type="number" class="mc-cap" step="0.5" min="0" value="${m.daily_capacity != null ? Number(m.daily_capacity) : ''}" placeholder="Ej: 14"></td>
+      <td style="text-align:center;"><input type="checkbox" class="mc-active" ${m.is_active ? 'checked' : ''}></td>
+      <td><button class="btn btn-secondary btn-sm" onclick="saveMachineRow(${m.id})">Guardar</button></td>
+    </tr>
+  `).join('');
+}
+async function saveMachineRow(id) {
+  const row = document.querySelector(`#machinesTable tbody tr[data-id="${id}"]`); if (!row) return;
+  const name = row.querySelector('.mc-name')?.value.trim();
+  const capStr = row.querySelector('.mc-cap')?.value.trim();
+  const is_active = row.querySelector('.mc-active')?.checked ? 1 : 0;
+  const daily_capacity = capStr === '' ? null : parseFloat(capStr);
+  if (!name) return displayResponse('configResponse', { error:'Nombre requerido' }, false);
+  try {
+    const res = await fetch(`${API_URL}/config/machines/${id}`, {
+      method:'PUT',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify({ name, daily_capacity, is_active })
+    });
+    const data = await res.json();
+    displayResponse('configResponse', data, res.ok);
+    if (res.ok) loadMachinesList();
+  } catch (e) {
+    displayResponse('configResponse', { error:'Error guardando máquina', details:String(e) }, false);
+  }
+}
+
+// Crear máquina
+async function createMachine(){
+  const name = document.getElementById('newMachineName')?.value.trim();
+  const capStr = document.getElementById('newMachineCapacity')?.value.trim();
+  const daily_capacity = capStr ? parseFloat(capStr) : null;
+  if (!name) return displayResponse('configResponse', { error:'Nombre de máquina requerido' }, false);
+  try{
+    const res = await fetch(`${API_URL}/config/machines`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify({ name, daily_capacity })
+    });
+    const data = await res.json();
+    displayResponse('configResponse', data, res.ok);
+    if (res.ok) {
+      document.getElementById('newMachineId').value = data.id;
+      document.getElementById('newMachineName').value = '';
+      document.getElementById('newMachineCapacity').value = '';
+      loadMachinesList();
+      loadDatosMeta();
+    }
+  } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
+}
+
+// Crear molde
+async function createMold(){
+  const name = document.getElementById('newMoldName')?.value.trim();
+  if (!name) return displayResponse('configResponse', { error:'Nombre de molde requerido' }, false);
+  try{
+    const res = await fetch(`${API_URL}/config/molds`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    displayResponse('configResponse', data, res.ok);
+    if (res.ok) { document.getElementById('newMoldId').value = data.id; document.getElementById('newMoldName').value=''; loadDatosMeta(); }
+  } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
+}
+
+// Crear parte
+async function createPart(){
+  const name = document.getElementById('newPartName')?.value.trim();
+  if (!name) return displayResponse('configResponse', { error:'Nombre de parte requerido' }, false);
+  try{
+    const res = await fetch(`${API_URL}/config/parts`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    displayResponse('configResponse', data, res.ok);
+    if (res.ok) { document.getElementById('newPartId').value = data.id; document.getElementById('newPartName').value=''; loadDatosMeta(); }
+  } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
+}
+
+// Crear/Actualizar operario con contraseña
+async function createOperator(){
+  const name = document.getElementById('newOperatorName')?.value.trim();
+  const password = document.getElementById('newOperatorPassword')?.value;
+  if (!name || !password) return displayResponse('configResponse', { error:'Nombre y contraseña requeridos' }, false);
+  try{
+    const res = await fetch(`${API_URL}/config/operators`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify({ name, password })
+    });
+    const data = await res.json();
+    displayResponse('configResponse', data, res.ok);
+    if (res.ok) { document.getElementById('newOperatorId').value = data.operatorId; document.getElementById('newOperatorName').value=''; document.getElementById('newOperatorPassword').value=''; loadDatosMeta(); }
+  } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
+}
+
+// Festivo
+async function createHoliday(){
+  const date = document.getElementById('newHolidayDate')?.value;
+  const name = document.getElementById('newHolidayName')?.value.trim();
+  if (!date || !name) return displayResponse('configResponse', { error:'Fecha y nombre requeridos' }, false);
+  try{
+    const res = await fetch(`${API_URL}/holidays`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify({ date, name })
+    });
+    const data = await res.json();
+    displayResponse('configResponse', data, res.ok);
+    if (res.ok) { loadCalendar(); }
+  } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
+}
+
+// ================================
+// Indicadores (KPIs) con exportación CSV
+// ================================
+let indicatorsCache = null;
+
+function defaultDateRangeForIndicators(){
+  const today = new Date();
+  const first = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+  const last  = new Date(today.getFullYear(), today.getMonth()+1, 0).toISOString().split('T')[0];
+  const fromEl = document.getElementById('indFrom');
+  const toEl   = document.getElementById('indTo');
+  if (fromEl && !fromEl.value) fromEl.value = first;
+  if (toEl && !toEl.value) toEl.value = last;
+}
+async function loadIndicators(){
+  const from = document.getElementById('indFrom')?.value;
+  const to   = document.getElementById('indTo')?.value;
+  if (!from || !to) return displayResponse('indicatorsResponse', { error: 'Selecciona rango de fechas' }, false);
+  try{
+    const qs = new URLSearchParams({ from, to });
+    const res = await fetch(`${API_URL}/indicators/summary?${qs.toString()}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    const data = await res.json();
+    indicatorsCache = data;
+    if (!res.ok) return displayResponse('indicatorsResponse', data, false);
+    renderIndicators(data);
+    displayResponse('indicatorsResponse', { ok: true, from, to }, true);
+  } catch(e){
+    displayResponse('indicatorsResponse', { error:'Error cargando indicadores', details:String(e) }, false);
+  }
+}
+function renderIndicators(data){
+  const totalActual = Number(data.totalActualHours || 0);
+  const totalPlanned = Number(data.totalPlannedHours || 0);
+  const machines = Array.isArray(data.machineUtilization) ? data.machineUtilization : [];
+  const molds = Array.isArray(data.topMolds) ? data.topMolds : [];
+
+  const k1 = document.getElementById('kpiTotalActual'); if (k1) k1.textContent = totalActual.toFixed(2) + ' h';
+  const k2 = document.getElementById('kpiTotalPlanned'); if (k2) k2.textContent = totalPlanned.toFixed(2) + ' h';
+
+  let avgUtil = 0;
+  if (machines.length){
+    const sumUtil = machines.reduce((acc, m) => acc + (Number(m.utilizationPct || 0)), 0);
+    avgUtil = sumUtil / machines.length;
+  }
+  const k3 = document.getElementById('kpiAvgUtilization'); if (k3) k3.textContent = (avgUtil || 0).toFixed(1) + ' %';
+
+  // Tabla máquinas
+  const mtbody = document.querySelector('#indMachinesTable tbody');
+  if (mtbody) {
+    mtbody.innerHTML = machines.map(m => `
+      <tr>
+        <td>${m.machine_id ?? ''}</td>
+        <td>${escapeHtml(m.machine_name || '')}</td>
+        <td>${Number(m.actualHours || 0).toFixed(2)}</td>
+        <td>${Number(m.capacityHours || 0).toFixed(2)}</td>
+        <td>${Number(m.utilizationPct || 0).toFixed(1)}%</td>
+      </tr>
+    `).join('');
+  }
+
+  // Tabla moldes
+  const mltbody = document.querySelector('#indMoldsTable tbody');
+  if (mltbody) {
+    mltbody.innerHTML = molds.map(r => `
+      <tr>
+        <td>${r.mold_id ?? ''}</td>
+        <td>${escapeHtml(r.mold_name || '')}</td>
+        <td>${Number(r.actualHours || 0).toFixed(2)}</td>
+      </tr>
+    `).join('');
+  }
+}
+function exportIndicatorsCSV(){
+  if (!indicatorsCache) {
+    return displayResponse('indicatorsResponse', { error:'Genera indicadores antes de exportar' }, false);
+  }
+  const rows = [];
+  rows.push(['Indicador','Valor']);
+  rows.push(['Horas Reales', indicatorsCache.totalActualHours || 0]);
+  rows.push(['Horas Planificadas', indicatorsCache.totalPlannedHours || 0]);
+  rows.push(['','']);
+  rows.push(['Utilización por Máquina']);
+  rows.push(['ID','Máquina','Horas Reales','Capacidad (h)','Utilización (%)']);
+  (indicatorsCache.machineUtilization||[]).forEach(m=>{
+    rows.push([m.machine_id, m.machine_name, m.actualHours, m.capacityHours, m.utilizationPct]);
+  });
+  rows.push(['','']);
+  rows.push(['Top Moldes por Horas']);
+  rows.push(['ID Molde','Molde','Horas Reales']);
+  (indicatorsCache.topMolds||[]).forEach(r=>{
+    rows.push([r.mold_id, r.mold_name, r.actualHours]);
+  });
+
+  const csv = rows.map(r => r.map(v => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+  }).join(',')).join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `indicadores_${(document.getElementById('indFrom')?.value||'')}_${(document.getElementById('indTo')?.value||'')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // Entry
@@ -908,7 +1247,7 @@ document.addEventListener('DOMContentLoaded', () => {
     dateInput.value = saved || new Date().toISOString().split('T')[0];
   }
 
-  populateDayMonthYear('tmDia','tmMes','tmAnio');
+  populateDayMonthYear('tmDia', 'tmMes', 'tmAnio');
 
   updateConnectionStatus(false);
 
@@ -917,22 +1256,16 @@ document.addEventListener('DOMContentLoaded', () => {
   else showLoginScreen();
 });
 
-// Limpia la parrilla: borra cantidades y horas, recalcula totales, limpia storage
+// Limpiar parrilla
 function clearPlannerGrid() {
   const grid = document.getElementById('planningGridFixed');
   if (!grid) return;
-  // Limpiar inputs
   grid.querySelectorAll('.qty-input').forEach(inp => { inp.value = ''; });
   grid.querySelectorAll('.hours-input').forEach(inp => { inp.value = ''; });
-
-  // Recalcular totales de filas
   grid.querySelectorAll('tbody tr').forEach(row => updateFixedRowTotal(row));
-  // Recalcular totales de columnas y general
   updateFixedColumnTotals();
   updateFixedGrandTotal();
-
-  // Limpiar estado en localStorage y respuesta
-  try { localStorage.removeItem(LS_KEYS.plannerState); } catch {}
+  try { localStorage.removeItem(LS_KEYS.plannerState); } catch { }
   displayResponse('gridResponse', { message: 'Parrilla limpiada' }, true);
 }
 
@@ -942,6 +1275,16 @@ function setupEventListeners() {
   const usernameSel = document.getElementById('username'); if (usernameSel) usernameSel.addEventListener('change', updateOperatorSelection);
   const logoutBtn = document.getElementById('logoutBtn'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
 
+  // Configuración
+  const btnCreateMachine = document.getElementById('createMachineBtn'); if (btnCreateMachine) btnCreateMachine.addEventListener('click', createMachine);
+  const btnReloadMachines = document.getElementById('reloadMachinesBtn'); if (btnReloadMachines) btnReloadMachines.addEventListener('click', loadMachinesList);
+  const machineFilter = document.getElementById('machineFilter'); if (machineFilter) machineFilter.addEventListener('input', renderMachinesTable);
+  const btnCreateMold = document.getElementById('createMoldBtn'); if (btnCreateMold) btnCreateMold.addEventListener('click', createMold);
+  const btnCreatePart = document.getElementById('createPartBtn'); if (btnCreatePart) btnCreatePart.addEventListener('click', createPart);
+  const btnCreateOperator = document.getElementById('createOperatorBtn'); if (btnCreateOperator) btnCreateOperator.addEventListener('click', createOperator);
+  const btnCreateHoliday = document.getElementById('createHolidayBtn'); if (btnCreateHoliday) btnCreateHoliday.addEventListener('click', createHoliday);
+
+  // Tabs
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', (e) => openTab(e.target.getAttribute('data-tab')));
   });
@@ -951,9 +1294,7 @@ function setupEventListeners() {
   const moldList = document.getElementById('planMoldDatalist');
   if (moldInput && moldList) moldInput.addEventListener('input', () => { handleMoldTypeahead({ target: moldInput }); persistPlannerStateToStorage(); });
   const submitPlanBtn = document.getElementById('submitGridPlanBtn');
-  if (submitPlanBtn) submitPlanBtn.addEventListener('click', (e)=> submitGridPlan(e));
-
-  // NUEVO: botón limpiar parrilla
+  if (submitPlanBtn) submitPlanBtn.addEventListener('click', (e) => submitGridPlan(e));
   const clearPlannerBtn = document.getElementById('clearPlannerBtn');
   if (clearPlannerBtn) clearPlannerBtn.addEventListener('click', clearPlannerGrid);
 
@@ -962,13 +1303,18 @@ function setupEventListeners() {
   const nextMonthBtn = document.getElementById('next-month-btn'); if (nextMonthBtn) nextMonthBtn.addEventListener('click', () => changeMonth(1));
   const modalCloseBtn = document.getElementById('modal-close-btn'); if (modalCloseBtn) modalCloseBtn.addEventListener('click', hideModal);
 
-  // Datos/Tiempos/Import
-  const datosBuscarBtn = document.getElementById('datosBuscarBtn'); if (datosBuscarBtn) datosBuscarBtn.addEventListener('click', loadDatos);
-  const tmGuardarBtn = document.getElementById('tmGuardarBtn'); if (tmGuardarBtn) tmGuardarBtn.addEventListener('click', (e)=>{ e.preventDefault(); saveTiempoMolde(); });
-  const importBtn = document.getElementById('importBtn'); if (importBtn) importBtn.addEventListener('click', importDatosCSV);
+  // Datos
+  const btnMostrarTodos = document.getElementById('datosMostrarTodosBtn');
+  if (btnMostrarTodos) btnMostrarTodos.addEventListener('click', mostrarTodosDatos);
   const datoCrearBtn = document.getElementById('datoCrearBtn'); if (datoCrearBtn) datoCrearBtn.addEventListener('click', createDatoManual);
 
-  // Si quieres exponer un control para ajustar el tiempo de inactividad:
-  // const inactivityInput = document.getElementById('inactivityMinutesInput');
-  // if (inactivityInput) inactivityInput.addEventListener('change', (e) => setInactivityMinutes(e.target.value));
+  // Tiempos
+  const tmGuardarBtn = document.getElementById('tmGuardarBtn'); if (tmGuardarBtn) tmGuardarBtn.addEventListener('click', (e) => { e.preventDefault(); saveTiempoMolde(); });
+
+  // Importar
+  const importBtn = document.getElementById('importBtn'); if (importBtn) importBtn.addEventListener('click', importDatosCSV);
+
+  // Indicadores
+  const btnLoadInd = document.getElementById('loadIndicatorsBtn'); if (btnLoadInd) btnLoadInd.addEventListener('click', loadIndicators);
+  const btnExportInd = document.getElementById('exportIndicatorsBtn'); if (btnExportInd) btnExportInd.addEventListener('click', exportIndicatorsCSV);
 }

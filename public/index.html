@@ -72,10 +72,10 @@
           <button class="tab" data-tab="importar">📥 Importar</button>
           <button class="tab" data-tab="config">⚙️ Configuración</button>
           <button class="tab" data-tab="calendar">📅 Calendario</button>
-          <button class="tab" data-tab="reports">📈 Reportes</button>
+          <button class="tab" data-tab="indicators">📊 Indicadores</button>
         </div>
 
-        <!-- Planificador simplificado -->
+        <!-- Planificador simplificado (sin cambios aquí) -->
         <div class="tab-content active" id="tab-plan">
           <h2>📊 Cuadro Planificador</h2>
           <p>Molde con búsqueda, Fecha de inicio y parrilla con Partes y Máquinas fijas.</p>
@@ -89,9 +89,15 @@
               <label>Fecha de inicio</label>
               <input type="date" id="gridStartDate">
             </div>
+            <div class="form-group">
+              <label style="display:flex; align-items:center; gap:6px;"
+                title="Planificar este molde como prioridad (reprograma lo existente)">
+                <input type="checkbox" id="prioritySwitch">
+                ⭐ Prioridad
+              </label>
+            </div>
             <div class="form-group" style="display:flex;gap:8px;">
               <button class="btn btn-secondary" id="submitGridPlanBtn">Crear Planificación</button>
-              <!-- NUEVO: botón limpiar parrilla -->
               <button class="btn btn-danger" id="clearPlannerBtn" title="Borrar cantidades y horas">Limpiar
                 parrilla</button>
             </div>
@@ -100,7 +106,7 @@
           <div id="gridResponse" class="response-box"></div>
         </div>
 
-        <!-- Datos -->
+        <!-- Datos (historial) -->
         <div class="tab-content" id="tab-datos">
           <h2>🗂️ Datos</h2>
 
@@ -120,14 +126,9 @@
                 <input type="number" id="datoAnio" placeholder="Ej: 2025" min="2016" max="2100">
               </div>
 
-              <div class="form-group"><label>Operario</label><input type="text" id="datoOperario"
-                  placeholder="Nombre de operario"></div>
+              <!-- Registro manual reducido -->
               <div class="form-group"><label>Proceso</label><input type="text" id="datoProceso"
                   placeholder="Tipo de proceso"></div>
-              <div class="form-group"><label>Molde</label><input type="text" id="datoMolde" placeholder="Molde"></div>
-              <div class="form-group"><label>Parte</label><input type="text" id="datoParte" placeholder="Parte"></div>
-              <div class="form-group"><label>Máquina</label><input type="text" id="datoMaquina" placeholder="Máquina">
-              </div>
               <div class="form-group"><label>Operación</label><input type="text" id="datoOperacion"
                   placeholder="Operación"></div>
               <div class="form-group"><label>Horas</label><input type="number" id="datoHoras" step="0.25" min="0.25"
@@ -138,18 +139,6 @@
           </details>
 
           <h3 style="margin-top: 16px;">Historial</h3>
-
-          <div class="form-grid-3-col">
-            <div class="form-group"><label>Operario</label><input type="text" id="datosOperario" placeholder="Filtrar">
-            </div>
-            <div class="form-group"><label>Molde</label><input type="text" id="datosMolde" placeholder="Filtrar"></div>
-            <div class="form-group"><label>Parte</label><input type="text" id="datosParte" placeholder="Filtrar"></div>
-            <div class="form-group"><label>Máquina</label><input type="text" id="datosMaquina" placeholder="Filtrar">
-            </div>
-            <div class="form-group"><label>Proceso</label><input type="text" id="datosProceso" placeholder="Filtrar">
-            </div>
-            <button class="btn btn-secondary" id="datosBuscarBtn">Buscar</button>
-          </div>
 
           <div class="table-container">
             <table id="datosTable">
@@ -181,7 +170,7 @@
           <div class="response-box" id="datosResponse"></div>
         </div>
 
-        <!-- Tiempos de Moldes -->
+        <!-- Tiempos de Moldes (sin cambios) -->
         <div class="tab-content" id="tab-tiempos">
           <h2>⏱️ Tiempos de Moldes</h2>
           <div class="form-grid-3-col">
@@ -217,7 +206,7 @@
           <div class="response-box" id="tmResponse"></div>
         </div>
 
-        <!-- Importar -->
+        <!-- Importar (sin cambios funcionales) -->
         <div class="tab-content" id="tab-importar">
           <h2>📥 Importar Datos</h2>
           <div class="form-group">
@@ -256,30 +245,66 @@
         <!-- Config -->
         <div class="tab-content" id="tab-config">
           <h2>⚙️ Gestión de Datos Maestros</h2>
-          <p>Usa estos formularios para registrar las máquinas, moldes y partes del sistema.</p>
+          <p>Registra y edita máquinas, moldes, partes y operarios.</p>
+
+          <!-- Máquinas -->
+          <div class="form-column">
+            <h3>🔧 Máquinas</h3>
+            <div class="form-grid-3-col">
+              <div class="form-group">
+                <label>Nombre</label>
+                <input type="text" id="newMachineName" placeholder="Ej: Torno CNC">
+              </div>
+              <div class="form-group">
+                <label>Horas disponibles (día)</label>
+                <input type="number" step="0.5" min="0" id="newMachineCapacity" placeholder="Ej: 9.5">
+              </div>
+              <div class="form-group">
+                <label>ID</label>
+                <input type="text" id="newMachineId" readonly placeholder="Se genera al crear">
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; margin: 8px 0 16px;">
+              <button class="btn btn-secondary" id="createMachineBtn">Registrar Máquina</button>
+              <button class="btn" id="reloadMachinesBtn">Refrescar lista</button>
+              <div class="form-group" style="margin-left:auto;">
+                <label>Buscar</label>
+                <input type="text" id="machineFilter" placeholder="Filtrar por nombre...">
+              </div>
+            </div>
+
+            <div class="table-container">
+              <table id="machinesTable">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Nombre</th>
+                    <th>Horas disp./día</th>
+                    <th>Activa</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <hr style="margin: 30px 0;">
+
+          <!-- Moldes y Partes -->
           <div class="form-grid-3-col">
             <div class="form-column">
-              <h5><span class="emoji">🔧</span> Máquina</h5>
-              <div class="form-group"><label>Nombre</label><input type="text" id="newMachineName"
-                  placeholder="Ej: TOR-01"></div>
-              <div class="form-group"><label>ID</label><input type="text" id="newMachineId" readonly
-                  placeholder="Se genera al crear"></div>
-              <div class="form-group"><label>Nº de Operarios</label><input type="number" id="newMachineOpCount"
-                  value="1" min="1"></div>
-              <button class="btn btn-secondary" id="createMachineBtn">Registrar Máquina</button>
-            </div>
-            <div class="form-column">
-              <h5><span class="emoji">📦</span> Molde</h5>
+              <h3>📦 Moldes</h3>
               <div class="form-group"><label>Nombre</label><input type="text" id="newMoldName"
-                  placeholder="Ej: Molde para pieza X"></div>
+                  placeholder="Ej: Molde pieza X"></div>
               <div class="form-group"><label>ID</label><input type="text" id="newMoldId" readonly
                   placeholder="Se genera al crear"></div>
               <button class="btn btn-secondary" id="createMoldBtn">Registrar Molde</button>
             </div>
             <div class="form-column">
-              <h5><span class="emoji">🧩</span> Parte</h5>
-              <div class="form-group"><label>Nombre</label><input type="text" id="newPartName"
-                  placeholder="Ej: Componente principal"></div>
+              <h3>🧩 Partes del Molde</h3>
+              <div class="form-group"><label>Nombre</label><input type="text" id="newPartName" placeholder="Ej: Hembra">
+              </div>
               <div class="form-group"><label>ID</label><input type="text" id="newPartId" readonly
                   placeholder="Se genera al crear"></div>
               <button class="btn btn-secondary" id="createPartBtn">Registrar Parte</button>
@@ -288,27 +313,22 @@
 
           <hr style="margin: 30px 0;">
 
+          <!-- Operarios y Festivos -->
           <div class="form-grid-2-col" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
             <div class="form-column">
-              <h5><span class="emoji">👷</span> Operario</h5>
-              <p class="text-muted" style="font-size: 0.9rem;">Asigna un operario a un usuario de login (Ej:
-                'operarios').</p>
-              <div class="form-group"><label>Nombre Completo</label><input type="text" id="newOperatorName"
+              <h3>👷 Operarios</h3>
+              <p class="text-muted" style="font-size: 0.9rem;">Solo Admin/Jefe pueden crear/restablecer contraseña.</p>
+              <div class="form-group"><label>Nombre Operario</label><input type="text" id="newOperatorName"
                   placeholder="Ej: Juan Pérez"></div>
-              <div class="form-group"><label>ID</label><input type="text" id="newOperatorId" readonly
+              <div class="form-group"><label>Contraseña</label><input type="password" id="newOperatorPassword"
+                  placeholder="Establecer contraseña"></div>
+              <div class="form-group"><label>ID Operario</label><input type="text" id="newOperatorId" readonly
                   placeholder="Se genera al crear"></div>
-              <div class="form-group">
-                <label>Usuario de Login Asociado</label>
-                <select id="newOperatorUserId">
-                  <option value="">Cargando Usuarios...</option>
-                </select>
-              </div>
-              <button class="btn btn-secondary" id="createOperatorBtn">Registrar Operario</button>
+              <button class="btn btn-secondary" id="createOperatorBtn">Registrar/Actualizar Operario</button>
             </div>
 
             <div class="form-column">
-              <h5><span class="emoji">🎉</span> Festivo/Día No Laborable</h5>
-              <p class="text-muted" style="font-size: 0.9rem;">Días que el planificador debe omitir.</p>
+              <h3>🎉 Festivo/Día No Laborable</h3>
               <div class="form-group"><label>Fecha</label><input type="date" id="newHolidayDate"></div>
               <div class="form-group"><label>Nombre/Motivo</label><input type="text" id="newHolidayName"
                   placeholder="Ej: Feriado Nacional"></div>
@@ -322,6 +342,7 @@
               </div>
             </div>
           </div>
+
           <div id="configResponse" class="response-box" style="margin-top: 24px;"></div>
         </div>
 
@@ -348,15 +369,64 @@
           </div>
         </div>
 
-        <div class="tab-content" id="tab-reports">
-          <h2>📈 Reportes</h2>
-          <div class="form-group"><label>Fecha Desde</label><input type="date" id="reportFrom"></div>
-          <div class="form-group"><label>Fecha Hasta</label><input type="date" id="reportTo"></div>
-          <div class="form-group"><label>ID Molde (opcional)</label><input type="number" id="reportMoldId"
-              placeholder="Dejar vacío para todos" min="1"></div>
-          <button class="btn btn-secondary" id="loadReportBtn">Generar Reporte</button>
-          <button class="btn" id="loadDetailedReportBtn">Reporte Detallado</button>
-          <div class="response-box" id="reportResponse"></div>
+        <div class="tab-content" id="tab-indicators">
+          <h2>📊 Indicadores</h2>
+          <div class="form-grid-3-col">
+            <div class="form-group"><label>Fecha Desde</label><input type="date" id="indFrom"></div>
+            <div class="form-group"><label>Fecha Hasta</label><input type="date" id="indTo"></div>
+            <div class="form-group" style="display:flex; gap:8px; align-items:end;">
+              <button class="btn btn-secondary" id="loadIndicatorsBtn">Generar Indicadores</button>
+              <button class="btn" id="exportIndicatorsBtn">Exportar CSV</button>
+            </div>
+          </div>
+
+          <!-- KPIs -->
+          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 12px 0;">
+            <div class="card kpi-card">
+              <div class="kpi-title">Horas Reales</div>
+              <div class="kpi-value" id="kpiTotalActual">-</div>
+            </div>
+            <div class="card kpi-card">
+              <div class="kpi-title">Horas Planificadas</div>
+              <div class="kpi-value" id="kpiTotalPlanned">-</div>
+            </div>
+            <div class="card kpi-card">
+              <div class="kpi-title">Utilización Promedio</div>
+              <div class="kpi-value" id="kpiAvgUtilization">-</div>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <h3>Utilización por Máquina</h3>
+            <table id="indMachinesTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Máquina</th>
+                  <th>Horas Reales</th>
+                  <th>Capacidad (h)</th>
+                  <th>Utilización</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="table-container" style="margin-top: 16px;">
+            <h3>Top Moldes por Horas Reales</h3>
+            <table id="indMoldsTable">
+              <thead>
+                <tr>
+                  <th>ID Molde</th>
+                  <th>Molde</th>
+                  <th>Horas Reales</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="response-box" id="indicatorsResponse"></div>
         </div>
 
       </div>

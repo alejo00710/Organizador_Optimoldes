@@ -20,6 +20,7 @@ const datosRoutes = require('./routes/datos.routes');
 const importRoutes = require('./routes/import.routes');
 const moldRoutes = require('./routes/mold.routes');
 const catalogRoutes = require('./routes/catalog.routes');
+const indicatorsRoutes = require('./routes/indicators.routes');
 
 const app = express();
 
@@ -71,6 +72,10 @@ app.use('/api/datos', datosRoutes);
 app.use('/api/import', importRoutes);
 app.use('/api/molds', moldRoutes);
 app.use('/api/catalogs', catalogRoutes);
+app.use('/api/indicators', indicatorsRoutes);
+
+const configRoutes = require('./routes/config.routes');
+app.use('/api', configRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -121,6 +126,7 @@ async function startServer() {
         console.log('  GET    /api/holidays');
         console.log('  GET    /api/datos/meta');
         console.log('  GET    /health');
+        console.log('  GET    /api/indicators/summary');
         console.log('\n✅ Servidor listo para recibir peticiones\n');
     });
 

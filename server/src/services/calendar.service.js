@@ -5,7 +5,7 @@ const { query } = require('../config/database');
  * Ajustado al schema actual: molds.name y mold_parts.name
  */
 const getCalendarData = async (startDate, endDate) => {
-    const planSql = `
+  const planSql = `
     SELECT 
       pe.id,
       pe.date,
@@ -24,9 +24,9 @@ const getCalendarData = async (startDate, endDate) => {
     WHERE pe.date >= ? AND pe.date <= ?
     ORDER BY pe.date, ma.name
   `;
-    const planData = await query(planSql, [startDate, endDate]);
+  const planData = await query(planSql, [startDate, endDate]);
 
-    const actualSql = `
+  const actualSql = `
     SELECT 
       wl.id,
       DATE(wl.recorded_at) as date,
@@ -49,61 +49,61 @@ const getCalendarData = async (startDate, endDate) => {
     WHERE DATE(wl.recorded_at) >= ? AND DATE(wl.recorded_at) <= ?
     ORDER BY wl.recorded_at, ma.name
   `;
-    const actualData = await query(actualSql, [startDate, endDate]);
+  const actualData = await query(actualSql, [startDate, endDate]);
 
-    const events = [];
+  const events = [];
 
-    planData.forEach((row) => {
-        events.push({
-            id: `plan-${row.id}`,
-            title: `${row.mold_name} - ${row.part_name} (Plan: ${row.hours_planned}h)`,
-            start: row.date,
-            allDay: true,
-            backgroundColor: '#3788d8',
-            extendedProps: {
-                type: 'plan',
-                moldId: row.mold_id,
-                moldName: row.mold_name,
-                partId: row.part_id,
-                partName: row.part_name,
-                machineId: row.machine_id,
-                machineName: row.machine_name,
-                hours: row.hours_planned,
-            },
-        });
+  planData.forEach((row) => {
+    events.push({
+      id: `plan-${row.id}`,
+      title: `${row.mold_name} - ${row.part_name} (Plan: ${row.hours_planned}h)`,
+      start: `${row.date}T00:00:00`,
+      allDay: true,
+      backgroundColor: '#3788d8',
+      extendedProps: {
+        type: 'plan',
+        moldId: row.mold_id,
+        moldName: row.mold_name,
+        partId: row.part_id,
+        partName: row.part_name,
+        machineId: row.machine_id,
+        machineName: row.machine_name,
+        hours: row.hours_planned,
+      },
     });
+  });
 
-    actualData.forEach((row) => {
-        events.push({
-            id: `actual-${row.id}`,
-            title: `${row.mold_name} - ${row.part_name} (Real: ${row.hours_worked}h)`,
-            start: row.date,
-            allDay: true,
-            backgroundColor: '#28a745',
-            extendedProps: {
-                type: 'actual',
-                moldId: row.mold_id,
-                moldName: row.mold_name,
-                partId: row.part_id,
-                partName: row.part_name,
-                machineId: row.machine_id,
-                machineName: row.machine_name,
-                operatorId: row.operator_id,
-                operatorName: row.operator_name,
-                hours: row.hours_worked,
-                note: row.note,
-            },
-        });
+  actualData.forEach((row) => {
+    events.push({
+      id: `actual-${row.id}`,
+      title: `${row.mold_name} - ${row.part_name} (Real: ${row.hours_worked}h)`,
+      start: `${row.date}T00:00:00`,
+      allDay: true,
+      backgroundColor: '#28a745',
+      extendedProps: {
+        type: 'actual',
+        moldId: row.mold_id,
+        moldName: row.mold_name,
+        partId: row.part_id,
+        partName: row.part_name,
+        machineId: row.machine_id,
+        machineName: row.machine_name,
+        operatorId: row.operator_id,
+        operatorName: row.operator_name,
+        hours: row.hours_worked,
+        note: row.note,
+      },
     });
+  });
 
-    return events;
+  return events;
 };
 
 /**
  * Obtiene resumen agregado por día (ajustado a names)
  */
 const getDailySummary = async (startDate, endDate) => {
-    const sql = `
+  const sql = `
     SELECT 
       date,
       machine_id,
@@ -139,10 +139,10 @@ const getDailySummary = async (startDate, endDate) => {
     ORDER BY date, machine_name
   `;
 
-    return await query(sql, [startDate, endDate, startDate, endDate]);
+  return await query(sql, [startDate, endDate, startDate, endDate]);
 };
 
 module.exports = {
-    getCalendarData,
-    getDailySummary,
+  getCalendarData,
+  getDailySummary,
 };

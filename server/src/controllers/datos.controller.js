@@ -60,7 +60,7 @@ const listDatos = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-// POST /datos
+// POST /datos (creación manual - texto libre compatible)
 const createDato = async (req, res, next) => {
   try {
     const userId = req.user?.id || null;
@@ -101,6 +101,7 @@ const createDato = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+// PUT /datos/:id
 const updateDato = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -135,6 +136,7 @@ const updateDato = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+// DELETE /datos/:id
 const deleteDato = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -144,6 +146,7 @@ const deleteDato = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+// GET /datos/meta
 const getMeta = async (req, res, next) => {
   try {
     const uniques = async (col) =>
