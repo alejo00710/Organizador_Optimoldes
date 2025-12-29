@@ -24,9 +24,14 @@ const getMonthView = async (req, res, next) => {
         const planSql = `
             SELECT 
                 DATE_FORMAT(p.date, '%Y-%m-%d') AS date_str,
+                p.id AS entry_id,
                 p.hours_planned,
+                p.is_priority,
+                m.id AS machine_id,
                 m.name AS machine_name,
+                mo.id AS mold_id,
                 mo.name AS mold_name,
+                mp.id AS part_id,
                 mp.name AS part_name
             FROM plan_entries p
             JOIN machines m ON p.machine_id = m.id
@@ -54,10 +59,15 @@ const getMonthView = async (req, res, next) => {
 
             const hours = parseFloat(row.hours_planned);
             eventsByDay[day].tasks.push({
+                entryId: row.entry_id,
+                moldId: row.mold_id,
+                machineId: row.machine_id,
+                partId: row.part_id,
                 machine: row.machine_name,
                 mold: row.mold_name,
                 part: row.part_name,
                 hours,
+                isPriority: Boolean(row.is_priority),
             });
 
             if (!eventsByDay[day].machineUsage[row.machine_name]) {

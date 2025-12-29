@@ -31,6 +31,24 @@ async function initializeDatabase() {
         const pool = require('./database').createPool();
         await pool.query(schemaSql);
         console.log('✅ Tablas verificadas y aseguradas.');
+
+        // Migraciones pequeñas e idempotentes (solo desarrollo)
+        try {
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = 'plan_entries'
+                   AND column_name = 'is_priority'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE plan_entries ADD COLUMN is_priority TINYINT(1) NOT NULL DEFAULT 0`);
+                console.log('✅ Migración aplicada: plan_entries.is_priority');
+            }
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración plan_entries.is_priority:', e.message);
+        }
     } catch (error) {
         console.error(`❌ Error al ejecutar el script del schema:`, error.message);
         process.exit(1);

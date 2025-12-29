@@ -575,7 +575,17 @@ async function submitGridPlan(e) {
     console.log('STATUS:', res.status);
     console.log('RESPUESTA BACKEND:', data);
 
-    displayResponse('gridResponse', data, res.ok);
+    // Mostrar un mensaje claro en pantalla (no solo JSON en consola)
+    if (res.ok) {
+      const msg = data?.message || '✔ Planificación creada';
+      displayResponse('gridResponse', msg, true);
+      alert(msg);
+    } else {
+      const msg = data?.error || '✖ Error al planificar';
+      displayResponse('gridResponse', msg, false);
+      // Ventana emergente (advertencia) para evitar que pase desapercibido
+      alert(msg);
+    }
 
     if (res.ok) {
       console.log('✔ PLANIFICACIÓN OK');
@@ -893,6 +903,16 @@ function changeMonth(delta) {
   else if (currentMonth < 0) { currentMonth = 11; currentYear--; }
   loadCalendar();
 }
+
+function localISOFromDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+let lastDayDetailsContext = null;
+
 async function loadCalendar() {
   if (!authToken) return;
   const display = document.getElementById('calendar-month-year');
@@ -912,7 +932,7 @@ function renderCalendar(year, month, events = {}, holidays = {}) {
   const grid = document.getElementById('calendar-grid');
   if (!grid) return;
   grid.innerHTML = '';
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localISOFromDate(new Date());
   const firstDay = new Date(year, month, 1);
   const startDayIndex = firstDay.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -921,7 +941,7 @@ function renderCalendar(year, month, events = {}, holidays = {}) {
 
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = localISOFromDate(date);
     const cell = document.createElement('div'); cell.className = 'calendar-day';
     cell.innerHTML = `<div class="day-number">${d}</div>`;
     if (dateStr === todayStr) cell.classList.add('today');
@@ -931,29 +951,70 @@ function renderCalendar(year, month, events = {}, holidays = {}) {
       const total = Object.values(events[d].machineUsage || {}).reduce((a, b) => a + (b || 0), 0);
       cell.classList.add('has-events');
       cell.innerHTML += `<div class="events-indicator">${total.toFixed(1)}h</div>`;
+
+      const hasPriority = Array.isArray(events[d].tasks) && events[d].tasks.some(t => t && t.isPriority);
+      if (hasPriority) {
+        cell.innerHTML += `<div class="priority-indicator" title="Prioridad">★</div>`;
+      }
     }
     cell.addEventListener('click', () => showDayDetails(date, events[d], holidays[dateStr]));
     grid.appendChild(cell);
   }
 }
-function showDayDetails(date, events, holiday) {
-  const modal = document.getElementById('day-details-modal');
+
+function getMachineOptionsHtml(selectedName) {
+  const base = (window.FIXED_MACHINES || FIXED_MACHINES || []).map(m => m.name);
+  const names = Array.from(new Set([selectedName, ...base].filter(Boolean)));
+  return names.map(n => `<option value="${escapeHtml(n)}" ${n === selectedName ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+}
+
+function renderDayDetailsView(date, events, holiday) {
   const body = document.getElementById('modal-body');
   const titleEl = document.getElementById('modal-title');
-  const dateStr = date.toISOString().split('T')[0];
+  const dateStr = localISOFromDate(date);
   if (titleEl) titleEl.textContent = date.toLocaleDateString();
+
   let html = '';
   if (holiday) html += `<p>🎉 ${escapeHtml(holiday)}</p>`;
+
   if (events && events.tasks && events.tasks.length) {
-    html += '<ul>';
-    events.tasks.forEach(t => html += `<li>${escapeHtml(t.machine)}: ${escapeHtml(t.mold)} (${escapeHtml(t.part)}) - ${t.hours}h</li>`);
-    html += '</ul>';
+    // Agrupar por molde
+    const byMold = new Map();
+    for (const t of events.tasks) {
+      const moldKey = String(t.moldId ?? t.mold ?? '');
+      if (!byMold.has(moldKey)) byMold.set(moldKey, { moldId: t.moldId, moldName: t.mold, tasks: [] });
+      byMold.get(moldKey).tasks.push(t);
+    }
+
+    for (const grp of byMold.values()) {
+      html += `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px;">
+          <h4 style="margin:0;">${escapeHtml(grp.moldName || 'Molde')}</h4>
+          ${grp.moldId ? `<button class="btn btn-secondary" data-edit-mold="${grp.moldId}" data-mold-name="${escapeHtml(grp.moldName || '')}">Editar este molde</button>` : ''}
+        </div>
+        <ul>
+          ${grp.tasks.map(t => `<li>${escapeHtml(t.machine)}: (${escapeHtml(t.part)}) - ${t.hours}h</li>`).join('')}
+        </ul>
+      `;
+    }
   } else {
     html += '<p>No hay tareas planificadas para este día.</p>';
   }
+
   html += `<div style="margin-top:12px;"><button class="btn btn-secondary" id="toggleWorkingBtn">Cargando estado...</button><small style="display:block; margin-top:6px;">Esto crea una excepción para este día.</small></div>`;
+
   if (body) body.innerHTML = html;
 
+  // Hook: editar molde
+  document.querySelectorAll('#modal-body button[data-edit-mold]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const moldId = btn.getAttribute('data-edit-mold');
+      const moldName = btn.getAttribute('data-mold-name') || '';
+      await openMoldEditorView(moldId, moldName);
+    });
+  });
+
+  // Working toggle
   (async () => {
     const laborable = await isDateLaborable(dateStr);
     const btn = document.getElementById('toggleWorkingBtn');
@@ -972,7 +1033,160 @@ function showDayDetails(date, events, holiday) {
       } catch (e) { alert('Error de conexión al actualizar el estado del día.'); }
     };
   })();
+}
 
+async function openMoldEditorView(moldId, moldName) {
+  const body = document.getElementById('modal-body');
+  const titleEl = document.getElementById('modal-title');
+  if (titleEl) titleEl.textContent = `Editar molde: ${moldName || moldId}`;
+  if (body) body.innerHTML = '<p>Cargando plan del molde...</p>';
+
+  try {
+    const res = await fetch(`${API_URL}/tasks/plan/mold/${encodeURIComponent(moldId)}`, {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      cache: 'no-store'
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (body) body.innerHTML = `<p>Error: ${escapeHtml(data?.error || 'No se pudo cargar el molde')}</p>`;
+      return;
+    }
+
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    const startDate = data.startDate || '';
+    const endDate = data.endDate || '';
+
+    let html = `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
+        <div>
+          <div class="text-muted">Rango del molde: ${escapeHtml(startDate)} → ${escapeHtml(endDate)}</div>
+        </div>
+        <button class="btn btn-secondary" id="moldEditorBackBtn">Volver al día</button>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Máquina</th>
+              <th>Parte</th>
+              <th>Horas</th>
+              <th>Nueva fecha</th>
+              <th>Nueva máquina</th>
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${entries.map(e => {
+              const curDate = String(e.date || '');
+              const curMachine = String(e.machine || '');
+              return `
+                <tr data-entry-id="${e.entryId}">
+                  <td>${escapeHtml(curDate)}</td>
+                  <td>${escapeHtml(curMachine)}</td>
+                  <td>${escapeHtml(String(e.part || ''))}</td>
+                  <td>${escapeHtml(String(e.hours || 0))}</td>
+                  <td><input type="date" class="pe-new-date" value="${escapeHtml(curDate)}"></td>
+                  <td>
+                    <select class="pe-new-machine">
+                      ${getMachineOptionsHtml(curMachine)}
+                    </select>
+                  </td>
+                  <td style="display:flex; gap:8px; align-items:center;">
+                    <button class="btn btn-secondary pe-save-btn">Guardar</button>
+                    <button class="btn btn-secondary pe-next-btn" title="Busca el siguiente día laborable con cupo y mueve esta tarea">Siguiente disponible</button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="response-box" id="moldEditorResponse"></div>
+    `;
+
+    if (body) body.innerHTML = html;
+
+    const backBtn = document.getElementById('moldEditorBackBtn');
+    if (backBtn) backBtn.onclick = () => {
+      if (lastDayDetailsContext) {
+        renderDayDetailsView(lastDayDetailsContext.date, lastDayDetailsContext.events, lastDayDetailsContext.holiday);
+      }
+    };
+
+    body.querySelectorAll('button.pe-save-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const tr = btn.closest('tr');
+        const entryId = tr?.getAttribute('data-entry-id');
+        const newDate = tr?.querySelector('.pe-new-date')?.value;
+        const newMachineName = tr?.querySelector('.pe-new-machine')?.value;
+        if (!entryId || !newDate || !newMachineName) return;
+
+        try {
+          const resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(entryId)}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+              body: JSON.stringify({ date: newDate, machineName: newMachineName })
+            }
+          );
+          const out = await resp.json();
+          displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
+          if (resp.ok) {
+            alert(out?.message || 'Entrada actualizada');
+            await loadCalendar();
+            // Recargar vista del molde para reflejar cambios
+            await openMoldEditorView(moldId, moldName);
+          } else {
+            alert(out?.error || 'No se pudo actualizar');
+          }
+        } catch (e) {
+          displayResponse('moldEditorResponse', { error: 'Error de conexión', details: String(e) }, false);
+          alert('Error de conexión');
+        }
+      });
+    });
+
+    body.querySelectorAll('button.pe-next-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const tr = btn.closest('tr');
+        const entryId = tr?.getAttribute('data-entry-id');
+        const baseDate = tr?.querySelector('.pe-new-date')?.value;
+        const machineName = tr?.querySelector('.pe-new-machine')?.value;
+        if (!entryId) return;
+
+        try {
+          const resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(entryId)}/next-available`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+              body: JSON.stringify({ baseDate, machineName })
+            }
+          );
+          const out = await resp.json();
+          displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
+          if (resp.ok) {
+            alert(`${out?.message || 'Movido'}: ${out?.date || ''}`);
+            await loadCalendar();
+            await openMoldEditorView(moldId, moldName);
+          } else {
+            alert(out?.error || 'No se pudo mover');
+          }
+        } catch (e) {
+          displayResponse('moldEditorResponse', { error: 'Error de conexión', details: String(e) }, false);
+          alert('Error de conexión');
+        }
+      });
+    });
+  } catch (e) {
+    if (body) body.innerHTML = `<p>Error: ${escapeHtml(String(e))}</p>`;
+  }
+}
+
+function showDayDetails(date, events, holiday) {
+  const modal = document.getElementById('day-details-modal');
+  lastDayDetailsContext = { date, events, holiday };
+  renderDayDetailsView(date, events, holiday);
   if (modal) modal.classList.remove('hidden');
 }
 function hideModal() { const modal = document.getElementById('day-details-modal'); if (modal) modal.classList.add('hidden'); }

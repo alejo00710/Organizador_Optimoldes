@@ -12,7 +12,7 @@ router.post(
   tasksController.planBlock
 );
 
-// Planificación con PRIORIDAD en bloque (preempt, reubica bloques existentes)
+// Planificación con PRIORIDAD en bloque (global, reubica bloques existentes)
 router.post(
   '/plan/priority',
   authenticateToken,
@@ -20,5 +20,26 @@ router.post(
   tasksController.planPriority
 );
 
-// Si aún mantienes /plan (por tarea individual), puedes dejarlo, pero la recomendación es usar /plan/block y /plan/priority.
+// Editor desde calendario
+router.get(
+  '/plan/mold/:moldId',
+  authenticateToken,
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  tasksController.getMoldPlan
+);
+
+router.patch(
+  '/plan/entry/:entryId',
+  authenticateToken,
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  tasksController.updatePlanEntry
+);
+
+router.patch(
+  '/plan/entry/:entryId/next-available',
+  authenticateToken,
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  tasksController.movePlanEntryToNextAvailable
+);
+
 module.exports = router;

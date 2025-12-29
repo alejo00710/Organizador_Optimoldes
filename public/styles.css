@@ -684,6 +684,25 @@
       box-shadow: 0 2px 8px rgba(0, 217, 163, 0.4);
     }
 
+    .priority-indicator {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(255, 184, 0, 0.18);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+      font-weight: 900;
+      font-size: 0.85rem;
+      line-height: 1;
+      box-shadow: 0 2px 8px rgba(255, 184, 0, 0.25);
+    }
+
     .holiday-name {
       position: absolute;
       bottom: 8px;
@@ -713,8 +732,8 @@
       background: var(--card-bg);
       padding: 2.5rem;
       border-radius: 16px;
-      max-width: 600px;
-      width: 90%;
+      max-width: 1100px;
+      width: 96%;
       box-shadow: 
         0 20px 60px rgba(0, 0, 0, 0.5),
         0 0 0 1px var(--border-color);
@@ -835,6 +854,13 @@
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 2rem;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 1rem;
+      margin-top: 1.5rem;
     }
 
     hr {

@@ -7,12 +7,20 @@ const { ROLES } = require('../utils/constants');
  * Acepta claves comunes: id, userId, uid; y role en raíz o en user.role.
  */
 function normalizeUserPayload(payload) {
-  const id = payload?.id ?? payload?.userId ?? payload?.uid ?? null;
+  const rawId = payload?.id ?? payload?.userId ?? payload?.uid ?? null;
+  const id = rawId == null ? null : Number.parseInt(String(rawId), 10);
   const role = payload?.role ?? payload?.user?.role ?? null;
   const username = payload?.username ?? payload?.user?.username ?? null;
-  const operatorId = payload?.operatorId ?? payload?.user?.operatorId ?? null;
+  const rawOperatorId = payload?.operatorId ?? payload?.user?.operatorId ?? null;
+  const operatorId = rawOperatorId == null ? null : Number.parseInt(String(rawOperatorId), 10);
 
-  return { id, role, username, operatorId };
+  const normalizedRole = role == null ? null : String(role);
+  return {
+    id: Number.isFinite(id) && id > 0 ? id : null,
+    role: normalizedRole,
+    username,
+    operatorId: Number.isFinite(operatorId) && operatorId > 0 ? operatorId : null,
+  };
 }
 
 /**
@@ -32,9 +40,8 @@ const authenticateToken = (req, res, next) => {
     }
 
     const user = normalizeUserPayload(payload);
-    if (!user.id || !user.role) {
-      return res.status(403).json({ error: 'Token sin id/role válidos' });
-    }
+    if (!user.id || !user.role) return res.status(403).json({ error: 'Token sin id/role válidos' });
+    if (!Object.values(ROLES).includes(user.role)) return res.status(403).json({ error: 'Rol no válido' });
 
     req.user = user;
     next();

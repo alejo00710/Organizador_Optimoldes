@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS plan_entries (
   machine_id INT NOT NULL,
   date DATE NOT NULL,
   hours_planned DECIMAL(5,2) NOT NULL,
+  is_priority TINYINT(1) NOT NULL DEFAULT 0,
   created_by INT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (mold_id) REFERENCES molds(id) ON DELETE CASCADE,
