@@ -45,6 +45,8 @@
         <button class="btn btn-primary" id="loginBtn" style="width: 100%; margin-top: 1rem;">
           Iniciar Sesión
         </button>
+
+        <div class="response-box" id="loginResponse"></div>
       </div>
     </div>
 
@@ -373,59 +375,66 @@
 
         <div class="tab-content" id="tab-indicators">
           <h2>📊 Indicadores</h2>
+
           <div class="form-grid-3-col">
-            <div class="form-group"><label>Fecha Desde</label><input type="date" id="indFrom"></div>
-            <div class="form-group"><label>Fecha Hasta</label><input type="date" id="indTo"></div>
+            <div class="form-group">
+              <label>Año</label>
+              <input type="number" id="indYear" min="2000" max="2100" placeholder="2025">
+            </div>
+            <div class="form-group">
+              <label>Operarios a mostrar</label>
+              <div id="indOperatorFilter" class="operator-filter"></div>
+            </div>
             <div class="form-group" style="display:flex; gap:8px; align-items:end;">
-              <button class="btn btn-secondary" id="loadIndicatorsBtn">Generar Indicadores</button>
+              <button class="btn btn-secondary" id="loadIndicatorsBtn">Cargar</button>
               <button class="btn" id="exportIndicatorsBtn">Exportar CSV</button>
             </div>
           </div>
 
-          <!-- KPIs -->
-          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 12px 0;">
-            <div class="card kpi-card">
-              <div class="kpi-title">Horas Reales</div>
-              <div class="kpi-value" id="kpiTotalActual">-</div>
-            </div>
-            <div class="card kpi-card">
-              <div class="kpi-title">Horas Planificadas</div>
-              <div class="kpi-value" id="kpiTotalPlanned">-</div>
-            </div>
-            <div class="card kpi-card">
-              <div class="kpi-title">Utilización Promedio</div>
-              <div class="kpi-value" id="kpiAvgUtilization">-</div>
-            </div>
-          </div>
-
-          <div class="table-container">
-            <h3>Utilización por Máquina</h3>
-            <table id="indMachinesTable">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Máquina</th>
-                  <th>Horas Reales</th>
-                  <th>Capacidad (h)</th>
-                  <th>Utilización</th>
-                </tr>
-              </thead>
+          <div class="table-container" style="margin-top: 12px;">
+            <h3>Indicador (Principal)</h3>
+            <table id="indMainTable">
+              <thead></thead>
               <tbody></tbody>
             </table>
           </div>
 
-          <div class="table-container" style="margin-top: 16px;">
-            <h3>Top Moldes por Horas Reales</h3>
-            <table id="indMoldsTable">
-              <thead>
-                <tr>
-                  <th>ID Molde</th>
-                  <th>Molde</th>
-                  <th>Horas Reales</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div style="margin-top: 18px;">
+            <h3>Tablas Fuente</h3>
+
+            <div class="table-container" style="margin-top: 10px;">
+              <h4>Suma de Horas (Tabla 1)</h4>
+              <table id="indHoursTable">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <div class="table-container" style="margin-top: 16px;">
+              <h4>Días Hábiles Trabajados (Tabla 2 - Manual)</h4>
+              <div class="form-grid-3-col" style="margin: 10px 0;">
+                <div class="form-group">
+                  <label>Operario</label>
+                  <select id="indDaysOperator"></select>
+                </div>
+                <div class="form-group">
+                  <label>Mes</label>
+                  <select id="indDaysMonth"></select>
+                </div>
+                <div class="form-group" style="display:flex; gap:8px; align-items:end;">
+                  <div style="flex:1;">
+                    <label>Días</label>
+                    <input type="number" id="indDaysValue" min="0" max="31" placeholder="0">
+                  </div>
+                  <button class="btn" id="saveWorkingDaysBtn">Guardar</button>
+                </div>
+              </div>
+
+              <table id="indDaysTable">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
           </div>
 
           <div class="response-box" id="indicatorsResponse"></div>

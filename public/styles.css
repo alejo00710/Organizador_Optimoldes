@@ -386,6 +386,68 @@
       color: var(--text-muted);
     }
 
+    /* ========== INDICATORS: OPERATOR CHECKBOX FILTER ========== */
+    .operator-filter {
+      max-height: 180px;
+      overflow: auto;
+      padding: 0.5rem;
+      background: var(--input-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+    }
+
+    /*
+      OJO: .form-group label tiene mayor especificidad que .operator-filter-row,
+      así que aquí usamos label.operator-filter-row para sobrescribirlo.
+    */
+    .form-group label.operator-filter-row {
+      display: grid;
+      grid-template-columns: 20px 1fr;
+      align-items: center;
+      column-gap: 0.75rem;
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+      min-height: 34px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+      line-height: 1.2;
+
+      /* reset del estilo de labels de formulario */
+      text-transform: none;
+      letter-spacing: 0;
+      margin-bottom: 0;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .operator-filter-name {
+      flex: 1;
+      min-width: 0;
+      text-align: left;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.95rem;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+      align-self: center;
+    }
+
+    .operator-filter-checkbox {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent-orange);
+      flex: 0 0 auto;
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      align-self: center;
+      justify-self: center;
+    }
+
     /* ========== BUTTONS ========== */
     .btn {
       padding: 0.875rem 1.75rem;
@@ -812,6 +874,19 @@
     .response-box.error {
       border-left-color: var(--danger);
       background: rgba(255, 71, 87, 0.05);
+    }
+
+    /* No ocupar espacio si no hay mensaje */
+    .response-box:empty {
+      display: none;
+      margin-top: 0;
+      padding: 0;
+      border: 0;
+    }
+
+    /* Login: mantener compacto */
+    #loginResponse {
+      margin-top: 12px;
     }
 
     /* ========== UTILITIES ========== */

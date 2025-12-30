@@ -115,6 +115,8 @@ function showLoginScreen(message = '') {
   if (loginContainer) loginContainer.classList.remove('hidden');
   if (mainApp) mainApp.classList.add('hidden');
   if (message) console.error(message);
+  const loginResp = document.getElementById('loginResponse');
+  if (loginResp) loginResp.textContent = '';
   const pwd = document.getElementById('password'); if (pwd) pwd.value = 'admin';
   const opSel = document.getElementById('operatorSelectGroup'); if (opSel) opSel.classList.add('hidden');
   authToken = null; currentUser = null;
@@ -187,15 +189,28 @@ async function login(e) {
   const operatorId = document.getElementById('operatorId') ? document.getElementById('operatorId').value : null;
   const body = { username, password };
   if (username === 'operarios') {
-    if (!operatorId) return alert('Selecciona un operario');
+    if (!operatorId) {
+      displayResponse('loginResponse', 'Selecciona un operario', false);
+      return;
+    }
     body.operatorId = operatorId;
   }
   try {
     const res = await fetch(`${API_URL}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json();
-    if (res.ok) { localStorage.setItem('authToken', data.token); verifySession(data.token); }
-    else { alert(data.error || 'Error login'); updateConnectionStatus(false); }
-  } catch (e) { alert('Error conexión'); updateConnectionStatus(false); }
+    if (res.ok) {
+      displayResponse('loginResponse', 'Sesión iniciada', true);
+      localStorage.setItem('authToken', data.token);
+      verifySession(data.token);
+    }
+    else {
+      displayResponse('loginResponse', data.error || 'Error login', false);
+      updateConnectionStatus(false);
+    }
+  } catch (e) {
+    displayResponse('loginResponse', 'Error conexión', false);
+    updateConnectionStatus(false);
+  }
 }
 async function verifySession(token) {
   try {
@@ -228,10 +243,13 @@ function openTab(tabName) {
 
   if (tabName === 'calendar') try { loadCalendar(); } catch (e) {}
   if (tabName === 'plan') try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch (e) {}
-  if (tabName === 'tiempos') try { loadDatosMeta(); } catch (e) {}
+  if (tabName === 'tiempos') try { loadTiemposMeta(); } catch (e) {}
   if (tabName === 'datos') try { loadDatos(true); } catch (e) {}
   if (tabName === 'config') try { loadMachinesList(); } catch (e) {}
-  if (tabName === 'indicators') try { defaultDateRangeForIndicators(); } catch (e) {}
+  if (tabName === 'indicators') {
+    try { defaultYearForIndicators(); } catch (e) {}
+    try { loadOperatorsForIndicators(); } catch (e) {}
+  }
 }
 
 // Planificador
@@ -444,7 +462,7 @@ async function submitGridPlan(e) {
   console.log('isPriority:', isPriority);
 
   if (!moldName) {
-    alert('Ingresa/selecciona un Molde.');
+    displayResponse('gridResponse', 'Ingresa/selecciona un Molde.', false);
     return;
   }
 
@@ -458,11 +476,11 @@ async function submitGridPlan(e) {
 
   if (!isPriority) {
     if (!startDate) {
-      alert('Selecciona una Fecha de inicio.');
+      displayResponse('gridResponse', 'Selecciona una Fecha de inicio.', false);
       return;
     }
     if (startDate < todayLocal) {
-      alert(`Fecha pasada detectada\nstartDate=${startDate}\ntoday=${todayLocal}`);
+      displayResponse('gridResponse', `Fecha pasada detectada\nstartDate=${startDate}\ntoday=${todayLocal}`, false);
       return;
     }
 
@@ -470,12 +488,12 @@ async function submitGridPlan(e) {
     console.log('laborable:', laborable);
 
     if (!laborable) {
-      alert('La fecha seleccionada no es laborable.');
+      displayResponse('gridResponse', 'La fecha seleccionada no es laborable.', false);
       return;
     }
   } else if (startDate) {
     if (startDate < todayLocal) {
-      alert(`Fecha pasada detectada (priority)\nstartDate=${startDate}\ntoday=${todayLocal}`);
+      displayResponse('gridResponse', `Fecha pasada detectada (priority)\nstartDate=${startDate}\ntoday=${todayLocal}`, false);
       return;
     }
 
@@ -483,7 +501,7 @@ async function submitGridPlan(e) {
     console.log('laborable (priority):', laborable);
 
     if (!laborable) {
-      alert('La fecha seleccionada no es laborable.');
+      displayResponse('gridResponse', 'La fecha seleccionada no es laborable.', false);
       return;
     }
   }
@@ -493,7 +511,7 @@ async function submitGridPlan(e) {
   // ---------------------------
   const grid = document.getElementById('planningGridFixed');
   if (!grid) {
-    alert('La parrilla no está lista.');
+    displayResponse('gridResponse', 'La parrilla no está lista.', false);
     return;
   }
 
@@ -529,7 +547,7 @@ async function submitGridPlan(e) {
   console.log('tasks construidas:', tasks);
 
   if (!tasks.length) {
-    alert('No hay datos para planificar.');
+    displayResponse('gridResponse', 'No hay datos para planificar.', false);
     return;
   }
 
@@ -575,16 +593,13 @@ async function submitGridPlan(e) {
     console.log('STATUS:', res.status);
     console.log('RESPUESTA BACKEND:', data);
 
-    // Mostrar un mensaje claro en pantalla (no solo JSON en consola)
+    // Mostrar un mensaje claro en pantalla (no bloqueante)
     if (res.ok) {
       const msg = data?.message || '✔ Planificación creada';
       displayResponse('gridResponse', msg, true);
-      alert(msg);
     } else {
       const msg = data?.error || '✖ Error al planificar';
       displayResponse('gridResponse', msg, false);
-      // Ventana emergente (advertencia) para evitar que pase desapercibido
-      alert(msg);
     }
 
     if (res.ok) {
@@ -601,6 +616,72 @@ async function submitGridPlan(e) {
 }
 
 // Tiempos de Moldes (mantiene autocompletar y filtros propios)
+let tiemposMetaCache = null;
+
+function monthNameToNumber(mesLower){
+  const idx = monthNames.indexOf(String(mesLower || '').toLowerCase().trim());
+  return idx >= 0 ? (idx + 1) : 0;
+}
+
+function toISODate(y, m, d){
+  const yy = String(y).padStart(4, '0');
+  const mm = String(m).padStart(2, '0');
+  const dd = String(d).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+function findByName(items, name){
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return null;
+  return (Array.isArray(items) ? items : []).find(x => String(x?.name || '').trim().toLowerCase() === n) || null;
+}
+
+function populateSelectWithFilterObjects(selectId, filterInputId, items, labelKey){
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const arr = Array.isArray(items) ? items : [];
+  sel.dataset.allItems = JSON.stringify(arr);
+  sel.innerHTML = arr.map(it => `<option value="${it.id}">${escapeHtml(it[labelKey] || it.name || '')}</option>`).join('');
+  sel.selectedIndex = -1;
+  const filterInput = document.getElementById(filterInputId);
+  if (filterInput) filterInput.value = '';
+}
+
+function setupFilterListenerObjects(filterInputId, selectId, labelKey){
+  const input = document.getElementById(filterInputId);
+  const sel = document.getElementById(selectId);
+  if (!input || !sel) return;
+  if (input.dataset.bound === '1') return;
+  input.dataset.bound = '1';
+  input.addEventListener('input', () => {
+    const q = input.value.toLowerCase().trim();
+    const all = JSON.parse(sel.dataset.allItems || '[]');
+    const filtered = q ? all.filter(it => String(it[labelKey] || it.name || '').toLowerCase().includes(q)) : all;
+    sel.innerHTML = filtered.map(it => `<option value="${it.id}">${escapeHtml(it[labelKey] || it.name || '')}</option>`).join('');
+    sel.selectedIndex = -1;
+  });
+}
+
+async function loadTiemposMeta(){
+  try {
+    const res = await fetch(`${API_URL}/catalogs/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    if (!res.ok) return;
+    const meta = await res.json();
+    tiemposMetaCache = meta;
+
+    fillDatalist('tmOperarios', (meta.operators || []).map(o => o.name));
+    fillDatalist('tmProcesos', (meta.processes || []).map(p => p.name));
+    fillDatalist('tmMaquinas', (meta.machines || []).map(m => m.name));
+    fillDatalist('tmOperaciones', (meta.operations || []).map(o => o.name));
+
+    populateSelectWithFilterObjects('tmMoldeSelect', 'tmMoldeFilter', meta.molds || [], 'name');
+    populateSelectWithFilterObjects('tmParteSelect', 'tmParteFilter', meta.parts || [], 'name');
+
+    setupFilterListenerObjects('tmMoldeFilter', 'tmMoldeSelect', 'name');
+    setupFilterListenerObjects('tmParteFilter', 'tmParteSelect', 'name');
+  } catch (_) {}
+}
+
 async function saveTiempoMolde() {
   const diaSel = document.getElementById('tmDia');
   const mesSel = document.getElementById('tmMes');
@@ -614,31 +695,47 @@ async function saveTiempoMolde() {
 
   const moldeSel = document.getElementById('tmMoldeSelect');
   const parteSel = document.getElementById('tmParteSelect');
-  const molde = moldeSel && moldeSel.selectedOptions.length ? moldeSel.selectedOptions[0].value : '';
-  const parte = parteSel && parteSel.selectedOptions.length ? parteSel.selectedOptions[0].value : '';
+  const moldId = moldeSel && moldeSel.selectedOptions.length ? parseInt(moldeSel.selectedOptions[0].value, 10) : NaN;
+  const partId = parteSel && parteSel.selectedOptions.length ? parseInt(parteSel.selectedOptions[0].value, 10) : NaN;
 
   const maquina = document.getElementById('tmMaquina') ? document.getElementById('tmMaquina').value : '';
   const operacion = document.getElementById('tmOperacion') ? document.getElementById('tmOperacion').value : '';
   const horasEl = document.getElementById('tmHoras');
   const horas = horasEl ? parseFloat(horasEl.value) : NaN;
 
-  if (isNaN(dia) || !mes || isNaN(anio) || !operario || !proceso || !molde || !parte || !maquina || !operacion || isNaN(horas)) {
+  if (isNaN(dia) || !mes || isNaN(anio) || !operario || !proceso || isNaN(moldId) || isNaN(partId) || !maquina || !operacion || isNaN(horas)) {
     return displayResponse('tmResponse', { error: 'Completa todos los campos' }, false);
   }
 
+  const meta = tiemposMetaCache || {};
+  const operator = findByName(meta.operators, operario);
+  const machine = findByName(meta.machines, maquina);
+  const operatorId = operator ? Number(operator.id) : NaN;
+  const machineId = machine ? Number(machine.id) : NaN;
+
+  if (isNaN(operatorId) || isNaN(machineId)) {
+    return displayResponse('tmResponse', { error: 'Operario o máquina no existen en catálogo (usa el listado)' }, false);
+  }
+
+  const monthNo = monthNameToNumber(mes);
+  if (!monthNo) return displayResponse('tmResponse', { error: 'Mes inválido' }, false);
+  const work_date = toISODate(anio, monthNo, dia);
+
   const payload = {
-    dia, mes, anio,
-    nombre_operario: operario,
-    tipo_proceso: proceso,
-    molde, parte, maquina, operacion,
-    horas: Math.round(horas / 0.25) * 0.25
+    moldId,
+    partId,
+    machineId,
+    operatorId,
+    work_date,
+    hours_worked: Math.round(horas / 0.25) * 0.25,
+    note: `Proceso: ${proceso} | Operación: ${operacion}`
   };
 
   try {
-    const res = await fetch(`${API_URL}/datos`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }, body: JSON.stringify(payload) });
+    const res = await fetch(`${API_URL}/work_logs`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }, body: JSON.stringify(payload) });
     const data = await res.json();
     displayResponse('tmResponse', data, res.ok);
-    if (res.ok) loadDatosMeta();
+    if (res.ok) loadTiemposMeta();
   } catch (e) {
     displayResponse('tmResponse', { error: 'Error de conexión' }, false);
   }
@@ -1003,6 +1100,8 @@ function renderDayDetailsView(date, events, holiday) {
 
   html += `<div style="margin-top:12px;"><button class="btn btn-secondary" id="toggleWorkingBtn">Cargando estado...</button><small style="display:block; margin-top:6px;">Esto crea una excepción para este día.</small></div>`;
 
+  html += `<div class="response-box" id="dayDetailsResponse"></div>`;
+
   if (body) body.innerHTML = html;
 
   // Hook: editar molde
@@ -1028,9 +1127,18 @@ function renderDayDetailsView(date, events, holiday) {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
           body: JSON.stringify({ date: dateStr, isWorking: desired })
         });
-        if (res.ok) { alert(`Día ${desired ? 'habilitado' : 'deshabilitado'} correctamente.`); hideModal(); loadCalendar(); }
-        else alert('No se pudo actualizar el estado del día.');
-      } catch (e) { alert('Error de conexión al actualizar el estado del día.'); }
+        const out = await res.json().catch(() => ({}));
+
+        if (res.ok) {
+          displayResponse('dayDetailsResponse', `Día ${desired ? 'habilitado' : 'deshabilitado'} correctamente.`, true);
+          hideModal();
+          loadCalendar();
+        } else {
+          displayResponse('dayDetailsResponse', out?.error || 'No se pudo actualizar el estado del día.', false);
+        }
+      } catch (e) {
+        displayResponse('dayDetailsResponse', 'Error de conexión al actualizar el estado del día.', false);
+      }
     };
   })();
 }
@@ -1133,16 +1241,14 @@ async function openMoldEditorView(moldId, moldName) {
           const out = await resp.json();
           displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
           if (resp.ok) {
-            alert(out?.message || 'Entrada actualizada');
             await loadCalendar();
             // Recargar vista del molde para reflejar cambios
             await openMoldEditorView(moldId, moldName);
           } else {
-            alert(out?.error || 'No se pudo actualizar');
+            // Mensaje ya mostrado en moldEditorResponse
           }
         } catch (e) {
           displayResponse('moldEditorResponse', { error: 'Error de conexión', details: String(e) }, false);
-          alert('Error de conexión');
         }
       });
     });
@@ -1166,15 +1272,13 @@ async function openMoldEditorView(moldId, moldName) {
           const out = await resp.json();
           displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
           if (resp.ok) {
-            alert(`${out?.message || 'Movido'}: ${out?.date || ''}`);
             await loadCalendar();
             await openMoldEditorView(moldId, moldName);
           } else {
-            alert(out?.error || 'No se pudo mover');
+            // Mensaje ya mostrado en moldEditorResponse
           }
         } catch (e) {
           displayResponse('moldEditorResponse', { error: 'Error de conexión', details: String(e) }, false);
-          alert('Error de conexión');
         }
       });
     });
@@ -1348,72 +1452,279 @@ async function createHoliday(){
 // Indicadores (KPIs) con exportación CSV
 // ================================
 let indicatorsCache = null;
+let indicatorsOperatorsCache = null;
 
-function defaultDateRangeForIndicators(){
-  const today = new Date();
-  const first = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-  const last  = new Date(today.getFullYear(), today.getMonth()+1, 0).toISOString().split('T')[0];
-  const fromEl = document.getElementById('indFrom');
-  const toEl   = document.getElementById('indTo');
-  if (fromEl && !fromEl.value) fromEl.value = first;
-  if (toEl && !toEl.value) toEl.value = last;
+function safeDivide(num, den){
+  const n = Number(num || 0);
+  const d = Number(den || 0);
+  if (!d) return 0;
+  return n / d;
 }
+
+function sum(arr){
+  return (Array.isArray(arr) ? arr : []).reduce((acc, v) => acc + Number(v || 0), 0);
+}
+
+function emptyMonths(){
+  return Array.from({ length: 12 }, () => 0);
+}
+
+function getSelectedOperatorIdSet(){
+  const container = document.getElementById('indOperatorFilter');
+  if (!container) return new Set();
+  const checked = Array.from(container.querySelectorAll('input[type="checkbox"][data-operator-id]:checked'));
+  return new Set(checked.map(cb => String(cb.getAttribute('data-operator-id'))));
+}
+
+function populateOperatorFilter(operators){
+  const container = document.getElementById('indOperatorFilter');
+  if (!container) return;
+  const ops = Array.isArray(operators) ? operators : [];
+
+  const prevSelected = getSelectedOperatorIdSet();
+  const shouldKeepPrevious = prevSelected.size > 0;
+
+  container.innerHTML = ops.map(o => {
+    const id = String(o.id);
+    const checked = shouldKeepPrevious ? prevSelected.has(id) : false;
+    const name = escapeHtml(o.name || '');
+    return `
+      <label class="operator-filter-row">
+        <input class="operator-filter-checkbox" type="checkbox" data-operator-id="${escapeHtml(id)}" ${checked ? 'checked' : ''}>
+        <span class="operator-filter-name">${name}</span>
+      </label>
+    `;
+  }).join('');
+}
+
+function getSelectedOperatorsList(){
+  const all = Array.isArray(indicatorsOperatorsCache) ? indicatorsOperatorsCache : [];
+  const set = getSelectedOperatorIdSet();
+  if (!set.size) return [];
+  return all.filter(o => set.has(String(o.id))).sort((a,b) => String(a.name||'').localeCompare(String(b.name||''), 'es'));
+}
+
+function updateWorkingDaysOperatorSelect(){
+  const selOp = document.getElementById('indDaysOperator');
+  const btnSave = document.getElementById('saveWorkingDaysBtn');
+  if (!selOp) return;
+  const prev = selOp.value;
+
+  const selectedOps = getSelectedOperatorsList();
+  if (!selectedOps.length) {
+    selOp.innerHTML = `<option value="">Selecciona operarios arriba</option>`;
+    selOp.value = '';
+    selOp.disabled = true;
+    if (btnSave) btnSave.disabled = true;
+    return;
+  }
+
+  selOp.disabled = false;
+  if (btnSave) btnSave.disabled = false;
+
+  selOp.innerHTML = selectedOps.map(o => `<option value="${o.id}">${escapeHtml(o.name || '')}</option>`).join('');
+  if (prev && selectedOps.some(o => String(o.id) === String(prev))) selOp.value = prev;
+}
+
+function filterTablesBySelectedOperators(data){
+  const selected = getSelectedOperatorIdSet();
+  const tables = data?.tables || {};
+
+  const hoursRowsAll = Array.isArray(tables?.hours?.rows) ? tables.hours.rows : [];
+  const daysRowsAll = Array.isArray(tables?.days?.rows) ? tables.days.rows : [];
+  const indRowsAll = Array.isArray(tables?.indicator?.rows) ? tables.indicator.rows : [];
+
+  const filterBySet = (rows) => {
+    if (!selected.size) return [];
+    return rows.filter(r => selected.has(String(r.operatorId)));
+  };
+
+  const hoursRows = filterBySet(hoursRowsAll);
+  const daysRows = filterBySet(daysRowsAll);
+  const indRows = filterBySet(indRowsAll);
+
+  const hoursTotalsMonths = emptyMonths();
+  for (let i = 0; i < 12; i++) hoursTotalsMonths[i] = sum(hoursRows.map(r => r.months?.[i]));
+  const hoursTotalGeneral = sum(hoursTotalsMonths);
+
+  const daysTotalsMonths = emptyMonths();
+  for (let i = 0; i < 12; i++) daysTotalsMonths[i] = sum(daysRows.map(r => r.months?.[i]));
+  const daysTotalGeneral = sum(daysTotalsMonths);
+
+  const indTotalsMonths = emptyMonths();
+  for (let i = 0; i < 12; i++) indTotalsMonths[i] = safeDivide(hoursTotalsMonths[i], (daysTotalsMonths[i] || 0) * 8);
+  const indAverageTotal = safeDivide(hoursTotalGeneral, (daysTotalGeneral || 0) * 8);
+
+  return {
+    hours: {
+      ...tables.hours,
+      rows: hoursRows,
+      totalsRow: { operatorName: 'Total general', months: hoursTotalsMonths, total: hoursTotalGeneral },
+    },
+    days: {
+      ...tables.days,
+      rows: daysRows,
+      totalsRow: { operatorName: 'Total general', months: daysTotalsMonths, total: daysTotalGeneral },
+    },
+    indicator: {
+      ...tables.indicator,
+      rows: indRows,
+      totalsRow: { operatorName: 'Total general', months: indTotalsMonths, average: indAverageTotal },
+    },
+  };
+}
+
+const IND_MONTHS_ES = [
+  'Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'
+];
+
+function defaultYearForIndicators(){
+  const y = new Date().getFullYear();
+  const el = document.getElementById('indYear');
+  if (el && !el.value) el.value = String(y);
+}
+
+function buildIndicatorsHeaderRow(firstLabel, lastLabel){
+  return `<tr>${[
+    `<th>${escapeHtml(firstLabel)}</th>`,
+    ...IND_MONTHS_ES.map(m=>`<th>${escapeHtml(m)}</th>`),
+    `<th>${escapeHtml(lastLabel)}</th>`
+  ].join('')}</tr>`;
+}
+
+function renderMonthlyTable(tableId, tableDef, options){
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+  if (!thead || !tbody) return;
+
+  const firstLabel = options?.firstLabel || 'OPERARIO';
+  const lastLabel = options?.lastLabel || 'Total';
+  const isIndicator = Boolean(options?.isIndicator);
+  const decimals = Number.isFinite(options?.decimals) ? options.decimals : (isIndicator ? 3 : 2);
+
+  thead.innerHTML = buildIndicatorsHeaderRow(firstLabel, lastLabel);
+
+  const rows = Array.isArray(tableDef?.rows) ? tableDef.rows : [];
+  const totalsRow = tableDef?.totalsRow;
+
+  const renderCell = (v) => {
+    const n = Number(v || 0);
+    if (isIndicator) return (n || 0).toFixed(decimals);
+    return (n || 0).toFixed(decimals);
+  };
+
+  tbody.innerHTML = [
+    ...rows.map(r => {
+      const months = Array.isArray(r.months) ? r.months : [];
+      const endVal = isIndicator ? r.average : r.total;
+      return `
+        <tr>
+          <td>${escapeHtml(r.operatorName || '')}</td>
+          ${IND_MONTHS_ES.map((_, idx) => `<td>${renderCell(months[idx])}</td>`).join('')}
+          <td>${renderCell(endVal)}</td>
+        </tr>
+      `;
+    }),
+    totalsRow ? (() => {
+      const months = Array.isArray(totalsRow.months) ? totalsRow.months : [];
+      const endVal = isIndicator ? totalsRow.average : totalsRow.total;
+      return `
+        <tr>
+          <td><strong>${escapeHtml(totalsRow.operatorName || 'Total general')}</strong></td>
+          ${IND_MONTHS_ES.map((_, idx) => `<td><strong>${renderCell(months[idx])}</strong></td>`).join('')}
+          <td><strong>${renderCell(endVal)}</strong></td>
+        </tr>
+      `;
+    })() : ''
+  ].join('');
+}
+
+function populateWorkingDaysForm(operators){
+  const selOp = document.getElementById('indDaysOperator');
+  const selMonth = document.getElementById('indDaysMonth');
+
+  const ops = Array.isArray(operators) ? operators : [];
+  if (selOp) {
+    const prev = selOp.value;
+    selOp.innerHTML = ops.map(o => `<option value="${o.id}">${escapeHtml(o.name || '')}</option>`).join('');
+    if (prev && ops.some(o => String(o.id) === String(prev))) selOp.value = prev;
+  }
+  if (selMonth) {
+    const prev = selMonth.value;
+    selMonth.innerHTML = IND_MONTHS_ES.map((m, idx) => `<option value="${idx+1}">${escapeHtml(m)}</option>`).join('');
+    if (prev && IND_MONTHS_ES[Number(prev) - 1]) selMonth.value = prev;
+    else selMonth.value = String(new Date().getMonth() + 1);
+  }
+}
+
+async function loadOperatorsForIndicators(){
+  try {
+    const res = await fetch(`${API_URL}/catalogs/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    const data = await res.json();
+    if (!res.ok) return;
+    const ops = Array.isArray(data?.operators) ? data.operators : [];
+    indicatorsOperatorsCache = ops;
+    populateWorkingDaysForm(ops);
+    populateOperatorFilter(ops);
+    updateWorkingDaysOperatorSelect();
+  } catch (_) {}
+}
+
 async function loadIndicators(){
-  const from = document.getElementById('indFrom')?.value;
-  const to   = document.getElementById('indTo')?.value;
-  if (!from || !to) return displayResponse('indicatorsResponse', { error: 'Selecciona rango de fechas' }, false);
+  const year = document.getElementById('indYear')?.value;
+  const y = Number.parseInt(String(year || ''), 10);
+  if (!y) return displayResponse('indicatorsResponse', { error: 'Selecciona un año válido' }, false);
+
   try{
-    const qs = new URLSearchParams({ from, to });
+    const qs = new URLSearchParams({ year: String(y) });
     const res = await fetch(`${API_URL}/indicators/summary?${qs.toString()}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     indicatorsCache = data;
     if (!res.ok) return displayResponse('indicatorsResponse', data, false);
     renderIndicators(data);
-    displayResponse('indicatorsResponse', { ok: true, from, to }, true);
+    displayResponse('indicatorsResponse', { ok: true, year: y }, true);
   } catch(e){
     displayResponse('indicatorsResponse', { error:'Error cargando indicadores', details:String(e) }, false);
   }
 }
+
 function renderIndicators(data){
-  const totalActual = Number(data.totalActualHours || 0);
-  const totalPlanned = Number(data.totalPlannedHours || 0);
-  const machines = Array.isArray(data.machineUtilization) ? data.machineUtilization : [];
-  const molds = Array.isArray(data.topMolds) ? data.topMolds : [];
-
-  const k1 = document.getElementById('kpiTotalActual'); if (k1) k1.textContent = totalActual.toFixed(2) + ' h';
-  const k2 = document.getElementById('kpiTotalPlanned'); if (k2) k2.textContent = totalPlanned.toFixed(2) + ' h';
-
-  let avgUtil = 0;
-  if (machines.length){
-    const sumUtil = machines.reduce((acc, m) => acc + (Number(m.utilizationPct || 0)), 0);
-    avgUtil = sumUtil / machines.length;
+  const filtered = filterTablesBySelectedOperators(data);
+  renderMonthlyTable('indMainTable', filtered.indicator, { firstLabel:'COLABORADOR', lastLabel:'Promedio', isIndicator:true, decimals:3 });
+  renderMonthlyTable('indHoursTable', filtered.hours, { firstLabel:'OPERARIO', lastLabel:'Total general', isIndicator:false, decimals:2 });
+  renderMonthlyTable('indDaysTable', filtered.days, { firstLabel:'OPERARIO', lastLabel:'Total general', isIndicator:false, decimals:0 });
+  // Si aún no cargó catálogo, usamos fallback del resumen y dejamos el filtro funcional.
+  if (!indicatorsOperatorsCache && Array.isArray(data?.operators)) {
+    indicatorsOperatorsCache = data.operators;
+    populateOperatorFilter(data.operators);
   }
-  const k3 = document.getElementById('kpiAvgUtilization'); if (k3) k3.textContent = (avgUtil || 0).toFixed(1) + ' %';
+  updateWorkingDaysOperatorSelect();
+}
 
-  // Tabla máquinas
-  const mtbody = document.querySelector('#indMachinesTable tbody');
-  if (mtbody) {
-    mtbody.innerHTML = machines.map(m => `
-      <tr>
-        <td>${m.machine_id ?? ''}</td>
-        <td>${escapeHtml(m.machine_name || '')}</td>
-        <td>${Number(m.actualHours || 0).toFixed(2)}</td>
-        <td>${Number(m.capacityHours || 0).toFixed(2)}</td>
-        <td>${Number(m.utilizationPct || 0).toFixed(1)}%</td>
-      </tr>
-    `).join('');
+async function saveWorkingDays(){
+  const year = Number.parseInt(String(document.getElementById('indYear')?.value || ''), 10);
+  const operatorId = Number.parseInt(String(document.getElementById('indDaysOperator')?.value || ''), 10);
+  const month = Number.parseInt(String(document.getElementById('indDaysMonth')?.value || ''), 10);
+  const workingDays = Number.parseInt(String(document.getElementById('indDaysValue')?.value || ''), 10);
+
+  if (!year || !operatorId || !month || Number.isNaN(workingDays)) {
+    return displayResponse('indicatorsResponse', { error:'Completa año, operario, mes y días' }, false);
   }
 
-  // Tabla moldes
-  const mltbody = document.querySelector('#indMoldsTable tbody');
-  if (mltbody) {
-    mltbody.innerHTML = molds.map(r => `
-      <tr>
-        <td>${r.mold_id ?? ''}</td>
-        <td>${escapeHtml(r.mold_name || '')}</td>
-        <td>${Number(r.actualHours || 0).toFixed(2)}</td>
-      </tr>
-    `).join('');
+  try{
+    const res = await fetch(`${API_URL}/indicators/working-days`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify({ operatorId, year, month, workingDays })
+    });
+    const data = await res.json();
+    if (!res.ok) return displayResponse('indicatorsResponse', data, false);
+    await loadIndicators();
+    displayResponse('indicatorsResponse', { ok:true, message:'Días actualizados', ...data }, true);
+  } catch(e){
+    displayResponse('indicatorsResponse', { error:'Error guardando días', details:String(e) }, false);
   }
 }
 function exportIndicatorsCSV(){
@@ -1421,21 +1732,25 @@ function exportIndicatorsCSV(){
     return displayResponse('indicatorsResponse', { error:'Genera indicadores antes de exportar' }, false);
   }
   const rows = [];
-  rows.push(['Indicador','Valor']);
-  rows.push(['Horas Reales', indicatorsCache.totalActualHours || 0]);
-  rows.push(['Horas Planificadas', indicatorsCache.totalPlannedHours || 0]);
-  rows.push(['','']);
-  rows.push(['Utilización por Máquina']);
-  rows.push(['ID','Máquina','Horas Reales','Capacidad (h)','Utilización (%)']);
-  (indicatorsCache.machineUtilization||[]).forEach(m=>{
-    rows.push([m.machine_id, m.machine_name, m.actualHours, m.capacityHours, m.utilizationPct]);
+  const y = indicatorsCache.year || '';
+  const ind = filterTablesBySelectedOperators(indicatorsCache)?.indicator;
+  const months = IND_MONTHS_ES;
+  rows.push(['Indicador (Principal)']);
+  rows.push(['COLABORADOR', ...months, 'Promedio']);
+  (ind?.rows || []).forEach(r => {
+    rows.push([
+      r.operatorName,
+      ...months.map((_, idx) => Number(r.months?.[idx] || 0)),
+      Number(r.average || 0)
+    ]);
   });
-  rows.push(['','']);
-  rows.push(['Top Moldes por Horas']);
-  rows.push(['ID Molde','Molde','Horas Reales']);
-  (indicatorsCache.topMolds||[]).forEach(r=>{
-    rows.push([r.mold_id, r.mold_name, r.actualHours]);
-  });
+  if (ind?.totalsRow) {
+    rows.push([
+      ind.totalsRow.operatorName || 'Total general',
+      ...months.map((_, idx) => Number(ind.totalsRow.months?.[idx] || 0)),
+      Number(ind.totalsRow.average || 0)
+    ]);
+  }
 
   const csv = rows.map(r => r.map(v => {
     const s = v == null ? '' : String(v);
@@ -1446,7 +1761,7 @@ function exportIndicatorsCSV(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `indicadores_${(document.getElementById('indFrom')?.value||'')}_${(document.getElementById('indTo')?.value||'')}.csv`;
+  a.download = `indicadores_${y}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -1531,4 +1846,10 @@ function setupEventListeners() {
   // Indicadores
   const btnLoadInd = document.getElementById('loadIndicatorsBtn'); if (btnLoadInd) btnLoadInd.addEventListener('click', loadIndicators);
   const btnExportInd = document.getElementById('exportIndicatorsBtn'); if (btnExportInd) btnExportInd.addEventListener('click', exportIndicatorsCSV);
+  const btnSaveWD = document.getElementById('saveWorkingDaysBtn'); if (btnSaveWD) btnSaveWD.addEventListener('click', (e) => { e.preventDefault(); saveWorkingDays(); });
+  const opFilterContainer = document.getElementById('indOperatorFilter');
+  if (opFilterContainer) opFilterContainer.addEventListener('change', () => {
+    updateWorkingDaysOperatorSelect();
+    if (indicatorsCache) renderIndicators(indicatorsCache);
+  });
 }

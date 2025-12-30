@@ -49,6 +49,31 @@ async function initializeDatabase() {
         } catch (e) {
             console.warn('⚠️ No se pudo aplicar migración plan_entries.is_priority:', e.message);
         }
+
+        // work_logs.work_date (para registrar fecha real trabajada desde Tiempos de Moldes)
+        try {
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = 'work_logs'
+                   AND column_name = 'work_date'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE work_logs ADD COLUMN work_date DATE NULL AFTER operator_id`);
+                await query(`UPDATE work_logs SET work_date = DATE(recorded_at) WHERE work_date IS NULL`);
+                try {
+                    await query(`CREATE INDEX idx_work_logs_work_date ON work_logs (work_date)`);
+                } catch (_) {}
+                try {
+                    await query(`CREATE INDEX idx_work_logs_operator_date ON work_logs (operator_id, work_date)`);
+                } catch (_) {}
+                console.log('✅ Migración aplicada: work_logs.work_date');
+            }
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración work_logs.work_date:', e.message);
+        }
     } catch (error) {
         console.error(`❌ Error al ejecutar el script del schema:`, error.message);
         process.exit(1);

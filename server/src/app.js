@@ -114,7 +114,11 @@ async function startServer() {
         console.log('\n📋 Endpoints disponibles:');
         console.log('  POST   /api/auth/login');
         console.log('  GET    /api/auth/operators');
-        console.log('  POST   /api/tasks/plan');
+        console.log('  POST   /api/tasks/plan/block');
+        console.log('  POST   /api/tasks/plan/priority');
+        console.log('  GET    /api/tasks/plan/mold/:moldId');
+        console.log('  PATCH  /api/tasks/plan/entry/:entryId');
+        console.log('  PATCH  /api/tasks/plan/entry/:entryId/next-available');
         console.log('  POST   /api/work_logs');
         console.log('  GET    /api/work_logs');
         console.log('  PUT    /api/work_logs/:id');

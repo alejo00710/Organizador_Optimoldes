@@ -7,7 +7,7 @@ const { ROLES, OPERATOR_EDIT_DAYS_LIMIT } = require('../utils/constants');
  */
 const createWorkLog = async (req, res, next) => {
     try {
-        const { moldId, partId, machineId, operatorId, hours_worked, note } = req.body;
+        const { moldId, partId, machineId, operatorId, hours_worked, note, work_date } = req.body;
 
         // Validaciones
         if (!moldId || !partId || !machineId || !operatorId || !hours_worked) {
@@ -27,11 +27,17 @@ const createWorkLog = async (req, res, next) => {
             });
         }
 
-        // Insertar
+                // Validar work_date si viene
+                const dateStr = work_date ? String(work_date) : null;
+                if (dateStr && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                        return res.status(400).json({ error: 'work_date debe ser YYYY-MM-DD' });
+                }
+
+                // Insertar
         const sql = `
       INSERT INTO work_logs 
-      (mold_id, part_id, machine_id, operator_id, hours_worked, note)
-      VALUES (?, ?, ?, ?, ?, ?)
+            (mold_id, part_id, machine_id, operator_id, work_date, hours_worked, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
 
         const result = await query(sql, [
@@ -39,6 +45,7 @@ const createWorkLog = async (req, res, next) => {
             partId,
             machineId,
             operatorId,
+            dateStr,
             hours_worked,
             note || null,
         ]);
@@ -51,6 +58,7 @@ const createWorkLog = async (req, res, next) => {
                 partId,
                 machineId,
                 operatorId,
+                work_date: dateStr,
                 hours_worked,
                 note,
             },

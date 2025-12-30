@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS work_logs (
   part_id INT NOT NULL,
   machine_id INT NOT NULL,
   operator_id INT NOT NULL,
+  work_date DATE NULL,
   hours_worked DECIMAL(5,2) NOT NULL,
   note TEXT,
   recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -138,8 +139,32 @@ CREATE TABLE IF NOT EXISTS work_logs (
   FOREIGN KEY (machine_id) REFERENCES machines(id) ON DELETE CASCADE,
   FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE RESTRICT,
   INDEX idx_work_logs_recorded_at (recorded_at),
+  INDEX idx_work_logs_work_date (work_date),
+  INDEX idx_work_logs_operator_date (operator_id, work_date),
   INDEX idx_work_logs_machine_date (machine_id, recorded_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- Indicadores (mensual): horas por operario (vista) + días hábiles manuales
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS operator_working_days_monthly (
+  operator_id INT NOT NULL,
+  year SMALLINT NOT NULL,
+  month TINYINT NOT NULL,
+  working_days INT NOT NULL,
+  updated_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (operator_id, year, month),
+  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_op_days_year_month (year, month)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Nota: No creamos vista aquí porque en instalaciones existentes la tabla work_logs
+-- puede no tener aún la columna work_date cuando se ejecuta este schema.
+-- La migración en server/src/config/setupDatabase.js agrega work_date de forma idempotente.
 
 -- ============================================
 -- Importación
