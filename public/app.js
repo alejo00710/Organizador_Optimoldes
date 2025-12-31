@@ -50,7 +50,8 @@ let cachedMolds = [];
 
 const LS_KEYS = {
   plannerState: 'plannerState',
-  inactivityMinutes: 'inactivityMinutes'
+  inactivityMinutes: 'inactivityMinutes',
+  indicatorsSelectedOperators: 'indicatorsSelectedOperators'
 };
 
 // Helpers
@@ -1453,6 +1454,42 @@ async function createHoliday(){
 // ================================
 let indicatorsCache = null;
 let indicatorsOperatorsCache = null;
+let indicatorsAutoLoadTimer = null;
+
+function loadIndicatorsSelectedOperatorIds(){
+  try {
+    const raw = localStorage.getItem(LS_KEYS.indicatorsSelectedOperators);
+    const parsed = JSON.parse(raw || '[]');
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.map(v => String(v)));
+  } catch { return new Set(); }
+}
+
+function saveIndicatorsSelectedOperatorIds(idSet){
+  try {
+    const arr = Array.from(idSet || []).map(v => String(v));
+    localStorage.setItem(LS_KEYS.indicatorsSelectedOperators, JSON.stringify(arr));
+  } catch {}
+}
+
+function clearIndicatorsTables(){
+  ['indMainTable','indHoursTable','indDaysTable'].forEach(id => {
+    const table = document.getElementById(id);
+    if (!table) return;
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    if (thead) thead.innerHTML = '';
+    if (tbody) tbody.innerHTML = '';
+  });
+}
+
+function scheduleIndicatorsAutoLoad(options){
+  if (indicatorsAutoLoadTimer) clearTimeout(indicatorsAutoLoadTimer);
+  indicatorsAutoLoadTimer = setTimeout(() => {
+    indicatorsAutoLoadTimer = null;
+    loadIndicators(options);
+  }, 250);
+}
 
 function safeDivide(num, den){
   const n = Number(num || 0);
@@ -1476,17 +1513,22 @@ function getSelectedOperatorIdSet(){
   return new Set(checked.map(cb => String(cb.getAttribute('data-operator-id'))));
 }
 
+function persistIndicatorsSelectionFromUI(){
+  saveIndicatorsSelectedOperatorIds(getSelectedOperatorIdSet());
+}
+
 function populateOperatorFilter(operators){
   const container = document.getElementById('indOperatorFilter');
   if (!container) return;
   const ops = Array.isArray(operators) ? operators : [];
 
-  const prevSelected = getSelectedOperatorIdSet();
-  const shouldKeepPrevious = prevSelected.size > 0;
+  const uiSelected = getSelectedOperatorIdSet();
+  const storedSelected = loadIndicatorsSelectedOperatorIds();
+  const selected = uiSelected.size ? uiSelected : storedSelected;
 
   container.innerHTML = ops.map(o => {
     const id = String(o.id);
-    const checked = shouldKeepPrevious ? prevSelected.has(id) : false;
+    const checked = selected.has(id);
     const name = escapeHtml(o.name || '');
     return `
       <label class="operator-filter-row">
@@ -1669,28 +1711,60 @@ async function loadOperatorsForIndicators(){
     populateWorkingDaysForm(ops);
     populateOperatorFilter(ops);
     updateWorkingDaysOperatorSelect();
+
+    // Si hay selección guardada, cargamos automáticamente las 3 tablas.
+    // (Se mantiene la tabla manual igual: solo refresca al guardar días.)
+    const selected = loadIndicatorsSelectedOperatorIds();
+    if (selected.size) {
+      persistIndicatorsSelectionFromUI();
+      scheduleIndicatorsAutoLoad({ silent: true });
+    } else {
+      clearIndicatorsTables();
+    }
   } catch (_) {}
 }
 
-async function loadIndicators(){
+async function loadIndicators(options){
   const year = document.getElementById('indYear')?.value;
   const y = Number.parseInt(String(year || ''), 10);
-  if (!y) return displayResponse('indicatorsResponse', { error: 'Selecciona un año válido' }, false);
+  const silent = Boolean(options?.silent);
+  if (!y) {
+    if (!silent) displayResponse('indicatorsResponse', { error: 'Selecciona un año válido' }, false);
+    return;
+  }
+
+  const selected = getSelectedOperatorIdSet();
+  if (!selected.size) {
+    clearIndicatorsTables();
+    if (!silent) displayResponse('indicatorsResponse', { error: 'Selecciona al menos un operario' }, false);
+    return;
+  }
 
   try{
     const qs = new URLSearchParams({ year: String(y) });
     const res = await fetch(`${API_URL}/indicators/summary?${qs.toString()}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     indicatorsCache = data;
-    if (!res.ok) return displayResponse('indicatorsResponse', data, false);
+    if (!res.ok) {
+      if (!silent) displayResponse('indicatorsResponse', data, false);
+      return;
+    }
     renderIndicators(data);
-    displayResponse('indicatorsResponse', { ok: true, year: y }, true);
+    if (!silent) displayResponse('indicatorsResponse', { ok: true, year: y }, true);
   } catch(e){
-    displayResponse('indicatorsResponse', { error:'Error cargando indicadores', details:String(e) }, false);
+    if (!silent) displayResponse('indicatorsResponse', { error:'Error cargando indicadores', details:String(e) }, false);
   }
 }
 
 function renderIndicators(data){
+  // Si no hay selección, no renderizamos nada para evitar mostrar totales 0 confusos.
+  const selected = getSelectedOperatorIdSet();
+  if (!selected.size) {
+    clearIndicatorsTables();
+    updateWorkingDaysOperatorSelect();
+    return;
+  }
+
   const filtered = filterTablesBySelectedOperators(data);
   renderMonthlyTable('indMainTable', filtered.indicator, { firstLabel:'COLABORADOR', lastLabel:'Promedio', isIndicator:true, decimals:3 });
   renderMonthlyTable('indHoursTable', filtered.hours, { firstLabel:'OPERARIO', lastLabel:'Total general', isIndicator:false, decimals:2 });
@@ -1850,6 +1924,9 @@ function setupEventListeners() {
   const opFilterContainer = document.getElementById('indOperatorFilter');
   if (opFilterContainer) opFilterContainer.addEventListener('change', () => {
     updateWorkingDaysOperatorSelect();
+    persistIndicatorsSelectionFromUI();
     if (indicatorsCache) renderIndicators(indicatorsCache);
+    // Autocarga (debounce) cuando aún no hay datos o cuando se quiere refrescar sin botón.
+    scheduleIndicatorsAutoLoad({ silent: true });
   });
 }

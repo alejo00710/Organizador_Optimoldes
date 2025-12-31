@@ -1,6 +1,6 @@
 # 📋 Sistema de Planificación y Registro de Producción de Moldes (Checkpoint)
 
-Estado a la fecha: 2025-12-02
+Estado a la fecha: 2025-12-31
 
 Este proyecto es una aplicación web para planificar y registrar trabajo de producción de moldes. Incluye:
 - Autenticación por roles con JWT
@@ -8,6 +8,8 @@ Este proyecto es una aplicación web para planificar y registrar trabajo de prod
 - Calendario mensual interactivo con festivos y fines de semana
 - Gestión de datos maestros (máquinas, moldes, partes)
 - Reportes de planificado vs real
+- Indicadores (KPIs): 3 tablas (Horas, Días hábiles manuales, Indicador) + exportación CSV
+- Indicadores: selección de operarios persistente (checkboxes) y carga automática de tablas
 
 Este README refleja exactamente el estado actual del código.
 
@@ -114,6 +116,16 @@ Organizador_Optimoldes/
 - Reporte detallado con combinaciones y alertas (`/reports/detailed-deviations`)
 - Umbral de alerta configurable: 5%
 
+7) Indicadores (KPIs)
+- Tablas por año (enero..diciembre):
+  - Tabla 1: **Suma de Horas** (fuente: `work_logs`)
+  - Tabla 2: **Días Hábiles Trabajados** (manual por operario/mes)
+  - Indicador (principal): **Horas / (Días × 8)**
+- Filtro de operarios con **checkboxes** ("Operarios a mostrar")
+  - La selección se **guarda en el navegador** (localStorage) y se rehidrata al volver a entrar
+  - Si hay selección guardada, las **3 tablas se cargan automáticamente** al abrir la pestaña
+- Exportación CSV del indicador principal
+
 ---
 
 ## ✅ Correcciones recientes (críticas)
@@ -188,7 +200,11 @@ Autenticación
 - GET  /api/auth/verify
 
 Planificación
-- POST /api/tasks/plan
+- POST /api/tasks/plan/block
+- POST /api/tasks/plan/priority
+- GET  /api/tasks/plan/mold/:moldId
+- PATCH /api/tasks/plan/entry/:entryId
+- PATCH /api/tasks/plan/entry/:entryId/next-available
 
 Work logs
 - POST   /api/work_logs
@@ -213,6 +229,13 @@ Festivos
 - POST   /api/holidays      (admin)
 - DELETE /api/holidays/:date (admin)
 
+Indicadores
+- GET  /api/indicators/summary?year=YYYY
+- POST /api/indicators/working-days
+
+Catálogos
+- GET /api/catalogs/meta
+
 Salud
 - GET /health
 
@@ -230,6 +253,15 @@ Salud
 4) Calendario:
    - Verás indicadores de horas por día
    - Festivos y fines de semana resaltados (no se planifica)
+5) Indicadores:
+  - Abre la pestaña **📊 Indicadores**
+  - Selecciona el **Año**
+  - Marca los **Operarios a mostrar**
+    - La selección queda guardada; al volver a entrar se re-marca automáticamente
+  - Las **3 tablas** se cargan/actualizan en base a esa selección
+  - Tabla 2 (manual):
+    - Escoge Operario (de los seleccionados), Mes y Días
+    - “Guardar” → refresca automáticamente las tablas con el cambio
 
 ---
 
