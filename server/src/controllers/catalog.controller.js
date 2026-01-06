@@ -3,12 +3,12 @@ const { query } = require('../config/database');
 // GET /api/catalogs/meta -> devuelve maestros (molds, parts, machines, operators, processes, operations) y years desde datos
 exports.getMeta = async (req, res, next) => {
   try {
-    const molds = await query('SELECT id, name FROM molds ORDER BY name ASC');
-    const parts = await query('SELECT id, name FROM mold_parts ORDER BY name ASC');
-    const machines = await query('SELECT id, name FROM machines ORDER BY name ASC');
-    const operators = await query('SELECT id, name FROM operators ORDER BY name ASC');
-    const processes = await query('SELECT id, name FROM processes ORDER BY name ASC');
-    const operations = await query('SELECT id, name FROM operations ORDER BY name ASC');
+    const molds = await query('SELECT id, name, is_active FROM molds WHERE is_active = TRUE ORDER BY name ASC');
+    const parts = await query('SELECT id, name, is_active FROM mold_parts WHERE is_active = TRUE ORDER BY name ASC');
+    const machines = await query('SELECT id, name, daily_capacity, is_active FROM machines WHERE is_active = TRUE ORDER BY name ASC');
+    const operators = await query('SELECT id, name, is_active FROM operators WHERE is_active = TRUE ORDER BY name ASC');
+    const processes = await query('SELECT id, name, is_active FROM processes WHERE is_active = TRUE ORDER BY name ASC');
+    const operations = await query('SELECT id, name, is_active FROM operations WHERE is_active = TRUE ORDER BY name ASC');
     const yearsRows = await query(`SELECT DISTINCT anio AS v FROM datos WHERE anio IS NOT NULL ORDER BY anio DESC`);
     res.json({
       molds, parts, machines, operators, processes, operations, years: yearsRows.map(r=>r.v)

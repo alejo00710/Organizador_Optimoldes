@@ -47,12 +47,153 @@ const FIXED_PARTS = [
 ];
 
 let cachedMolds = [];
+let plannerPendingMoldName = null;
 
 const LS_KEYS = {
   plannerState: 'plannerState',
+  plannerGridConfig: 'plannerGridConfig',
+  configPartsDefaultsApplied: 'configPartsDefaultsApplied',
   inactivityMinutes: 'inactivityMinutes',
   indicatorsSelectedOperators: 'indicatorsSelectedOperators'
 };
+
+// Planificador: catálogos y configuración de parrilla
+let plannerCatalogMachines = []; // [{id,name,daily_capacity,is_active}]
+let plannerCatalogParts = [];    // [{id,name,is_active}]
+let plannerMachinesInGrid = [];  // [{id,name,daily_capacity}]
+let plannerPartsInGrid = [];     // [{name}]
+
+function readPlannerGridConfig() {
+  try {
+    const raw = localStorage.getItem(LS_KEYS.plannerGridConfig);
+    if (!raw) return null;
+    const cfg = JSON.parse(raw);
+    if (!cfg || typeof cfg !== 'object') return null;
+    const machineIds = Array.isArray(cfg.machineIds) ? cfg.machineIds.map(v => String(v)) : [];
+    const partNames = Array.isArray(cfg.partNames) ? cfg.partNames.map(v => String(v)) : [];
+    return { machineIds, partNames };
+  } catch { return null; }
+}
+
+function writePlannerGridConfig(cfg) {
+  try { localStorage.setItem(LS_KEYS.plannerGridConfig, JSON.stringify(cfg)); } catch { }
+}
+
+function getDefaultPlannerGridConfig() {
+  const fixedMachineNames = new Set((FIXED_MACHINES || []).map(m => String(m.name || '').trim().toLowerCase()));
+  const fixedPartNames = new Set((FIXED_PARTS || []).map(p => String(p || '').trim().toLowerCase()));
+
+  const machines = Array.isArray(plannerCatalogMachines) ? plannerCatalogMachines : [];
+  const parts = Array.isArray(plannerCatalogParts) ? plannerCatalogParts : [];
+
+  let machineIds = machines
+    .filter(m => fixedMachineNames.has(String(m.name || '').trim().toLowerCase()))
+    .slice(0, 20)
+    .map(m => String(m.id));
+  if (!machineIds.length) machineIds = machines.slice(0, 10).map(m => String(m.id));
+
+  let partNames = parts
+    .filter(p => fixedPartNames.has(String(p.name || '').trim().toLowerCase()))
+    .slice(0, 80)
+    .map(p => String(p.name));
+  if (!partNames.length) partNames = parts.slice(0, 50).map(p => String(p.name));
+
+  return { machineIds, partNames };
+}
+
+function applyPlannerGridConfig(cfg) {
+  const machines = Array.isArray(plannerCatalogMachines) ? plannerCatalogMachines : [];
+  const parts = Array.isArray(plannerCatalogParts) ? plannerCatalogParts : [];
+
+  const machineIdSet = new Set((cfg?.machineIds || []).map(v => String(v)));
+  const partNameSet = new Set((cfg?.partNames || []).map(v => String(v).trim().toLowerCase()));
+
+  plannerMachinesInGrid = machines.filter(m => machineIdSet.has(String(m.id)));
+  plannerPartsInGrid = parts
+    .filter(p => partNameSet.has(String(p.name || '').trim().toLowerCase()))
+    .map(p => ({ name: p.name }));
+
+  // Fallback si aún no hay catálogo cargado
+  if (!plannerMachinesInGrid.length) plannerMachinesInGrid = (FIXED_MACHINES || []).map(m => ({ id: m.id, name: m.name, daily_capacity: null, hoursAvailable: m.hoursAvailable }));
+  if (!plannerPartsInGrid.length) plannerPartsInGrid = (FIXED_PARTS || []).map(name => ({ name }));
+}
+
+function renderPlannerGridConfigUI(cfg) {
+  const selectedMachinesEl = document.getElementById('plannerMachinesSelected');
+  const availableMachinesEl = document.getElementById('plannerMachinesAvailable');
+  const selectedPartsEl = document.getElementById('plannerPartsSelected');
+  const availablePartsEl = document.getElementById('plannerPartsAvailable');
+
+  if (!selectedMachinesEl || !availableMachinesEl || !selectedPartsEl || !availablePartsEl) return;
+
+  const machineIdSet = new Set((cfg?.machineIds || []).map(v => String(v)));
+  const partNameSet = new Set((cfg?.partNames || []).map(v => String(v).trim().toLowerCase()));
+
+  const machines = Array.isArray(plannerCatalogMachines) ? plannerCatalogMachines : [];
+  const parts = Array.isArray(plannerCatalogParts) ? plannerCatalogParts : [];
+
+  const selMachines = machines.filter(m => machineIdSet.has(String(m.id)));
+  const availMachines = machines.filter(m => !machineIdSet.has(String(m.id)));
+
+  const renderMachineItem = (m, checked) => {
+    const cap = m.daily_capacity != null && m.daily_capacity !== '' ? ` (${Number(m.daily_capacity)}h/día)` : '';
+    return `<label style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+      <input type="checkbox" data-planner-machine-id="${escapeHtml(String(m.id))}" ${checked ? 'checked' : ''}>
+      <span>${escapeHtml(m.name || '')}${escapeHtml(cap)}</span>
+    </label>`;
+  };
+
+  selectedMachinesEl.innerHTML = selMachines.length
+    ? selMachines.map(m => renderMachineItem(m, true)).join('')
+    : '<div style="color:#6c757d">(ninguna)</div>';
+  availableMachinesEl.innerHTML = availMachines.length
+    ? availMachines.map(m => renderMachineItem(m, false)).join('')
+    : '<div style="color:#6c757d">(sin máquinas)</div>';
+
+  const selParts = parts.filter(p => partNameSet.has(String(p.name || '').trim().toLowerCase()));
+  const availParts = parts.filter(p => !partNameSet.has(String(p.name || '').trim().toLowerCase()));
+  const renderPartItem = (p, checked) => {
+    return `<label style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+      <input type="checkbox" data-planner-part-name="${escapeHtml(String(p.name || ''))}" ${checked ? 'checked' : ''}>
+      <span>${escapeHtml(p.name || '')}</span>
+    </label>`;
+  };
+
+  selectedPartsEl.innerHTML = selParts.length
+    ? selParts.map(p => renderPartItem(p, true)).join('')
+    : '<div style="color:#6c757d">(ninguna)</div>';
+  availablePartsEl.innerHTML = availParts.length
+    ? availParts.map(p => renderPartItem(p, false)).join('')
+    : '<div style="color:#6c757d">(sin partes)</div>';
+}
+
+async function initPlannerGridFromCatalogs() {
+  // Cargar catálogos (activos) para máquinas/partes
+  try {
+    const res = await fetch(`${API_URL}/catalogs/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    if (res.ok) {
+      const meta = await res.json();
+      plannerCatalogMachines = Array.isArray(meta.machines) ? meta.machines : [];
+      plannerCatalogParts = Array.isArray(meta.parts) ? meta.parts : [];
+    }
+  } catch (_) { }
+
+  let cfg = readPlannerGridConfig();
+  if (!cfg) {
+    cfg = getDefaultPlannerGridConfig();
+    writePlannerGridConfig(cfg);
+  } else {
+    // Sanitizar selección ante cambios de catálogos
+    const mset = new Set(plannerCatalogMachines.map(m => String(m.id)));
+    const pset = new Set(plannerCatalogParts.map(p => String(p.name || '').trim().toLowerCase()));
+    cfg.machineIds = (cfg.machineIds || []).map(String).filter(id => mset.has(String(id)));
+    cfg.partNames = (cfg.partNames || []).map(String).filter(n => pset.has(String(n).trim().toLowerCase()));
+    writePlannerGridConfig(cfg);
+  }
+
+  applyPlannerGridConfig(cfg);
+  renderPlannerGridConfigUI(cfg);
+}
 
 // Helpers
 function displayResponse(id, data, success = true) {
@@ -67,30 +208,16 @@ function capitalize(s) { return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : '
 function hoursToPayload(v) { if (v === '') return ''; const n = parseFloat(v); return isNaN(n) ? '' : Math.round(n / 0.25) * 0.25; }
 async function isDateLaborable(dateStr) {
   try {
-    const res = await fetch(`${API_URL}/working/check?date=${encodeURIComponent(dateStr)}`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    const qs = new URLSearchParams();
+    qs.set('date', String(dateStr || ''));
+    const res = await fetch(`${API_URL}/working/check?${qs.toString()}`, {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      cache: 'no-store'
+    });
     if (!res.ok) return false;
     const data = await res.json();
     return !!data.laborable;
   } catch { return false; }
-}
-
-// Fecha útil
-function populateDayMonthYear(dayId, monthId, yearId, minYear = 2016, maxYear = 2027) {
-  const daySel = document.getElementById(dayId);
-  const monthSel = document.getElementById(monthId);
-  const yearSel = document.getElementById(yearId);
-  if (daySel) {
-    let html = ''; for (let i = 1; i <= 31; i++) html += `<option value="${i}">${i}</option>`;
-    daySel.innerHTML = html; daySel.value = new Date().getDate();
-  }
-  if (monthSel) {
-    monthSel.innerHTML = monthNames.map(m => `<option value="${m}">${capitalize(m)}</option>`).join('');
-    monthSel.value = monthNames[new Date().getMonth()];
-  }
-  if (yearSel) {
-    let html = ''; for (let y = minYear; y <= maxYear; y++) html += `<option value="${y}">${y}</option>`;
-    yearSel.innerHTML = html; yearSel.value = new Date().getFullYear();
-  }
 }
 
 // Conexión
@@ -158,7 +285,6 @@ function showMainApp(user) {
   const defaultTab = 'plan';
   openTab(defaultTab);
   setTimeout(() => {
-    try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch (e) { }
     try { loadCalendar(); } catch (e) { }
   }, 100);
 }
@@ -243,47 +369,151 @@ function openTab(tabName) {
   }
 
   if (tabName === 'calendar') try { loadCalendar(); } catch (e) {}
-  if (tabName === 'plan') try { renderFixedPlanningGrid(); restorePlannerStateFromStorage(); } catch (e) {}
+  if (tabName === 'plan') {
+    try { initPlannerTab(); } catch (e) {}
+  }
   if (tabName === 'tiempos') try { loadTiemposMeta(); } catch (e) {}
   if (tabName === 'datos') try { loadDatos(true); } catch (e) {}
-  if (tabName === 'config') try { loadMachinesList(); } catch (e) {}
+  if (tabName === 'config') {
+    try { loadMachinesList(); } catch (e) {}
+    try { loadConfigPartsChecklist(); } catch (e) {}
+  }
   if (tabName === 'indicators') {
     try { defaultYearForIndicators(); } catch (e) {}
     try { loadOperatorsForIndicators(); } catch (e) {}
   }
 }
 
+// ================================
+// Configuración: Partes (checklist is_active)
+// ================================
+
+async function loadConfigPartsChecklist() {
+  const container = document.getElementById('configPartsChecklist');
+  if (!container) return;
+
+  container.innerHTML = '<div style="color:#6c757d">Cargando...</div>';
+
+  let parts = [];
+  try {
+    const res = await fetch(`${API_URL}/config/parts`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    if (!res.ok) throw new Error('No se pudo cargar partes');
+    parts = await res.json();
+  } catch (e) {
+    container.innerHTML = '<div style="color:#6c757d">Error cargando partes</div>';
+    return;
+  }
+
+  // Aplicar predeterminados UNA SOLA VEZ: si todo estaba activo, dejamos activos solo los FIXED_PARTS.
+  const alreadyApplied = (() => {
+    try { return localStorage.getItem(LS_KEYS.configPartsDefaultsApplied) === '1'; } catch { return false; }
+  })();
+
+  if (!alreadyApplied) {
+    const anyInactive = (parts || []).some(p => !p?.is_active);
+    const fixedSet = new Set((FIXED_PARTS || []).map(n => String(n || '').trim().toLowerCase()));
+
+    // Solo auto-aplicamos si venía "todo activo" (estado típico inicial)
+    if (!anyInactive && parts.length) {
+      const updates = parts.map(p => {
+        const desired = fixedSet.has(String(p.name || '').trim().toLowerCase());
+        const current = !!p.is_active;
+        if (current === desired) return null;
+        return fetch(`${API_URL}/config/parts/${encodeURIComponent(p.id)}`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+            body: JSON.stringify({ is_active: desired ? 1 : 0 })
+          }
+        ).catch(() => null);
+      }).filter(Boolean);
+
+      if (updates.length) {
+        await Promise.all(updates);
+        // Recargar lista ya normalizada
+        try {
+          const res2 = await fetch(`${API_URL}/config/parts`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+          if (res2.ok) parts = await res2.json();
+        } catch { }
+      }
+    }
+
+    try { localStorage.setItem(LS_KEYS.configPartsDefaultsApplied, '1'); } catch { }
+  }
+
+  container.innerHTML = (parts || []).map(p => {
+    const checked = p?.is_active ? 'checked' : '';
+    return `<label style="display:flex; gap:8px; align-items:center; margin:4px 0;">
+      <input type="checkbox" data-config-part-id="${escapeHtml(String(p.id))}" ${checked}>
+      <span>${escapeHtml(String(p.name || ''))}</span>
+    </label>`;
+  }).join('') || '<div style="color:#6c757d">(sin partes)</div>';
+}
+
+async function initPlannerTab() {
+  await initPlannerGridFromCatalogs();
+  renderFixedPlanningGrid();
+  restorePlannerStateFromStorage();
+}
+
 // Planificador
+function getPlannerSelectedMoldName() {
+  const sel = document.getElementById('planMoldSelect');
+  if (!sel || !sel.selectedOptions || !sel.selectedOptions.length) return '';
+  const opt = sel.selectedOptions[0];
+  return String(opt.value || opt.textContent || '').trim();
+}
+
+function selectPlannerMoldByName(name) {
+  const sel = document.getElementById('planMoldSelect');
+  if (!sel) return false;
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return false;
+  const opts = Array.from(sel.options || []);
+  const idx = opts.findIndex(o => String(o.value || '').trim().toLowerCase() === n || String(o.textContent || '').trim().toLowerCase() === n);
+  if (idx >= 0) {
+    sel.selectedIndex = idx;
+    return true;
+  }
+  return false;
+}
+
 async function preloadMoldsForSearch() {
   try {
-    const res = await fetch(`${API_URL}/datos/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    // Preferir catálogo (tabla molds) para que lo creado en Configuración aparezca aquí
+    let res = await fetch(`${API_URL}/catalogs/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    if (!res.ok) {
+      // Fallback: valores únicos desde "datos" (útil si aún no sincronizas catálogos)
+      res = await fetch(`${API_URL}/datos/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    }
+
     if (res.ok) {
       const meta = await res.json();
-      const moldes = Array.isArray(meta.moldes) ? meta.moldes : [];
-      cachedMolds = Array.from(new Set(moldes.map(m => String(m).trim()))).sort((a, b) => a.localeCompare(b));
-      const datalist = document.getElementById('planMoldDatalist');
-      if (datalist) datalist.innerHTML = cachedMolds.slice(0, 1000).map(m => `<option value="${escapeHtml(m)}">`).join('');
+      const fromCatalog = Array.isArray(meta.molds)
+        ? meta.molds.map(m => (m && typeof m === 'object') ? m.name : m)
+        : [];
+      const fromDatos = Array.isArray(meta.moldes) ? meta.moldes : [];
+      const moldes = fromCatalog.length ? fromCatalog : fromDatos;
+
+      cachedMolds = Array.from(new Set(moldes.map(m => String(m).trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b));
+
+      populateSelectWithFilter('planMoldSelect', 'planMoldFilter', cachedMolds);
+      setupFilterListener('planMoldFilter', 'planMoldSelect');
+
+      if (plannerPendingMoldName) {
+        if (selectPlannerMoldByName(plannerPendingMoldName)) plannerPendingMoldName = null;
+      }
       return;
     }
   } catch (_) { }
   cachedMolds = [];
 }
-function handleMoldTypeahead(e) {
-  const q = (e.target.value || '').toLowerCase().trim();
-  const datalist = document.getElementById('planMoldDatalist');
-  if (!datalist) return;
-  if (!q) {
-    datalist.innerHTML = cachedMolds.slice(0, 1000).map(m => `<option value="${escapeHtml(m)}">`).join('');
-    return;
-  }
-  const filtered = cachedMolds.filter(m => m.toLowerCase().includes(q)).slice(0, 1000);
-  datalist.innerHTML = filtered.map(m => `<option value="${escapeHtml(m)}">`).join('');
-}
 function renderFixedPlanningGrid() {
   const container = document.getElementById('planningGridContainer');
   if (!container) return;
-  const machines = FIXED_MACHINES;
-  const parts = FIXED_PARTS;
+  const machines = (plannerMachinesInGrid && plannerMachinesInGrid.length) ? plannerMachinesInGrid : FIXED_MACHINES;
+  const parts = (plannerPartsInGrid && plannerPartsInGrid.length) ? plannerPartsInGrid.map(p => p.name) : FIXED_PARTS;
 
   let html = `
     <table id="planningGridFixed">
@@ -291,7 +521,12 @@ function renderFixedPlanningGrid() {
         <tr>
           <th>Parte</th>
           <th>Cantidad</th>
-          ${machines.map(m => `<th>${escapeHtml(m.name)}<br><small>${m.hoursAvailable}h disp.</small></th>`).join('')}
+          ${machines.map(m => {
+            const cap = (m.hoursAvailable != null)
+              ? `${m.hoursAvailable}h disp.`
+              : (m.daily_capacity != null && m.daily_capacity !== '' ? `${Number(m.daily_capacity)}h/día` : '');
+            return `<th>${escapeHtml(m.name)}${cap ? `<br><small>${escapeHtml(cap)}</small>` : ''}</th>`;
+          }).join('')}
           <th>Total Horas</th>
         </tr>
       </thead>
@@ -302,7 +537,7 @@ function renderFixedPlanningGrid() {
             <td><input type="number" class="qty-input" min="0" step="1" placeholder="0"></td>
             ${machines.map(m => `
               <td>
-                <input type="number" class="hours-input" data-machine-id="${escapeHtml(m.id)}" min="0" step="0.5" placeholder="0">
+                <input type="number" class="hours-input" data-machine-id="${escapeHtml(String(m.id))}" min="0" step="0.5" placeholder="0">
               </td>`).join('')}
             <td class="total-hours-cell">0.00</td>
           </tr>`).join('')}
@@ -311,7 +546,7 @@ function renderFixedPlanningGrid() {
         <tr>
           <td><strong>Totales</strong></td>
           <td></td>
-          ${machines.map(m => `<td id="total-machine-${escapeHtml(m.id)}">0.00</td>`).join('')}
+          ${machines.map(m => `<td id="total-machine-${escapeHtml(String(m.id))}">0.00</td>`).join('')}
           <td id="grand-total">0.00</td>
         </tr>
       </tfoot>
@@ -319,9 +554,7 @@ function renderFixedPlanningGrid() {
   `;
   container.innerHTML = html;
 
-  const moldInput = document.getElementById('planMoldInput');
   const startDateEl = document.getElementById('gridStartDate');
-  if (moldInput) moldInput.addEventListener('input', persistPlannerStateToStorage);
   if (startDateEl) startDateEl.addEventListener('input', persistPlannerStateToStorage);
 
   const inputs = container.querySelectorAll('.qty-input, .hours-input');
@@ -350,15 +583,16 @@ function updateFixedRowTotal(row) {
 function updateFixedColumnTotals() {
   const grid = document.getElementById('planningGridFixed');
   if (!grid) return;
-  FIXED_MACHINES.forEach(m => {
+  const machines = (plannerMachinesInGrid && plannerMachinesInGrid.length) ? plannerMachinesInGrid : FIXED_MACHINES;
+  machines.forEach(m => {
     let colSum = 0;
-    grid.querySelectorAll(`tbody .hours-input[data-machine-id="${m.id}"]`).forEach(inp => {
+    grid.querySelectorAll(`tbody .hours-input[data-machine-id="${String(m.id)}"]`).forEach(inp => {
       const v = parseFloat(inp.value);
       const row = inp.closest('tr');
       const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
       colSum += (isNaN(v) ? 0 : v) * qty;
     });
-    const cell = document.getElementById(`total-machine-${m.id}`);
+    const cell = document.getElementById(`total-machine-${String(m.id)}`);
     if (cell) cell.textContent = colSum.toFixed(2);
   });
 }
@@ -377,7 +611,7 @@ function updateFixedGrandTotal() {
 // Persistencia local
 function persistPlannerStateToStorage() {
   const state = {
-    moldName: document.getElementById('planMoldInput')?.value || '',
+    moldName: getPlannerSelectedMoldName(),
     startDate: document.getElementById('gridStartDate')?.value || '',
     rows: []
   };
@@ -402,9 +636,11 @@ function restorePlannerStateFromStorage() {
   if (!raw) return;
   let state;
   try { state = JSON.parse(raw); } catch { return; }
-  const moldInput = document.getElementById('planMoldInput');
   const startDateEl = document.getElementById('gridStartDate');
-  if (moldInput && typeof state.moldName === 'string') moldInput.value = state.moldName;
+  if (typeof state.moldName === 'string' && state.moldName) {
+    plannerPendingMoldName = state.moldName;
+    selectPlannerMoldByName(state.moldName);
+  }
   if (startDateEl && typeof state.startDate === 'string' && state.startDate) startDateEl.value = state.startDate;
 
   const grid = document.getElementById('planningGridFixed');
@@ -450,11 +686,10 @@ async function submitGridPlan(e) {
   // ---------------------------
   // INPUTS PRINCIPALES
   // ---------------------------
-  const moldInput = document.getElementById('planMoldInput');
   const startDateEl = document.getElementById('gridStartDate');
   const priorityEl = document.getElementById('prioritySwitch');
 
-  const moldName = moldInput ? moldInput.value.trim() : '';
+  const moldName = getPlannerSelectedMoldName();
   const startDate = startDateEl ? startDateEl.value : '';
   const isPriority = !!priorityEl?.checked;
 
@@ -463,7 +698,7 @@ async function submitGridPlan(e) {
   console.log('isPriority:', isPriority);
 
   if (!moldName) {
-    displayResponse('gridResponse', 'Ingresa/selecciona un Molde.', false);
+    displayResponse('gridResponse', 'Selecciona un Molde.', false);
     return;
   }
 
@@ -533,8 +768,11 @@ async function submitGridPlan(e) {
       if (isNaN(base) || base <= 0) return;
 
       const machineId = inp.getAttribute('data-machine-id');
+      const machinesForPlan = (plannerMachinesInGrid && plannerMachinesInGrid.length)
+        ? plannerMachinesInGrid
+        : (window.FIXED_MACHINES || FIXED_MACHINES || []);
       const machineName =
-        (window.FIXED_MACHINES || []).find(m => String(m.id) === String(machineId))?.name
+        machinesForPlan.find(m => String(m.id) === String(machineId))?.name
         || machineId;
 
       const totalHours = Math.round((base * qty) / 0.25) * 0.25;
@@ -619,6 +857,42 @@ async function submitGridPlan(e) {
 // Tiempos de Moldes (mantiene autocompletar y filtros propios)
 let tiemposMetaCache = null;
 
+function populateDayMonthYear(daySelectId, monthSelectId, yearSelectId) {
+  const daySel = document.getElementById(daySelectId);
+  const monthSel = document.getElementById(monthSelectId);
+  const yearSel = document.getElementById(yearSelectId);
+
+  const now = new Date();
+  const currentDay = now.getDate();
+  const currentMonthIdx = now.getMonth();
+  const currentYearLocal = now.getFullYear();
+
+  if (daySel && !daySel.options.length) {
+    daySel.innerHTML = Array.from({ length: 31 }, (_, i) => {
+      const d = i + 1;
+      return `<option value="${d}">${d}</option>`;
+    }).join('');
+  }
+
+  if (monthSel && !monthSel.options.length) {
+    monthSel.innerHTML = monthNames.map(m => `<option value="${m}">${capitalize(m)}</option>`).join('');
+  }
+
+  if (yearSel && !yearSel.options.length) {
+    const minYear = 2016;
+    const maxYear = currentYearLocal + 2;
+    yearSel.innerHTML = Array.from({ length: (maxYear - minYear + 1) }, (_, i) => {
+      const y = minYear + i;
+      return `<option value="${y}">${y}</option>`;
+    }).join('');
+  }
+
+  // Set defaults if not selected
+  if (daySel && !daySel.value) daySel.value = String(currentDay);
+  if (monthSel && !monthSel.value) monthSel.value = String(monthNames[currentMonthIdx] || '');
+  if (yearSel && !yearSel.value) yearSel.value = String(currentYearLocal);
+}
+
 function monthNameToNumber(mesLower){
   const idx = monthNames.indexOf(String(mesLower || '').toLowerCase().trim());
   return idx >= 0 ? (idx + 1) : 0;
@@ -669,6 +943,17 @@ async function loadTiemposMeta(){
     if (!res.ok) return;
     const meta = await res.json();
     tiemposMetaCache = meta;
+
+    // Día / Mes / Año: no dependen de BD, pero el año puede enriquecerse con meta.years
+    populateDayMonthYear('tmDia', 'tmMes', 'tmAnio');
+    const tmAnioSel = document.getElementById('tmAnio');
+    if (tmAnioSel) {
+      const base = []; for (let y = 2016; y <= (new Date().getFullYear() + 2); y++) base.push(y);
+      const merged = Array.from(new Set([...(meta.years || []), ...base])).sort((a, b) => b - a);
+      tmAnioSel.innerHTML = merged.map(y => `<option value="${y}">${y}</option>`).join('');
+      const currentY = new Date().getFullYear();
+      if (!tmAnioSel.value) tmAnioSel.value = merged.includes(currentY) ? String(currentY) : String(merged[0] || currentY);
+    }
 
     fillDatalist('tmOperarios', (meta.operators || []).map(o => o.name));
     fillDatalist('tmProcesos', (meta.processes || []).map(p => p.name));
@@ -742,34 +1027,11 @@ async function saveTiempoMolde() {
   }
 }
 
-// Datos Meta (para Tiempos)
+// loadDatosMeta se mantiene por compatibilidad (muchos call-sites),
+// pero ahora recarga desde catálogos reales (tablas dedicadas) y refresca planificador.
 async function loadDatosMeta() {
-  try {
-    const res = await fetch(`${API_URL}/datos/meta`, { headers: { 'Authorization': `Bearer ${authToken}` } });
-    if (!res.ok) return;
-    const meta = await res.json();
-
-    fillDatalist('tmOperarios', meta.operarios);
-    fillDatalist('tmProcesos', meta.procesos);
-    fillDatalist('tmMaquinas', meta.maquinas);
-    fillDatalist('tmOperaciones', meta.operaciones);
-
-    populateSelectWithFilter('tmMoldeSelect', 'tmMoldeFilter', meta.moldes || []);
-    populateSelectWithFilter('tmParteSelect', 'tmParteFilter', meta.partes || []);
-
-    const tmAnioSel = document.getElementById('tmAnio');
-    if (tmAnioSel) {
-      const base = []; for (let y = 2016; y <= 2027; y++) base.push(y);
-      const merged = Array.from(new Set([...(meta.years || []), ...base])).sort((a, b) => b - a);
-      tmAnioSel.innerHTML = merged.map(y => `<option value="${y}">${y}</option>`).join('');
-      const currentY = new Date().getFullYear();
-      tmAnioSel.value = merged.includes(currentY) ? currentY : String(merged[0]);
-    }
-
-    setupFilterListener('tmMoldeFilter', 'tmMoldeSelect');
-    setupFilterListener('tmParteFilter', 'tmParteSelect');
-
-  } catch (e) { /* noop */ }
+  try { await loadTiemposMeta(); } catch (_) {}
+  try { await preloadMoldsForSearch(); } catch (_) {}
 }
 function fillDatalist(id, items) {
   const dl = document.getElementById(id);
@@ -907,8 +1169,6 @@ async function mostrarTodosDatos() {
 async function createDatoManual() {
   const payload = {};
   const map = [
-    ['datoDia', 'dia', v => parseInt(v, 10)],
-    ['datoMes', 'mes', v => String(v).toLowerCase()],
     ['datoAnio', 'anio', v => parseInt(v, 10)],
     ['datoProceso', 'tipo_proceso', v => v],
     ['datoOperacion', 'operacion', v => v],
@@ -986,6 +1246,10 @@ async function importDatosCSV() {
     const res = await fetch(`${API_URL}/import/datos`, { method: 'POST', headers: { 'Authorization': `Bearer ${authToken}` }, body: form });
     const data = await res.json();
     displayResponse('importResponse', data, res.ok);
+    if (res.ok) {
+      try { loadDatos(true); } catch (_) {}
+      try { loadDatosMeta(); } catch (_) {}
+    }
   } catch (e) {
     displayResponse('importResponse', { error: 'Error de conexión' }, false);
   } finally {
@@ -1395,7 +1659,12 @@ async function createMold(){
     });
     const data = await res.json();
     displayResponse('configResponse', data, res.ok);
-    if (res.ok) { document.getElementById('newMoldId').value = data.id; document.getElementById('newMoldName').value=''; loadDatosMeta(); }
+    if (res.ok) {
+      document.getElementById('newMoldId').value = data.id;
+      document.getElementById('newMoldName').value='';
+      loadDatosMeta();
+      preloadMoldsForSearch();
+    }
   } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
 }
 
@@ -1411,7 +1680,12 @@ async function createPart(){
     });
     const data = await res.json();
     displayResponse('configResponse', data, res.ok);
-    if (res.ok) { document.getElementById('newPartId').value = data.id; document.getElementById('newPartName').value=''; loadDatosMeta(); }
+    if (res.ok) {
+      document.getElementById('newPartId').value = data.id;
+      document.getElementById('newPartName').value='';
+      loadDatosMeta();
+      loadConfigPartsChecklist();
+    }
   } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
 }
 
@@ -1893,13 +2167,88 @@ function setupEventListeners() {
   });
 
   // Planificador
-  const moldInput = document.getElementById('planMoldInput');
-  const moldList = document.getElementById('planMoldDatalist');
-  if (moldInput && moldList) moldInput.addEventListener('input', () => { handleMoldTypeahead({ target: moldInput }); persistPlannerStateToStorage(); });
+  const planMoldFilter = document.getElementById('planMoldFilter');
+  const planMoldSelect = document.getElementById('planMoldSelect');
+  if (planMoldFilter && planMoldSelect) {
+    setupFilterListener('planMoldFilter', 'planMoldSelect');
+    planMoldFilter.addEventListener('input', persistPlannerStateToStorage);
+    planMoldSelect.addEventListener('change', persistPlannerStateToStorage);
+  }
+
+  // Configurar parrilla (máquinas/partes) usando is_active (ya filtrado desde /catalogs/meta)
+  const machinesSelBox = document.getElementById('plannerMachinesSelected');
+  const machinesAvailBox = document.getElementById('plannerMachinesAvailable');
+  const partsSelBox = document.getElementById('plannerPartsSelected');
+  const partsAvailBox = document.getElementById('plannerPartsAvailable');
+  [machinesSelBox, machinesAvailBox, partsSelBox, partsAvailBox].forEach(box => {
+    if (!box) return;
+    box.addEventListener('change', async (ev) => {
+      const t = ev.target;
+      if (!(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
+
+      const cfg = readPlannerGridConfig() || getDefaultPlannerGridConfig();
+
+      const mid = t.getAttribute('data-planner-machine-id');
+      const pname = t.getAttribute('data-planner-part-name');
+
+      if (mid) {
+        const id = String(mid);
+        const set = new Set((cfg.machineIds || []).map(String));
+        if (t.checked) set.add(id); else set.delete(id);
+        cfg.machineIds = Array.from(set);
+      }
+
+      if (pname != null) {
+        const name = String(pname);
+        const norm = name.trim().toLowerCase();
+        const current = Array.isArray(cfg.partNames) ? cfg.partNames.map(String) : [];
+        const next = current.filter(n => String(n).trim().toLowerCase() !== norm);
+        if (t.checked) next.push(name);
+        cfg.partNames = next;
+      }
+
+      writePlannerGridConfig(cfg);
+      applyPlannerGridConfig(cfg);
+      renderPlannerGridConfigUI(cfg);
+
+      // Re-render parrilla preservando lo ya ingresado
+      persistPlannerStateToStorage();
+      renderFixedPlanningGrid();
+      restorePlannerStateFromStorage();
+    });
+  });
   const submitPlanBtn = document.getElementById('submitGridPlanBtn');
   if (submitPlanBtn) submitPlanBtn.addEventListener('click', (e) => submitGridPlan(e));
   const clearPlannerBtn = document.getElementById('clearPlannerBtn');
   if (clearPlannerBtn) clearPlannerBtn.addEventListener('click', clearPlannerGrid);
+
+  // Configuración: checklist de partes
+  const partsChecklist = document.getElementById('configPartsChecklist');
+  if (partsChecklist) {
+    partsChecklist.addEventListener('change', async (ev) => {
+      const t = ev.target;
+      if (!(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
+      const id = t.getAttribute('data-config-part-id');
+      if (!id) return;
+      try {
+        const res = await fetch(`${API_URL}/config/parts/${encodeURIComponent(id)}`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+            body: JSON.stringify({ is_active: t.checked ? 1 : 0 })
+          }
+        );
+        const out = await res.json();
+        displayResponse('configResponse', out?.message || out?.error || 'Listo', res.ok);
+        if (res.ok) {
+          // refresca metas dependientes (Plan/Tiempos)
+          loadDatosMeta();
+        }
+      } catch (e) {
+        displayResponse('configResponse', { error: 'Error guardando parte', details: String(e) }, false);
+      }
+    });
+  }
 
   // Calendario
   const prevMonthBtn = document.getElementById('prev-month-btn'); if (prevMonthBtn) prevMonthBtn.addEventListener('click', () => changeMonth(-1));

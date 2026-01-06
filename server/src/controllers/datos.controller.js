@@ -1,4 +1,12 @@
 const { query } = require('../config/database');
+const {
+  ensureOperatorIdByName,
+  ensureProcessIdByName,
+  ensureMachineIdByName,
+  ensureMoldIdByName,
+  ensurePartIdByName,
+  ensureOperationIdByName,
+} = require('../services/catalog.service');
 
 const normalizeMes = (mes) => {
   if (!mes) return mes;
@@ -85,6 +93,14 @@ const createDato = async (req, res, next) => {
     maquina = toStr(maquina);
     operacion = toStr(operacion);
 
+    // Resolver/crear catálogos (si vienen nombres)
+    const operator_id = nombre_operario ? await ensureOperatorIdByName(nombre_operario) : null;
+    const process_id = tipo_proceso ? await ensureProcessIdByName(tipo_proceso) : null;
+    const mold_id = molde ? await ensureMoldIdByName(molde) : null;
+    const part_id = parte ? await ensurePartIdByName(parte) : null;
+    const machine_id = maquina ? await ensureMachineIdByName(maquina) : null;
+    const operation_id = operacion ? await ensureOperationIdByName(operacion) : null;
+
     const provided = [dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas]
       .filter(v => v !== null);
     if (provided.length === 0) {
@@ -92,10 +108,20 @@ const createDato = async (req, res, next) => {
     }
 
     const sql = `
-      INSERT INTO datos (dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas, source, created_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?, 'manual', ?)
+      INSERT INTO datos (
+        dia, mes, anio,
+        nombre_operario, tipo_proceso, molde, parte, maquina, operacion,
+        operator_id, process_id, mold_id, part_id, machine_id, operation_id,
+        horas, source, created_by
+      )
+      VALUES (?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?, 'manual', ?)
     `;
-    const params = [dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas, userId];
+    const params = [
+      dia, mes, anio,
+      nombre_operario, tipo_proceso, molde, parte, maquina, operacion,
+      operator_id, process_id, mold_id, part_id, machine_id, operation_id,
+      horas, userId
+    ];
     const result = await query(sql, params);
     res.status(201).json({ message: 'Dato creado', id: result.insertId });
   } catch (e) { next(e); }
@@ -123,14 +149,42 @@ const updateDato = async (req, res, next) => {
     const maquina = has('maquina') ? toStr(req.body.maquina) : row.maquina;
     const operacion = has('operacion') ? toStr(req.body.operacion) : row.operacion;
 
+    // Resolver/crear catálogos si cambian nombres (o mantener si no cambian)
+    const operator_id = has('nombre_operario')
+      ? (nombre_operario ? await ensureOperatorIdByName(nombre_operario) : null)
+      : row.operator_id;
+    const process_id = has('tipo_proceso')
+      ? (tipo_proceso ? await ensureProcessIdByName(tipo_proceso) : null)
+      : row.process_id;
+    const mold_id = has('molde')
+      ? (molde ? await ensureMoldIdByName(molde) : null)
+      : row.mold_id;
+    const part_id = has('parte')
+      ? (parte ? await ensurePartIdByName(parte) : null)
+      : row.part_id;
+    const machine_id = has('maquina')
+      ? (maquina ? await ensureMachineIdByName(maquina) : null)
+      : row.machine_id;
+    const operation_id = has('operacion')
+      ? (operacion ? await ensureOperationIdByName(operacion) : null)
+      : row.operation_id;
+
     const horas = has('horas') ? toFloat(req.body.horas) : row.horas;
 
     const sql = `
       UPDATE datos
-      SET dia = ?, mes = ?, anio = ?, nombre_operario = ?, tipo_proceso = ?, molde = ?, parte = ?, maquina = ?, operacion = ?, horas = ?
+      SET dia = ?, mes = ?, anio = ?,
+          nombre_operario = ?, tipo_proceso = ?, molde = ?, parte = ?, maquina = ?, operacion = ?,
+          operator_id = ?, process_id = ?, mold_id = ?, part_id = ?, machine_id = ?, operation_id = ?,
+          horas = ?
       WHERE id = ?
     `;
-    const params = [dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas, id];
+    const params = [
+      dia, mes, anio,
+      nombre_operario, tipo_proceso, molde, parte, maquina, operacion,
+      operator_id, process_id, mold_id, part_id, machine_id, operation_id,
+      horas, id
+    ];
     await query(sql, params);
     res.json({ message: 'Dato actualizado', id });
   } catch (e) { next(e); }

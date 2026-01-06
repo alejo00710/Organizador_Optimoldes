@@ -62,8 +62,32 @@ exports.createPart = async (req, res, next) => {
   try {
     const { name } = req.body;
     if (!name || String(name).trim() === '') return res.status(400).json({ error:'Nombre requerido' });
-    const result = await query('INSERT INTO mold_parts (name, is_active) VALUES (?, TRUE)', [name.trim()]);
-    res.status(201).json({ id: result.insertId, name: name.trim() });
+    // Por defecto se crea INACTIVA para que el checklist decida qué se muestra.
+    const result = await query('INSERT INTO mold_parts (name, is_active) VALUES (?, FALSE)', [name.trim()]);
+    res.status(201).json({ id: result.insertId, name: name.trim(), is_active: 0 });
+  } catch (e) { next(e); }
+};
+
+// LISTAR partes (incluye activas/inactivas) para checklist
+exports.listParts = async (req, res, next) => {
+  try {
+    const rows = await query('SELECT id, name, is_active, created_at FROM mold_parts ORDER BY name ASC');
+    res.json(rows);
+  } catch (e) { next(e); }
+};
+
+// ACTUALIZAR parte (solo is_active)
+exports.updatePart = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+
+    const current = await query('SELECT id FROM mold_parts WHERE id = ?', [id]);
+    if (!current.length) return res.status(404).json({ error:'Parte no encontrada' });
+
+    if (is_active === undefined) return res.status(400).json({ error:'Nada para actualizar' });
+    await query('UPDATE mold_parts SET is_active = ? WHERE id = ?', [is_active ? 1 : 0, id]);
+    res.json({ message:'Parte actualizada', id });
   } catch (e) { next(e); }
 };
 
