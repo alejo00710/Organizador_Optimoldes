@@ -32,7 +32,7 @@
 
         <div class="form-group">
           <label>Contraseña</label>
-          <input type="password" id="password" value="admin" placeholder="Ingrese su contraseña">
+          <input type="password" id="password" placeholder="Ingrese su contraseña">
         </div>
 
         <div class="form-group hidden" id="operatorSelectGroup">
@@ -47,6 +47,24 @@
         </button>
 
         <div class="response-box" id="loginResponse"></div>
+
+        <div id="bootstrapCard" class="hidden" style="margin-top: 18px;">
+          <hr style="margin: 18px 0;">
+          <h3 style="margin: 0 0 6px 0;">🔐 Configuración inicial</h3>
+          <p class="text-muted" style="font-size: 0.9rem; margin-top: 0;">Crea las cuentas <strong>admin</strong> y <strong>jefe</strong> una sola vez. Después se oculta automáticamente.</p>
+
+          <div id="bootstrapAdminGroup" class="form-group">
+            <label>Contraseña Admin</label>
+            <input type="password" id="bootstrapAdminPassword" placeholder="Nueva contraseña para admin">
+          </div>
+          <div id="bootstrapJefeGroup" class="form-group">
+            <label>Contraseña Jefe (Planner)</label>
+            <input type="password" id="bootstrapJefePassword" placeholder="Nueva contraseña para jefe">
+          </div>
+
+          <button class="btn btn-secondary" id="bootstrapBtn" style="width: 100%; margin-top: 0.5rem;">Crear cuentas</button>
+          <div class="response-box" id="bootstrapResponse"></div>
+        </div>
       </div>
     </div>
 
@@ -71,10 +89,12 @@
           <button class="tab active" data-tab="plan">📊 Cuadro Planificador</button>
           <button class="tab" data-tab="datos">🗂️ Datos</button>
           <button class="tab" data-tab="tiempos">⏱️ Tiempos de Moldes</button>
+          <button class="tab" data-tab="registros">📋 Registros</button>
           <button class="tab" data-tab="importar">📥 Importar</button>
           <button class="tab" data-tab="config">⚙️ Configuración</button>
           <button class="tab" data-tab="calendar">📅 Calendario</button>
           <button class="tab" data-tab="indicators">📊 Indicadores</button>
+          <button class="tab" data-tab="sesiones">🕒 Sesiones</button>
         </div>
 
         <!-- Planificador simplificado (sin cambios aquí) -->
@@ -223,17 +243,89 @@
               <select id="tmParteSelect" size="8"></select>
             </div>
 
-            <div class="form-group"><label>Máquina</label><input list="tmMaquinas" id="tmMaquina"><datalist
-                id="tmMaquinas"></datalist></div>
+            <div class="form-group">
+              <label>Máquina</label>
+              <input type="text" id="tmMaquinaFilter" placeholder="Filtrar máquinas...">
+              <select id="tmMaquinaSelect" size="8"></select>
+            </div>
             <div class="form-group"><label>Operación</label><input list="tmOperaciones" id="tmOperacion"><datalist
                 id="tmOperaciones"></datalist></div>
-            <div class="form-group"><label>Horas</label><input type="number" id="tmHoras" step="0.25" min="0.25"
-                max="12" placeholder="0.25"></div>
+            <div class="form-group"><label>Horas</label><input type="number" id="tmHoras" step="0.01" min="0.01"
+              max="12" placeholder="0.00"></div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label>Motivo (si hubo desviación)</label>
+              <input type="text" id="tmMotivo" placeholder="Ej: Ajuste, daño de máquina, retrabajo, espera material...">
+            </div>
           </div>
           <div class="form-actions">
             <button class="btn btn-secondary" id="tmGuardarBtn">Guardar</button>
           </div>
           <div class="response-box" id="tmResponse"></div>
+        </div>
+
+        <!-- Registros (historial editable de Tiempos) -->
+        <div class="tab-content" id="tab-registros">
+          <h2>📋 Registros (Tiempos)</h2>
+          <p class="text-muted" style="font-size: 0.9rem;">Los operarios pueden corregir hasta 2 días atrás. Alertas &gt; 5% se marcan en rojo.</p>
+
+          <datalist id="wlOperarios"></datalist>
+          <datalist id="wlProcesos"></datalist>
+          <datalist id="wlMoldes"></datalist>
+          <datalist id="wlPartes"></datalist>
+          <datalist id="wlMaquinas"></datalist>
+          <datalist id="wlOperaciones"></datalist>
+
+          <div class="table-container">
+            <table id="workLogsTable">
+              <thead>
+                <tr>
+                  <th>Día</th>
+                  <th>Mes</th>
+                  <th>Año</th>
+                  <th>Operario</th>
+                  <th>Proceso</th>
+                  <th>Molde</th>
+                  <th>Parte</th>
+                  <th>Máquina</th>
+                  <th>Operación</th>
+                  <th>Horas reales</th>
+                  <th>Motivo</th>
+                  <th>Horas plan</th>
+                  <th>Desv %</th>
+                  <th>Registrado</th>
+                  <th>Detalle</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="response-box" id="workLogsResponse" style="margin-top: 12px;"></div>
+        </div>
+
+        <!-- Sesiones (auditoría) -->
+        <div class="tab-content" id="tab-sesiones">
+          <h2>🕒 Historial de Sesiones</h2>
+          <p class="text-muted" style="font-size: 0.9rem;">Solo Admin/Jefe. Muestra entradas/salidas.</p>
+
+          <div class="table-container">
+            <table id="sessionsTable">
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>Rol</th>
+                  <th>Operario</th>
+                  <th>Inicio</th>
+                  <th>Fin</th>
+                  <th>Duración</th>
+                  <th>IP</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="response-box" id="sessionsResponse" style="margin-top: 12px;"></div>
         </div>
 
         <!-- Importar (sin cambios funcionales) -->
@@ -356,11 +448,29 @@
               <p class="text-muted" style="font-size: 0.9rem;">Solo Admin/Jefe pueden crear/restablecer contraseña.</p>
               <div class="form-group"><label>Nombre Operario</label><input type="text" id="newOperatorName"
                   placeholder="Ej: Juan Pérez"></div>
-              <div class="form-group"><label>Contraseña</label><input type="password" id="newOperatorPassword"
-                  placeholder="Establecer contraseña"></div>
               <div class="form-group"><label>ID Operario</label><input type="text" id="newOperatorId" readonly
                   placeholder="Se genera al crear"></div>
-              <button class="btn btn-secondary" id="createOperatorBtn">Registrar/Actualizar Operario</button>
+                <button class="btn btn-secondary" id="createOperatorBtn">Crear Operario</button>
+
+              <div style="margin-top: 16px;">
+                <h3 style="margin-bottom: 6px;">✅ Operarios (Indicadores)</h3>
+                <p class="text-muted" style="font-size: 0.9rem; margin-top: 0;">Activa/desactiva, edita el nombre y marca quién aparece en Indicadores.</p>
+                <div class="table-container">
+                  <table id="operatorsTable">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Nombre</th>
+                        <th>Activo</th>
+                        <th>Indicadores</th>
+                        <th>Contraseña</th>
+                        <th>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
             </div>
 
             <div class="form-column">
@@ -403,6 +513,8 @@
             </div>
             <div id="calendar-grid" class="calendar-grid"></div>
           </div>
+
+          <div id="inProgressMoldList" class="calendar-mold-progress-list" style="margin-top:12px"></div>
         </div>
 
         <div class="tab-content" id="tab-indicators">
@@ -414,8 +526,8 @@
               <input type="number" id="indYear" min="2000" max="2100" placeholder="2025">
             </div>
             <div class="form-group">
-              <label>Operarios a mostrar</label>
-              <div id="indOperatorFilter" class="operator-filter"></div>
+              <label>Operarios</label>
+              <div class="text-muted" style="font-size: 0.9rem;">Se seleccionan en Configuración → Operarios.</div>
             </div>
             <div class="form-group" style="display:flex; gap:8px; align-items:end;">
               <button class="btn btn-secondary" id="loadIndicatorsBtn">Cargar</button>

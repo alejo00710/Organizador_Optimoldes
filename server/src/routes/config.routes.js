@@ -24,4 +24,8 @@ router.put('/config/parts/:id', adminOrPlanner, configCtrl.updatePart);
 // Operarios (crear con contraseña)
 router.post('/config/operators', adminOrPlanner, configCtrl.createOperator);
 
+// Operarios (listar/editar)
+router.get('/config/operators', adminOrPlanner, configCtrl.listOperators);
+router.put('/config/operators/:id', adminOrPlanner, configCtrl.updateOperator);
+
 module.exports = router;

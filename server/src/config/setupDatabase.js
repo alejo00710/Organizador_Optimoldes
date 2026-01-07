@@ -74,28 +74,71 @@ async function initializeDatabase() {
         } catch (e) {
             console.warn('⚠️ No se pudo aplicar migración work_logs.work_date:', e.message);
         }
+
+        // work_logs.reason (motivo de desviación)
+        try {
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = 'work_logs'
+                   AND column_name = 'reason'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE work_logs ADD COLUMN reason TEXT NULL AFTER hours_worked`);
+                console.log('✅ Migración aplicada: work_logs.reason');
+            }
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración work_logs.reason:', e.message);
+        }
+
+        // operators.password_hash (para login por operario con contraseña propia)
+        try {
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = 'operators'
+                   AND column_name = 'password_hash'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE operators ADD COLUMN password_hash VARCHAR(255) NULL AFTER user_id`);
+                console.log('✅ Migración aplicada: operators.password_hash');
+            }
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración operators.password_hash:', e.message);
+        }
+
+        // user_sessions (auditoría de entradas/salidas)
+        try {
+            await query(
+                `CREATE TABLE IF NOT EXISTS user_sessions (
+                  id INT AUTO_INCREMENT PRIMARY KEY,
+                  user_id INT NOT NULL,
+                  operator_id INT NULL,
+                  role ENUM('admin', 'planner', 'operator') NOT NULL,
+                  ip VARCHAR(64) NULL,
+                  user_agent VARCHAR(255) NULL,
+                  login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  logout_at TIMESTAMP NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE SET NULL,
+                  INDEX idx_user_sessions_user (user_id),
+                  INDEX idx_user_sessions_login (login_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
+            );
+        } catch (e) {
+            console.warn('⚠️ No se pudo asegurar tabla user_sessions:', e.message);
+        }
     } catch (error) {
         console.error(`❌ Error al ejecutar el script del schema:`, error.message);
         process.exit(1);
     }
 
-    // 3. Crear el usuario administrador si no existe
-    try {
-        const users = await query('SELECT * FROM users WHERE username = "admin"');
-        if (users.length === 0) {
-            console.log('Usuario "admin" no encontrado. Creándolo...');
-            const password = 'admin';
-            const salt = await bcrypt.genSalt(10);
-            const password_hash = await bcrypt.hash(password, salt);
-            await query('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)', ['admin', password_hash, 'admin']);
-            console.log('✅ Usuario "admin" creado con contraseña "admin".');
-        } else {
-            console.log('✅ Usuario "admin" ya existe.');
-        }
-    } catch (error) {
-        console.error(`❌ Error al verificar/crear el usuario admin:`, error.message);
-        process.exit(1);
-    }
+    // Nota: Ya no se crea automáticamente el usuario "admin".
+    // El alta inicial de "admin" y "jefe" se hace vía Bootstrap en el login.
 }
 
 module.exports = { initializeDatabase };

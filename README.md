@@ -1,6 +1,6 @@
 # 📋 Sistema de Planificación y Registro de Producción de Moldes (Checkpoint)
 
-Estado a la fecha: 2025-12-31
+Estado a la fecha: 2026-01-07
 
 Este proyecto es una aplicación web para planificar y registrar trabajo de producción de moldes. Incluye:
 - Autenticación por roles con JWT
@@ -10,6 +10,9 @@ Este proyecto es una aplicación web para planificar y registrar trabajo de prod
 - Reportes de planificado vs real
 - Indicadores (KPIs): 3 tablas (Horas, Días hábiles manuales, Indicador) + exportación CSV
 - Indicadores: selección de operarios persistente (checkboxes) y carga automática de tablas
+- Avance Plan vs Real por molde (panel de progreso)
+  - Vista "Moldes en curso" debajo del Calendario (no filtrado por mes)
+  - Rango del plan visible: inicio → fin
 
 Este README refleja exactamente el estado actual del código.
 
@@ -88,6 +91,10 @@ Organizador_Optimoldes/
   - Total por fila = (suma horas por máquina) × cantidad
   - Resumen total superior (proyectado y base por máquina)
 - Envío de planificación: genera múltiples POST /tasks/plan (una por celda con horas > 0)
+ - Configuración de parrilla robusta:
+   - Siempre muestra una selección principal por defecto (máquinas/partes fijas)
+   - Si el catálogo no carga, mantiene la selección y hace fallback a los fijos
+   - La selección guardada no se borra si el catálogo está vacío
 
 3) Scheduler (Distribución automática)
 - Distribuye `totalHours` en días hábiles por máquina a partir de `startDate`
@@ -111,6 +118,11 @@ Organizador_Optimoldes/
   - Modal con detalle de tareas por día
 - Endpoint unificado: GET /api/calendar/month-view → { events, holidays }
 
+ 5.1) Moldes en curso (debajo del Calendario)
+ - Lista compacta de paneles de progreso (uno por molde en curso)
+ - Cada panel muestra: % completado, plan total, plan a hoy, real a hoy, desviación, y rango del plan (inicio → fin)
+ - Fuente de datos: GET /api/molds/in-progress (una sola llamada para eficiencia)
+
 6) Reportes (backend listo)
 - Reporte planificado vs real (`/reports/planned-vs-actual`)
 - Reporte detallado con combinaciones y alertas (`/reports/detailed-deviations`)
@@ -126,7 +138,6 @@ Organizador_Optimoldes/
   - Si hay selección guardada, las **3 tablas se cargan automáticamente** al abrir la pestaña
 - Exportación CSV del indicador principal
 
----
 
 ## ✅ Correcciones recientes (críticas)
 
@@ -138,6 +149,10 @@ Organizador_Optimoldes/
 - Fechas en `calendar.controller` robustas (evita problemas de zona horaria)
 - server/package.json: script `start` corregido (sin espacio en `app.js`)
 - server/src/app.js: `startServer()` corregido (sintaxis y arranque)
+- Configuración de parrilla: evita limpiar selección cuando catálogos no cargan; fallback a selección por defecto
+- Paneles de progreso: agregados "Moldes en curso" (debajo del Calendario) y rango del plan visible
+- Endpoint nuevo: `/api/molds/in-progress` (admin/planner)
+- Endpoint de progreso por molde: `/api/molds/:moldId/progress` (admin/planner)
 
 ---
 
@@ -223,6 +238,8 @@ Datos maestros
 - GET/POST/PUT/DELETE /api/machines
 - GET/POST /api/molds
 - GET/POST /api/molds/parts
+ - GET      /api/molds/in-progress          (admin/planner)
+ - GET      /api/molds/:moldId/progress     (admin/planner)
 
 Festivos
 - GET    /api/holidays

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS operators (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
   user_id INT NULL,
+  password_hash VARCHAR(255) NULL,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS molds (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS mold_parts (
+  reason TEXT,
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL UNIQUE,
   is_active BOOLEAN DEFAULT TRUE,
@@ -142,6 +144,25 @@ CREATE TABLE IF NOT EXISTS work_logs (
   INDEX idx_work_logs_work_date (work_date),
   INDEX idx_work_logs_operator_date (operator_id, work_date),
   INDEX idx_work_logs_machine_date (machine_id, recorded_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================
+-- Auditoría de sesiones (login/logout)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  operator_id INT NULL,
+  role ENUM('admin', 'planner', 'operator') NOT NULL,
+  ip VARCHAR(64) NULL,
+  user_agent VARCHAR(255) NULL,
+  login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  logout_at TIMESTAMP NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE SET NULL,
+  INDEX idx_user_sessions_user (user_id),
+  INDEX idx_user_sessions_login (login_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================

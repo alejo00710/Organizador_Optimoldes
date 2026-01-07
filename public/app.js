@@ -18,6 +18,7 @@ let INACTIVITY_TIMEOUT = (parseInt(localStorage.getItem('inactivityMinutes') || 
 let inactivityTimer = null;
 const HEALTH_INTERVAL_MS = 30000;
 let healthTimer = null;
+let bootstrapStatusTimer = null;
 
 // Máquinas fijas
 const FIXED_MACHINES = [
@@ -129,8 +130,14 @@ function renderPlannerGridConfigUI(cfg) {
   const machineIdSet = new Set((cfg?.machineIds || []).map(v => String(v)));
   const partNameSet = new Set((cfg?.partNames || []).map(v => String(v).trim().toLowerCase()));
 
-  const machines = Array.isArray(plannerCatalogMachines) ? plannerCatalogMachines : [];
-  const parts = Array.isArray(plannerCatalogParts) ? plannerCatalogParts : [];
+  // Si el catálogo aún no cargó, mostramos al menos los defaults para que el usuario
+  // vea "En parrilla" (y no quede todo vacío).
+  const machines = (Array.isArray(plannerCatalogMachines) && plannerCatalogMachines.length)
+    ? plannerCatalogMachines
+    : (FIXED_MACHINES || []).map(m => ({ id: m.id, name: m.name, daily_capacity: null, is_active: true }));
+  const parts = (Array.isArray(plannerCatalogParts) && plannerCatalogParts.length)
+    ? plannerCatalogParts
+    : (FIXED_PARTS || []).map(name => ({ id: name, name, is_active: true }));
 
   const selMachines = machines.filter(m => machineIdSet.has(String(m.id)));
   const availMachines = machines.filter(m => !machineIdSet.has(String(m.id)));
@@ -184,10 +191,34 @@ async function initPlannerGridFromCatalogs() {
     writePlannerGridConfig(cfg);
   } else {
     // Sanitizar selección ante cambios de catálogos
-    const mset = new Set(plannerCatalogMachines.map(m => String(m.id)));
-    const pset = new Set(plannerCatalogParts.map(p => String(p.name || '').trim().toLowerCase()));
-    cfg.machineIds = (cfg.machineIds || []).map(String).filter(id => mset.has(String(id)));
-    cfg.partNames = (cfg.partNames || []).map(String).filter(n => pset.has(String(n).trim().toLowerCase()));
+    const mset = new Set((plannerCatalogMachines || []).map(m => String(m.id)));
+    const pset = new Set((plannerCatalogParts || []).map(p => String(p.name || '').trim().toLowerCase()));
+
+    const beforeMachines = Array.isArray(cfg.machineIds) ? cfg.machineIds.map(String) : [];
+    const beforeParts = Array.isArray(cfg.partNames) ? cfg.partNames.map(String) : [];
+
+    // Importante: si el catálogo no cargó (set vacío), NO borramos selección.
+    const nextMachines = mset.size
+      ? beforeMachines.filter(id => mset.has(String(id)))
+      : beforeMachines;
+    const nextParts = pset.size
+      ? beforeParts.filter(n => pset.has(String(n).trim().toLowerCase()))
+      : beforeParts;
+
+    const changed = nextMachines.join('|') !== beforeMachines.join('|') || nextParts.join('|') !== beforeParts.join('|');
+    cfg.machineIds = nextMachines;
+    cfg.partNames = nextParts;
+    if (changed) writePlannerGridConfig(cfg);
+  }
+
+  // Si por alguna razón quedó vacío (por ejemplo, se guardó una config sin selección),
+  // re-aplicamos defaults para que siempre haya una parrilla "principal" visible.
+  const defaults = getDefaultPlannerGridConfig();
+  const hadMachines = Array.isArray(cfg.machineIds) && cfg.machineIds.length > 0;
+  const hadParts = Array.isArray(cfg.partNames) && cfg.partNames.length > 0;
+  if (!hadMachines || !hadParts) {
+    cfg.machineIds = hadMachines ? cfg.machineIds : defaults.machineIds;
+    cfg.partNames = hadParts ? cfg.partNames : defaults.partNames;
     writePlannerGridConfig(cfg);
   }
 
@@ -205,7 +236,32 @@ function displayResponse(id, data, success = true) {
 }
 function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 function capitalize(s) { return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : ''; }
-function hoursToPayload(v) { if (v === '') return ''; const n = parseFloat(v); return isNaN(n) ? '' : Math.round(n / 0.25) * 0.25; }
+
+function parseLocaleNumber(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return NaN;
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+  let normalized = s;
+  if (hasComma && hasDot) {
+    // Asumimos formato miles con punto y decimales con coma: 1.234,56
+    normalized = s.replace(/\./g, '').replace(/,/g, '.');
+  } else if (hasComma) {
+    normalized = s.replace(/,/g, '.');
+  }
+  const n = Number.parseFloat(normalized);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function round2(n) {
+  return Math.round(Number(n) * 100) / 100;
+}
+
+function hoursToPayload(v) {
+  if (v === '') return '';
+  const n = parseLocaleNumber(v);
+  return Number.isFinite(n) ? Math.round(n / 0.25) * 0.25 : '';
+}
 async function isDateLaborable(dateStr) {
   try {
     const qs = new URLSearchParams();
@@ -245,13 +301,91 @@ function showLoginScreen(message = '') {
   if (message) console.error(message);
   const loginResp = document.getElementById('loginResponse');
   if (loginResp) loginResp.textContent = '';
-  const pwd = document.getElementById('password'); if (pwd) pwd.value = 'admin';
+  const pwd = document.getElementById('password'); if (pwd) pwd.value = '';
   const opSel = document.getElementById('operatorSelectGroup'); if (opSel) opSel.classList.add('hidden');
   authToken = null; currentUser = null;
   localStorage.removeItem('authToken');
   updateConnectionStatus(false);
   stopHealthCheck();
   resetInactivityTimer();
+
+  // Bootstrap inicial (si aplica)
+  try { startBootstrapStatusPoll(); } catch (_) {}
+}
+
+function startBootstrapStatusPoll() {
+  stopBootstrapStatusPoll();
+  refreshBootstrapStatus();
+  bootstrapStatusTimer = setInterval(() => {
+    refreshBootstrapStatus();
+  }, 2000);
+}
+
+function stopBootstrapStatusPoll() {
+  if (bootstrapStatusTimer) clearInterval(bootstrapStatusTimer);
+  bootstrapStatusTimer = null;
+}
+
+// ================================
+// Bootstrap inicial: crear admin + jefe una sola vez
+// ================================
+async function refreshBootstrapStatus() {
+  const card = document.getElementById('bootstrapCard');
+  if (!card) return;
+
+  const adminGroup = document.getElementById('bootstrapAdminGroup');
+  const jefeGroup = document.getElementById('bootstrapJefeGroup');
+  const btn = document.getElementById('bootstrapBtn');
+
+  try {
+    const res = await fetch(`${API_URL}/auth/bootstrap/status`, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    const can = !!data?.canBootstrap;
+    const adminExists = !!data?.adminExists;
+    const jefeExists = !!data?.jefeExists;
+
+    // Mostrar el bloque si falta al menos una cuenta
+    card.classList.toggle('hidden', !can);
+
+    // Mostrar solo los inputs que faltan
+    if (adminGroup) adminGroup.classList.toggle('hidden', adminExists);
+    if (jefeGroup) jefeGroup.classList.toggle('hidden', jefeExists);
+
+    // Habilitar botón solo cuando se puede ejecutar
+    if (btn) btn.disabled = !can;
+  } catch (_) {
+    // Sin conexión / backend caído: mostramos el bloque pero deshabilitado
+    // para que quede claro que depende del estado real en BD.
+    card.classList.remove('hidden');
+    if (btn) btn.disabled = true;
+    displayResponse('bootstrapResponse', { error: 'No se pudo consultar el estado del bootstrap (sin conexión)' }, false);
+  }
+}
+
+async function runBootstrapInit(e) {
+  if (e) e.preventDefault();
+  const adminPassword = document.getElementById('bootstrapAdminPassword')?.value;
+  const jefePassword = document.getElementById('bootstrapJefePassword')?.value;
+
+  const payload = { adminPassword, jefePassword };
+
+  try {
+    const res = await fetch(`${API_URL}/auth/bootstrap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    displayResponse('bootstrapResponse', data?.message || data?.error || data, res.ok);
+    if (res.ok) {
+      // limpiamos inputs y ocultamos si ya no aplica
+      const a = document.getElementById('bootstrapAdminPassword'); if (a) a.value = '';
+      const j = document.getElementById('bootstrapJefePassword'); if (j) j.value = '';
+      await refreshBootstrapStatus();
+    }
+  } catch (err) {
+    displayResponse('bootstrapResponse', { error: 'Error de conexión', details: String(err) }, false);
+  }
 }
 function showMainApp(user) {
   currentUser = user;
@@ -264,12 +398,23 @@ function showMainApp(user) {
   if (roleEl) roleEl.textContent = (user.role || '').toUpperCase();
   if (opEl) opEl.textContent = user.operatorName || 'N/A';
 
-  const configBtn = document.querySelector('button[data-tab="config"]');
-  const planBtn = document.querySelector('button[data-tab="plan"]');
-  const worklogBtn = document.querySelector('button[data-tab="worklog"]');
-  if (configBtn) configBtn.classList.toggle('hidden', user.role !== 'admin');
-  if (planBtn) planBtn.classList.toggle('hidden', user.role === 'operator');
-  if (worklogBtn) worklogBtn.classList.toggle('hidden', user.role !== 'operator');
+  // Tabs por rol
+  const role = String(user.role || '').toLowerCase();
+  const isOperator = role === 'operator';
+  const canSeeAll = role === 'admin' || role === 'planner';
+
+  // Por defecto, mostramos todo a admin/planner y limitamos al operario solo a "tiempos"
+  document.querySelectorAll('.tabs .tab').forEach(btn => {
+    const tab = btn.getAttribute('data-tab');
+    if (isOperator) {
+      btn.classList.toggle('hidden', !(tab === 'tiempos' || tab === 'registros'));
+    } else if (canSeeAll) {
+      btn.classList.remove('hidden');
+    } else {
+      // fallback conservador: si algún rol nuevo aparece, dejamos visibles solo tabs "seguros"
+      btn.classList.toggle('hidden', tab === 'config');
+    }
+  });
 
   const loginContainer = document.getElementById('loginContainer');
   const mainApp = document.getElementById('mainApp');
@@ -279,10 +424,11 @@ function showMainApp(user) {
   updateConnectionStatus(true);
   startHealthCheck();
   startInactivityTimer();
+  stopBootstrapStatusPoll();
 
   preloadMoldsForSearch();
 
-  const defaultTab = 'plan';
+  const defaultTab = isOperator ? 'tiempos' : 'plan';
   openTab(defaultTab);
   setTimeout(() => {
     try { loadCalendar(); } catch (e) { }
@@ -328,6 +474,7 @@ async function login(e) {
     if (res.ok) {
       displayResponse('loginResponse', 'Sesión iniciada', true);
       localStorage.setItem('authToken', data.token);
+      if (data.sessionId) localStorage.setItem('sessionId', String(data.sessionId));
       verifySession(data.token);
     }
     else {
@@ -351,7 +498,22 @@ async function verifySession(token) {
     }
   } catch (e) { showLoginScreen('Error conexión'); }
 }
-function logout() { showLoginScreen('Logout'); }
+async function logout() {
+  try {
+    const token = authToken || localStorage.getItem('authToken');
+    const sessionId = localStorage.getItem('sessionId');
+    if (token && sessionId) {
+      await fetch(`${API_URL}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ sessionId })
+      }).catch(() => null);
+    }
+  } catch (_) {}
+
+  try { localStorage.removeItem('sessionId'); } catch (_) {}
+  showLoginScreen('Logout');
+}
 
 // Tabs (única definición)
 function openTab(tabName) {
@@ -373,14 +535,22 @@ function openTab(tabName) {
     try { initPlannerTab(); } catch (e) {}
   }
   if (tabName === 'tiempos') try { loadTiemposMeta(); } catch (e) {}
+  if (tabName === 'registros') {
+    try { ensureWorkLogsMeta(); } catch (e) {}
+    try { loadWorkLogsHistory(true); } catch (e) {}
+  }
   if (tabName === 'datos') try { loadDatos(true); } catch (e) {}
   if (tabName === 'config') {
     try { loadMachinesList(); } catch (e) {}
     try { loadConfigPartsChecklist(); } catch (e) {}
+    try { loadOperatorsList(); } catch (e) {}
   }
   if (tabName === 'indicators') {
     try { defaultYearForIndicators(); } catch (e) {}
     try { loadOperatorsForIndicators(); } catch (e) {}
+  }
+  if (tabName === 'sesiones') {
+    try { loadSessionsHistory(); } catch (e) {}
   }
 }
 
@@ -489,9 +659,10 @@ async function preloadMoldsForSearch() {
 
     if (res.ok) {
       const meta = await res.json();
-      const fromCatalog = Array.isArray(meta.molds)
-        ? meta.molds.map(m => (m && typeof m === 'object') ? m.name : m)
-        : [];
+      const moldsRaw = Array.isArray(meta.molds) ? meta.molds : [];
+      const fromCatalog = moldsRaw
+        .map(m => (m && typeof m === 'object') ? m.name : m)
+        .filter(Boolean);
       const fromDatos = Array.isArray(meta.moldes) ? meta.moldes : [];
       const moldes = fromCatalog.length ? fromCatalog : fromDatos;
 
@@ -509,6 +680,96 @@ async function preloadMoldsForSearch() {
   } catch (_) { }
   cachedMolds = [];
 }
+
+function fmtHours(n) {
+  const x = Number(n);
+  return Number.isFinite(x) ? x.toFixed(2) : '0.00';
+}
+
+function buildMoldProgressContent(data, fallbackMoldName) {
+  const pct = (data?.totals?.percentComplete == null) ? null : Number(data.totals.percentComplete);
+  const plannedTotal = Number(data?.totals?.plannedTotalHours || 0);
+  const plannedToDate = Number(data?.totals?.plannedToDateHours || 0);
+  const actualToDate = Number(data?.totals?.actualToDateHours || 0);
+  const variance = Number(data?.totals?.varianceToDateHours || 0);
+
+  const planStart = data?.planWindow?.startDate ? String(data.planWindow.startDate) : '';
+  const planEnd = data?.planWindow?.endDate ? String(data.planWindow.endDate) : '';
+  const planRange = (planStart || planEnd) ? `${planStart || '—'} → ${planEnd || '—'}` : '';
+
+  const barPct = pct == null ? 0 : Math.max(0, Math.min(100, pct));
+  const varianceLabel = variance >= 0 ? `+${fmtHours(variance)}h` : `${fmtHours(variance)}h`;
+  const varianceColor = variance > 0.01 ? 'var(--warning)' : (variance < -0.01 ? 'var(--success)' : 'var(--text-secondary)');
+
+  return `
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap;">
+      <div>
+        <div style="font-weight:800;">Avance vs plan</div>
+        <div style="color:var(--text-muted); font-size:0.9rem;">Molde: <strong>${escapeHtml(String(data?.moldName || fallbackMoldName || ''))}</strong></div>
+        ${planRange ? `<div style="color:var(--text-muted); font-size:0.85rem;">Plan: ${escapeHtml(planRange)}</div>` : ''}
+      </div>
+      <div style="color:var(--text-muted); font-size:0.9rem;">Hoy: ${escapeHtml(String(data?.today || ''))}</div>
+    </div>
+
+    <div class="mold-progress-bar" aria-label="Progreso">
+      <div style="width:${barPct}%;"></div>
+    </div>
+
+    <div class="mold-progress-grid">
+      <div class="mold-progress-kpi">
+        <div class="label">% completado (real/plan total)</div>
+        <div class="value">${pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
+      </div>
+      <div class="mold-progress-kpi">
+        <div class="label">Plan total</div>
+        <div class="value">${fmtHours(plannedTotal)}h</div>
+      </div>
+      <div class="mold-progress-kpi">
+        <div class="label">Plan a hoy</div>
+        <div class="value">${fmtHours(plannedToDate)}h</div>
+      </div>
+      <div class="mold-progress-kpi">
+        <div class="label">Real a hoy (vs plan a hoy)</div>
+        <div class="value" style="color:${varianceColor}">${fmtHours(actualToDate)}h (${escapeHtml(varianceLabel)})</div>
+      </div>
+    </div>
+  `;
+}
+
+async function renderInProgressMoldList() {
+  const container = document.getElementById('inProgressMoldList');
+  if (!container) return;
+
+  if (!authToken) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = '<div style="color:var(--text-muted)">Cargando moldes en curso...</div>';
+
+  try {
+    const res = await fetch(`${API_URL}/molds/in-progress`, {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      cache: 'no-store'
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      container.innerHTML = `<div style="color:var(--danger)">${escapeHtml(String(data?.error || 'No se pudo cargar moldes en curso'))}</div>`;
+      return;
+    }
+
+    const molds = Array.isArray(data?.molds) ? data.molds : [];
+    if (!molds.length) {
+      container.innerHTML = '<div style="color:var(--text-muted)">(No hay moldes en curso)</div>';
+      return;
+    }
+
+    container.innerHTML = molds.map(m => `<div class="mold-progress-panel">${buildMoldProgressContent(m, m?.moldName)}</div>`).join('');
+  } catch (_) {
+    container.innerHTML = '<div style="color:var(--danger)">Error de conexión cargando moldes en curso</div>';
+  }
+}
+
 function renderFixedPlanningGrid() {
   const container = document.getElementById('planningGridContainer');
   if (!container) return;
@@ -537,7 +798,7 @@ function renderFixedPlanningGrid() {
             <td><input type="number" class="qty-input" min="0" step="1" placeholder="0"></td>
             ${machines.map(m => `
               <td>
-                <input type="number" class="hours-input" data-machine-id="${escapeHtml(String(m.id))}" min="0" step="0.5" placeholder="0">
+                <input type="number" class="hours-input" data-machine-id="${escapeHtml(String(m.id))}" min="0" step="0.01" placeholder="0">
               </td>`).join('')}
             <td class="total-hours-cell">0.00</td>
           </tr>`).join('')}
@@ -570,10 +831,10 @@ function renderFixedPlanningGrid() {
 }
 function updateFixedRowTotal(row) {
   const qtyInput = row.querySelector('.qty-input');
-  const qty = qtyInput ? (parseFloat(qtyInput.value) || 0) : 0;
+  const qty = qtyInput ? (parseLocaleNumber(qtyInput.value) || 0) : 0;
   let sumBase = 0;
   row.querySelectorAll('.hours-input').forEach(inp => {
-    const v = parseFloat(inp.value);
+    const v = parseLocaleNumber(inp.value);
     sumBase += isNaN(v) ? 0 : v;
   });
   const total = qty * sumBase;
@@ -587,9 +848,9 @@ function updateFixedColumnTotals() {
   machines.forEach(m => {
     let colSum = 0;
     grid.querySelectorAll(`tbody .hours-input[data-machine-id="${String(m.id)}"]`).forEach(inp => {
-      const v = parseFloat(inp.value);
+      const v = parseLocaleNumber(inp.value);
       const row = inp.closest('tr');
-      const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+      const qty = parseLocaleNumber(row.querySelector('.qty-input').value) || 0;
       colSum += (isNaN(v) ? 0 : v) * qty;
     });
     const cell = document.getElementById(`total-machine-${String(m.id)}`);
@@ -760,11 +1021,11 @@ async function submitGridPlan(e) {
     const partName = row.getAttribute('data-part-name');
     if (!partName) return;
 
-    const qty = parseFloat(row.querySelector('.qty-input')?.value);
+    const qty = parseLocaleNumber(row.querySelector('.qty-input')?.value);
     if (isNaN(qty) || qty <= 0) return;
 
     row.querySelectorAll('.hours-input').forEach(inp => {
-      const base = parseFloat(inp.value);
+      const base = parseLocaleNumber(inp.value);
       if (isNaN(base) || base <= 0) return;
 
       const machineId = inp.getAttribute('data-machine-id');
@@ -775,7 +1036,7 @@ async function submitGridPlan(e) {
         machinesForPlan.find(m => String(m.id) === String(machineId))?.name
         || machineId;
 
-      const totalHours = Math.round((base * qty) / 0.25) * 0.25;
+  const totalHours = round2(base * qty);
 
       if (totalHours > 0) {
         tasks.push({ partName, machineName, totalHours });
@@ -857,15 +1118,179 @@ async function submitGridPlan(e) {
 // Tiempos de Moldes (mantiene autocompletar y filtros propios)
 let tiemposMetaCache = null;
 
+// Cache de planificación para Tiempos (por mes): key = "YYYY-MM"
+const tiemposPlanMonthCache = new Map();
+let tiemposPlanListenersBound = false;
+
+function getTiemposSelectedYMD() {
+  const diaSel = document.getElementById('tmDia');
+  const mesSel = document.getElementById('tmMes');
+  const anioSel = document.getElementById('tmAnio');
+  const day = diaSel ? parseInt(diaSel.value, 10) : NaN;
+  const mes = mesSel ? (mesSel.value || '').toLowerCase() : '';
+  const year = anioSel ? parseInt(anioSel.value, 10) : NaN;
+  const monthNo = monthNameToNumber(mes);
+  return { year, monthNo, day };
+}
+
+async function fetchTiemposPlannedMonth(year, monthNo) {
+  if (!year || !monthNo) return null;
+  const key = `${String(year).padStart(4, '0')}-${String(monthNo).padStart(2, '0')}`;
+  if (tiemposPlanMonthCache.has(key)) return tiemposPlanMonthCache.get(key);
+
+  const res = await fetch(`${API_URL}/calendar/month-view?year=${encodeURIComponent(year)}&month=${encodeURIComponent(monthNo)}`,
+    { headers: { 'Authorization': `Bearer ${authToken}` } }
+  );
+  if (!res.ok) return null;
+  const data = await res.json();
+  const events = data?.events || {};
+  tiemposPlanMonthCache.set(key, events);
+  return events;
+}
+
+function uniqueIdName(items) {
+  const m = new Map();
+  (items || []).forEach(it => {
+    const id = it?.id;
+    if (id == null) return;
+    if (!m.has(String(id))) m.set(String(id), { id: Number(id), name: String(it?.name || '') });
+  });
+  return Array.from(m.values()).sort((a, b) => String(a.name).localeCompare(String(b.name), 'es'));
+}
+
+function setDatalistValues(dlId, values) {
+  const dl = document.getElementById(dlId);
+  if (!dl) return;
+  dl.innerHTML = (values || []).map(v => `<option value="${escapeHtml(v)}">`).join('');
+}
+
+async function refreshTiemposPlannedOptions() {
+  const { year, monthNo, day } = getTiemposSelectedYMD();
+  const moldeSel = document.getElementById('tmMoldeSelect');
+  const parteSel = document.getElementById('tmParteSelect');
+  const maquinaSel = document.getElementById('tmMaquinaSelect');
+
+  if (!moldeSel || !parteSel || !maquinaSel) return;
+
+  // Guardar selección actual
+  const prevMoldId = moldeSel.selectedOptions.length ? String(moldeSel.selectedOptions[0].value) : '';
+  const prevPartId = parteSel.selectedOptions.length ? String(parteSel.selectedOptions[0].value) : '';
+  const prevMachineId = maquinaSel.selectedOptions.length ? String(maquinaSel.selectedOptions[0].value) : '';
+
+  // Limpiar si fecha inválida
+  if (!year || !monthNo || !day || day < 1 || day > 31) {
+    populateSelectWithFilterObjects('tmMoldeSelect', 'tmMoldeFilter', [], 'name');
+    populateSelectWithFilterObjects('tmParteSelect', 'tmParteFilter', [], 'name');
+    populateSelectWithFilterObjects('tmMaquinaSelect', 'tmMaquinaFilter', [], 'name');
+    setupFilterListenerObjects('tmMaquinaFilter', 'tmMaquinaSelect', 'name');
+    return;
+  }
+
+  let events = null;
+  try {
+    events = await fetchTiemposPlannedMonth(year, monthNo);
+  } catch (_) {
+    events = null;
+  }
+
+  const tasks = (events && events[String(day)] && Array.isArray(events[String(day)].tasks))
+    ? events[String(day)].tasks
+    : [];
+
+  // Moldes planificados del día
+  const molds = uniqueIdName(tasks.map(t => ({ id: t.moldId, name: t.mold })));
+  populateSelectWithFilterObjects('tmMoldeSelect', 'tmMoldeFilter', molds, 'name');
+  setupFilterListenerObjects('tmMoldeFilter', 'tmMoldeSelect', 'name');
+
+  // Reaplicar selección de molde si sigue vigente
+  if (prevMoldId && molds.some(m => String(m.id) === prevMoldId)) {
+    moldeSel.value = prevMoldId;
+  }
+
+  // Partes dependen del molde
+  const selectedMoldId = moldeSel.selectedOptions.length ? String(moldeSel.selectedOptions[0].value) : '';
+  const parts = uniqueIdName(tasks
+    .filter(t => selectedMoldId && String(t.moldId) === selectedMoldId)
+    .map(t => ({ id: t.partId, name: t.part })));
+  populateSelectWithFilterObjects('tmParteSelect', 'tmParteFilter', parts, 'name');
+  setupFilterListenerObjects('tmParteFilter', 'tmParteSelect', 'name');
+
+  if (prevPartId && parts.some(p => String(p.id) === prevPartId)) {
+    parteSel.value = prevPartId;
+  }
+
+  // Máquinas dependen de molde + parte
+  const selectedPartId = parteSel.selectedOptions.length ? String(parteSel.selectedOptions[0].value) : '';
+  const machines = uniqueIdName(tasks
+    .filter(t => selectedMoldId && selectedPartId && String(t.moldId) === selectedMoldId && String(t.partId) === selectedPartId)
+    .map(t => ({ id: t.machineId, name: t.machine })));
+  populateSelectWithFilterObjects('tmMaquinaSelect', 'tmMaquinaFilter', machines, 'name');
+  setupFilterListenerObjects('tmMaquinaFilter', 'tmMaquinaSelect', 'name');
+
+  if (prevMachineId && machines.some(m => String(m.id) === prevMachineId)) {
+    maquinaSel.value = prevMachineId;
+  }
+}
+
+function bindTiemposPlannedListeners() {
+  if (tiemposPlanListenersBound) return;
+  tiemposPlanListenersBound = true;
+
+  const diaSel = document.getElementById('tmDia');
+  const mesSel = document.getElementById('tmMes');
+  const anioSel = document.getElementById('tmAnio');
+  const moldeSel = document.getElementById('tmMoldeSelect');
+  const parteSel = document.getElementById('tmParteSelect');
+  const maquinaSel = document.getElementById('tmMaquinaSelect');
+
+  [diaSel, mesSel, anioSel].forEach(el => {
+    if (!el) return;
+    el.addEventListener('change', () => {
+      // Si cambia el mes/año, invalida cache sólo si quieres forzar; por ahora cache por key.
+      refreshTiemposPlannedOptions();
+    });
+  });
+
+  if (moldeSel) {
+    moldeSel.addEventListener('change', () => {
+      // Al cambiar molde, recalcula partes y máquinas.
+      if (parteSel) parteSel.value = '';
+      if (maquinaSel) maquinaSel.value = '';
+      refreshTiemposPlannedOptions();
+    });
+  }
+  if (parteSel) {
+    parteSel.addEventListener('change', () => {
+      if (maquinaSel) maquinaSel.value = '';
+      refreshTiemposPlannedOptions();
+    });
+  }
+}
+
 function populateDayMonthYear(daySelectId, monthSelectId, yearSelectId) {
   const daySel = document.getElementById(daySelectId);
   const monthSel = document.getElementById(monthSelectId);
   const yearSel = document.getElementById(yearSelectId);
 
-  const now = new Date();
-  const currentDay = now.getDate();
-  const currentMonthIdx = now.getMonth();
-  const currentYearLocal = now.getFullYear();
+  // Defaults basados en Colombia para evitar desfaces por TZ del PC
+  let currentYearLocal;
+  let currentMonthIdx;
+  let currentDay;
+  try {
+    const iso = typeof getColombiaTodayISO === 'function' ? getColombiaTodayISO() : '';
+    if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      const [yy, mm, dd] = iso.split('-').map(Number);
+      currentYearLocal = yy;
+      currentMonthIdx = mm - 1;
+      currentDay = dd;
+    }
+  } catch { }
+  if (!currentYearLocal || currentMonthIdx == null || !currentDay) {
+    const now = new Date();
+    currentDay = now.getDate();
+    currentMonthIdx = now.getMonth();
+    currentYearLocal = now.getFullYear();
+  }
 
   if (daySel && !daySel.options.length) {
     daySel.innerHTML = Array.from({ length: 31 }, (_, i) => {
@@ -891,6 +1316,20 @@ function populateDayMonthYear(daySelectId, monthSelectId, yearSelectId) {
   if (daySel && !daySel.value) daySel.value = String(currentDay);
   if (monthSel && !monthSel.value) monthSel.value = String(monthNames[currentMonthIdx] || '');
   if (yearSel && !yearSel.value) yearSel.value = String(currentYearLocal);
+}
+
+function setTiemposDateToColombiaToday() {
+  const iso = typeof getColombiaTodayISO === 'function' ? getColombiaTodayISO() : '';
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
+  const [yy, mm, dd] = iso.split('-').map(Number);
+  if (!yy || !mm || !dd) return;
+
+  const daySel = document.getElementById('tmDia');
+  const monthSel = document.getElementById('tmMes');
+  const yearSel = document.getElementById('tmAnio');
+  if (daySel) daySel.value = String(dd);
+  if (monthSel) monthSel.value = String(monthNames[mm - 1] || '');
+  if (yearSel) yearSel.value = String(yy);
 }
 
 function monthNameToNumber(mesLower){
@@ -951,20 +1390,20 @@ async function loadTiemposMeta(){
       const base = []; for (let y = 2016; y <= (new Date().getFullYear() + 2); y++) base.push(y);
       const merged = Array.from(new Set([...(meta.years || []), ...base])).sort((a, b) => b - a);
       tmAnioSel.innerHTML = merged.map(y => `<option value="${y}">${y}</option>`).join('');
-      const currentY = new Date().getFullYear();
-      if (!tmAnioSel.value) tmAnioSel.value = merged.includes(currentY) ? String(currentY) : String(merged[0] || currentY);
+      // Importante: el navegador selecciona el primer option automáticamente.
+      // Por eso seteamos explícitamente la fecha a "hoy Colombia".
     }
+
+    // Dejar por defecto hoy (Colombia), pero sigue siendo editable.
+    setTiemposDateToColombiaToday();
 
     fillDatalist('tmOperarios', (meta.operators || []).map(o => o.name));
     fillDatalist('tmProcesos', (meta.processes || []).map(p => p.name));
-    fillDatalist('tmMaquinas', (meta.machines || []).map(m => m.name));
     fillDatalist('tmOperaciones', (meta.operations || []).map(o => o.name));
 
-    populateSelectWithFilterObjects('tmMoldeSelect', 'tmMoldeFilter', meta.molds || [], 'name');
-    populateSelectWithFilterObjects('tmParteSelect', 'tmParteFilter', meta.parts || [], 'name');
-
-    setupFilterListenerObjects('tmMoldeFilter', 'tmMoldeSelect', 'name');
-    setupFilterListenerObjects('tmParteFilter', 'tmParteSelect', 'name');
+    // En Tiempos, Molde/Parte/Máquina dependen de lo planificado en Calendario.
+    bindTiemposPlannedListeners();
+    await refreshTiemposPlannedOptions();
   } catch (_) {}
 }
 
@@ -981,26 +1420,25 @@ async function saveTiempoMolde() {
 
   const moldeSel = document.getElementById('tmMoldeSelect');
   const parteSel = document.getElementById('tmParteSelect');
+  const maquinaSel = document.getElementById('tmMaquinaSelect');
   const moldId = moldeSel && moldeSel.selectedOptions.length ? parseInt(moldeSel.selectedOptions[0].value, 10) : NaN;
   const partId = parteSel && parteSel.selectedOptions.length ? parseInt(parteSel.selectedOptions[0].value, 10) : NaN;
-
-  const maquina = document.getElementById('tmMaquina') ? document.getElementById('tmMaquina').value : '';
+  const machineId = maquinaSel && maquinaSel.selectedOptions.length ? parseInt(maquinaSel.selectedOptions[0].value, 10) : NaN;
   const operacion = document.getElementById('tmOperacion') ? document.getElementById('tmOperacion').value : '';
+  const motivo = document.getElementById('tmMotivo') ? document.getElementById('tmMotivo').value : '';
   const horasEl = document.getElementById('tmHoras');
-  const horas = horasEl ? parseFloat(horasEl.value) : NaN;
+  const horas = horasEl ? parseLocaleNumber(horasEl.value) : NaN;
 
-  if (isNaN(dia) || !mes || isNaN(anio) || !operario || !proceso || isNaN(moldId) || isNaN(partId) || !maquina || !operacion || isNaN(horas)) {
+  if (isNaN(dia) || !mes || isNaN(anio) || !operario || !proceso || isNaN(moldId) || isNaN(partId) || isNaN(machineId) || !operacion || isNaN(horas)) {
     return displayResponse('tmResponse', { error: 'Completa todos los campos' }, false);
   }
 
   const meta = tiemposMetaCache || {};
   const operator = findByName(meta.operators, operario);
-  const machine = findByName(meta.machines, maquina);
   const operatorId = operator ? Number(operator.id) : NaN;
-  const machineId = machine ? Number(machine.id) : NaN;
 
-  if (isNaN(operatorId) || isNaN(machineId)) {
-    return displayResponse('tmResponse', { error: 'Operario o máquina no existen en catálogo (usa el listado)' }, false);
+  if (isNaN(operatorId)) {
+    return displayResponse('tmResponse', { error: 'Operario no existe en catálogo (usa el listado)' }, false);
   }
 
   const monthNo = monthNameToNumber(mes);
@@ -1013,7 +1451,8 @@ async function saveTiempoMolde() {
     machineId,
     operatorId,
     work_date,
-    hours_worked: Math.round(horas / 0.25) * 0.25,
+    hours_worked: round2(horas),
+    reason: String(motivo || '').trim() || null,
     note: `Proceso: ${proceso} | Operación: ${operacion}`
   };
 
@@ -1021,9 +1460,334 @@ async function saveTiempoMolde() {
     const res = await fetch(`${API_URL}/work_logs`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }, body: JSON.stringify(payload) });
     const data = await res.json();
     displayResponse('tmResponse', data, res.ok);
-    if (res.ok) loadTiemposMeta();
+    if (res.ok) {
+      const motivoEl = document.getElementById('tmMotivo');
+      if (motivoEl) motivoEl.value = '';
+      loadTiemposMeta();
+    }
   } catch (e) {
     displayResponse('tmResponse', { error: 'Error de conexión' }, false);
+  }
+}
+
+// ================================
+// Registros (historial editable de work_logs)
+// ================================
+
+async function loadWorkLogsHistory(reset = true) {
+  const tbody = document.querySelector('#workLogsTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">Cargando...</td></tr>';
+
+  try {
+    const res = await fetch(`${API_URL}/work_logs?limit=200&offset=0`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    const data = await res.json();
+    if (!res.ok) {
+      tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">Error cargando registros</td></tr>';
+      return displayResponse('workLogsResponse', data, false);
+    }
+    renderWorkLogsTable(Array.isArray(data) ? data : []);
+    displayResponse('workLogsResponse', { total: Array.isArray(data) ? data.length : 0 }, true);
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">Error de conexión</td></tr>';
+    displayResponse('workLogsResponse', { error: 'Error de conexión', details: String(e) }, false);
+  }
+}
+
+function fmtDateTime(v) {
+  if (!v) return '';
+  try { return new Date(v).toLocaleString(); } catch { return String(v); }
+}
+function fmtDateOnly(v) {
+  if (!v) return '';
+  try {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return String(v);
+    return d.toISOString().slice(0, 10);
+  } catch { return String(v); }
+}
+
+function getColombiaTodayISO() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+    const y = parts.find(p => p.type === 'year')?.value;
+    const m = parts.find(p => p.type === 'month')?.value;
+    const d = parts.find(p => p.type === 'day')?.value;
+    if (!y || !m || !d) return '';
+    return `${y}-${m}-${d}`;
+  } catch {
+    return '';
+  }
+}
+
+function daysDiffFromColombiaToday(dateStr) {
+  try {
+    const baseStr = String(dateStr || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(baseStr)) return 9999;
+    const todayStr = getColombiaTodayISO();
+    if (!todayStr) return 9999;
+
+    const [ty, tm, td] = todayStr.split('-').map(Number);
+    const [by, bm, bd] = baseStr.split('-').map(Number);
+    const todayUtc = Date.UTC(ty, tm - 1, td);
+    const baseUtc = Date.UTC(by, bm - 1, bd);
+    return Math.floor((todayUtc - baseUtc) / (1000 * 60 * 60 * 24));
+  } catch {
+    return 9999;
+  }
+}
+
+function setWorkLogRowEditing(row, enabled, role) {
+  if (!row) return;
+  const isOperator = String(role || '').toLowerCase() === 'operator';
+
+  row.querySelectorAll('input, select').forEach(el => {
+    // Campos siempre no editables
+    if (el.classList.contains('wl-operario') && isOperator) {
+      el.disabled = true;
+      return;
+    }
+    // Evitar tocar inputs fuera de la fila
+    el.disabled = !enabled;
+  });
+
+  const editBtn = row.querySelector('button.wl-edit');
+  const saveBtn = row.querySelector('button.wl-save');
+  if (editBtn) editBtn.style.display = enabled ? 'none' : '';
+  if (saveBtn) saveBtn.style.display = enabled ? '' : 'none';
+}
+
+function startEditWorkLogRow(id) {
+  const row = document.querySelector(`#workLogsTable tbody tr[data-id="${CSS.escape(String(id))}"]`);
+  if (!row) return;
+  const canEdit = row.getAttribute('data-can-edit') === '1';
+  if (!canEdit) return;
+  setWorkLogRowEditing(row, true, currentUser?.role);
+}
+
+function renderWorkLogsTable(rows) {
+  const tbody = document.querySelector('#workLogsTable tbody');
+  if (!tbody) return;
+
+  const role = String(currentUser?.role || '').toLowerCase();
+  const isOperator = role === 'operator';
+  const canEditAll = role === 'admin' || role === 'planner';
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">(sin registros)</td></tr>';
+    return;
+  }
+
+  const parseProcesoOperacion = (note) => {
+    const out = { proceso: '', operacion: '' };
+    const s = String(note || '');
+    // Formato esperado: "Proceso: X | Operación: Y"
+    const mProc = s.match(/Proceso:\s*([^|]+?)(\s*\||$)/i);
+    const mOper = s.match(/Operaci[oó]n:\s*(.+)$/i);
+    if (mProc && mProc[1]) out.proceso = String(mProc[1]).trim();
+    if (mOper && mOper[1]) out.operacion = String(mOper[1]).trim();
+    return out;
+  };
+
+  tbody.innerHTML = rows.map(r => {
+    const workDateIso = r.work_date || (r.recorded_at ? fmtDateOnly(r.recorded_at) : '');
+    const recordedAt = fmtDateTime(r.recorded_at);
+    let day = '', mes = '', anio = '';
+    try {
+      const d = workDateIso ? new Date(workDateIso) : null;
+      if (d && !Number.isNaN(d.getTime())) {
+        day = String(d.getDate());
+        const mIdx = d.getMonth();
+        mes = capitalize(monthNames[mIdx] || '');
+        anio = String(d.getFullYear());
+      }
+    } catch (_) {}
+
+    const po = parseProcesoOperacion(r.note);
+    const planned = (r.planned_hours == null) ? '' : Number(r.planned_hours).toFixed(2);
+    const deviation = (r.deviation_pct == null) ? '' : `${Number(r.deviation_pct).toFixed(2)}%`;
+    const isAlert = Number(r.is_alert) === 1 || String(r.is_alert).toLowerCase() === 'true';
+
+    const baseDateForEdit = r.work_date || (r.recorded_at ? fmtDateOnly(r.recorded_at) : null);
+    const diffDays = baseDateForEdit ? daysDiffFromColombiaToday(baseDateForEdit) : 9999;
+    const tooOld = diffDays > 2;
+    const canEdit = canEditAll || (isOperator && !tooOld);
+
+    // Campos bloqueados por defecto; se habilitan solo al presionar "Editar".
+    const disabled = 'disabled';
+
+    const rowClass = isAlert ? 'class="wl-alert"' : '';
+
+    const monthOptions = monthNames.map(m => {
+      const label = capitalize(m);
+      const sel = label === mes ? 'selected' : '';
+      return `<option value="${escapeHtml(label)}" ${sel}>${escapeHtml(label)}</option>`;
+    }).join('');
+
+    return `
+      <tr data-id="${escapeHtml(String(r.id))}" data-can-edit="${canEdit ? '1' : '0'}" ${rowClass}>
+        <td><input type="number" class="wl-dia" min="1" max="31" value="${escapeHtml(day)}" ${disabled}></td>
+        <td>
+          <select class="wl-mes" ${disabled}>
+            ${monthOptions}
+          </select>
+        </td>
+        <td><input type="number" class="wl-anio" min="2016" max="2100" value="${escapeHtml(anio)}" ${disabled}></td>
+        <td><input type="text" class="wl-operario" list="wlOperarios" value="${escapeHtml(r.operator_name || '')}" ${disabled}></td>
+        <td><input type="text" class="wl-proceso" list="wlProcesos" value="${escapeHtml(po.proceso || '')}" ${disabled}></td>
+        <td><input type="text" class="wl-molde" list="wlMoldes" value="${escapeHtml(r.mold_name || '')}" ${disabled}></td>
+        <td><input type="text" class="wl-parte" list="wlPartes" value="${escapeHtml(r.part_name || '')}" ${disabled}></td>
+        <td><input type="text" class="wl-maquina" list="wlMaquinas" value="${escapeHtml(r.machine_name || '')}" ${disabled}></td>
+        <td><input type="text" class="wl-operacion" list="wlOperaciones" value="${escapeHtml(po.operacion || '')}" ${disabled}></td>
+        <td><input type="number" class="wl-hours" step="0.25" min="0" max="24" value="${r.hours_worked != null ? Number(r.hours_worked).toFixed(2) : ''}" ${disabled}></td>
+        <td><input type="text" class="wl-reason" value="${escapeHtml(r.reason || '')}" ${disabled}></td>
+        <td>${escapeHtml(planned)}</td>
+        <td class="wl-deviation">${escapeHtml(deviation)}</td>
+        <td>${escapeHtml(recordedAt)}</td>
+        <td>${escapeHtml(r.note || '')}</td>
+        <td>
+          ${canEdit ? `
+            <button class="btn btn-primary btn-sm wl-edit" onclick="startEditWorkLogRow(${Number(r.id)})">Editar</button>
+            <button class="btn btn-primary btn-sm wl-save" style="display:none" onclick="saveWorkLogRow(${Number(r.id)})">Guardar</button>
+          ` : `<span style="color:#6c757d">Bloqueado</span>`}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Asegurar que el campo operario quede bloqueado para rol operario incluso al entrar a editar.
+  if (isOperator && currentUser?.role) {
+    tbody.querySelectorAll('tr[data-can-edit="1"]').forEach(tr => {
+      const op = tr.querySelector('input.wl-operario');
+      if (op) op.disabled = true;
+    });
+  }
+}
+
+async function saveWorkLogRow(id) {
+  const row = document.querySelector(`#workLogsTable tbody tr[data-id="${CSS.escape(String(id))}"]`);
+  if (!row) return;
+  // Asegurar meta (catálogos) para resolver IDs por nombre
+  if (!tiemposMetaCache) {
+    try { await loadTiemposMeta(); } catch (_) {}
+  }
+  const meta = tiemposMetaCache || {};
+
+  const dia = Number(row.querySelector('.wl-dia')?.value);
+  const mesName = String(row.querySelector('.wl-mes')?.value || '').toLowerCase();
+  const anio = Number(row.querySelector('.wl-anio')?.value);
+
+  const operarioName = String(row.querySelector('.wl-operario')?.value || '').trim();
+  const proceso = String(row.querySelector('.wl-proceso')?.value || '').trim();
+  const moldeName = String(row.querySelector('.wl-molde')?.value || '').trim();
+  const parteName = String(row.querySelector('.wl-parte')?.value || '').trim();
+  const maquinaName = String(row.querySelector('.wl-maquina')?.value || '').trim();
+  const operacion = String(row.querySelector('.wl-operacion')?.value || '').trim();
+
+  const hours = row.querySelector('.wl-hours')?.value;
+  const reason = row.querySelector('.wl-reason')?.value;
+
+  if (!dia || !mesName || !anio || !operarioName || !proceso || !moldeName || !parteName || !maquinaName || !operacion) {
+    return displayResponse('workLogsResponse', { error: 'Completa todos los campos principales antes de guardar' }, false);
+  }
+
+  const monthNo = monthNameToNumber(mesName);
+  if (!monthNo) return displayResponse('workLogsResponse', { error: 'Mes inválido' }, false);
+  const work_date = toISODate(anio, monthNo, dia);
+
+  const operator = findByName(meta.operators, operarioName);
+  const mold = findByName(meta.molds, moldeName);
+  const part = findByName(meta.parts, parteName);
+  const machine = findByName(meta.machines, maquinaName);
+
+  const operatorId = operator ? Number(operator.id) : NaN;
+  const moldId = mold ? Number(mold.id) : NaN;
+  const partId = part ? Number(part.id) : NaN;
+  const machineId = machine ? Number(machine.id) : NaN;
+
+  if ([operatorId, moldId, partId, machineId].some(n => Number.isNaN(n))) {
+    return displayResponse('workLogsResponse', { error: 'Operario/molde/parte/máquina inválidos (usa el listado)' }, false);
+  }
+
+  // Operario no debe cambiar a otro operario
+  const role = String(currentUser?.role || '').toLowerCase();
+  if (role === 'operator' && currentUser?.operatorId && Number(currentUser.operatorId) !== operatorId) {
+    return displayResponse('workLogsResponse', { error: 'No puedes cambiar el operario del registro' }, false);
+  }
+
+  const payload = {
+    work_date,
+    operatorId,
+    moldId,
+    partId,
+    machineId,
+    hours_worked: Number(hours),
+    reason: String(reason || '').trim() || null,
+    note: `Proceso: ${proceso} | Operación: ${operacion}`,
+  };
+
+  try {
+    const res = await fetch(`${API_URL}/work_logs/${encodeURIComponent(String(id))}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    displayResponse('workLogsResponse', data, res.ok);
+    if (res.ok) {
+      try { loadWorkLogsHistory(true); } catch (_) {}
+    }
+  } catch (e) {
+    displayResponse('workLogsResponse', { error: 'Error de conexión', details: String(e) }, false);
+  }
+}
+
+// ================================
+// Sesiones (placeholder - backend se agrega aparte)
+// ================================
+
+async function loadSessionsHistory() {
+  const tbody = document.querySelector('#sessionsTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="7" style="color:#6c757d">Cargando...</td></tr>';
+
+  try {
+    const res = await fetch(`${API_URL}/auth/sessions`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    const data = await res.json();
+    if (!res.ok) {
+      tbody.innerHTML = '<tr><td colspan="7" style="color:#6c757d">Error cargando sesiones</td></tr>';
+      return displayResponse('sessionsResponse', data, false);
+    }
+    const rows = Array.isArray(data) ? data : [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="color:#6c757d">(sin sesiones)</td></tr>';
+      return displayResponse('sessionsResponse', { total: 0 }, true);
+    }
+    tbody.innerHTML = rows.map(s => {
+      const start = fmtDateTime(s.login_at);
+      const end = s.logout_at ? fmtDateTime(s.logout_at) : '';
+      const dur = s.duration_minutes != null ? `${Number(s.duration_minutes).toFixed(0)} min` : '';
+      return `
+        <tr>
+          <td>${escapeHtml(s.username || '')}</td>
+          <td>${escapeHtml(String(s.role || '').toUpperCase())}</td>
+          <td>${escapeHtml(s.operator_name || '')}</td>
+          <td>${escapeHtml(start)}</td>
+          <td>${escapeHtml(end)}</td>
+          <td>${escapeHtml(dur)}</td>
+          <td>${escapeHtml(s.ip || '')}</td>
+        </tr>
+      `;
+    }).join('');
+    displayResponse('sessionsResponse', { total: rows.length }, true);
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:#6c757d">Error de conexión</td></tr>';
+    displayResponse('sessionsResponse', { error: 'Error de conexión', details: String(e) }, false);
   }
 }
 
@@ -1279,12 +2043,18 @@ async function loadCalendar() {
   if (!authToken) return;
   const display = document.getElementById('calendar-month-year');
   const grid = document.getElementById('calendar-grid');
+  const progressList = document.getElementById('inProgressMoldList');
   if (display) display.textContent = `${capitalize(monthNames[currentMonth])} ${currentYear}`;
   if (grid) grid.innerHTML = 'Cargando...';
+  if (progressList) progressList.innerHTML = '';
   try {
     const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth + 1}`, { headers: { 'Authorization': `Bearer ${authToken}` }, cache: 'no-store' });
     const data = await res.json();
-    if (res.ok) renderCalendar(currentYear, currentMonth, data.events || {}, data.holidays || {});
+    if (res.ok) {
+      const events = data.events || {};
+      renderCalendar(currentYear, currentMonth, events, data.holidays || {});
+      try { renderInProgressMoldList(); } catch (_) {}
+    }
     else if (grid) grid.innerHTML = '<p>Error cargar calendario</p>';
   } catch (e) {
     if (grid) grid.innerHTML = 'Error cargar calendario';
@@ -1692,18 +2462,120 @@ async function createPart(){
 // Crear/Actualizar operario con contraseña
 async function createOperator(){
   const name = document.getElementById('newOperatorName')?.value.trim();
-  const password = document.getElementById('newOperatorPassword')?.value;
-  if (!name || !password) return displayResponse('configResponse', { error:'Nombre y contraseña requeridos' }, false);
+  if (!name) return displayResponse('configResponse', { error:'Nombre requerido' }, false);
+
+  // Crear operario (sin contraseña aquí). La contraseña se gestiona desde la lista.
   try{
     const res = await fetch(`${API_URL}/config/operators`, {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
-      body: JSON.stringify({ name, password })
+      body: JSON.stringify({ name })
     });
     const data = await res.json();
     displayResponse('configResponse', data, res.ok);
-    if (res.ok) { document.getElementById('newOperatorId').value = data.operatorId; document.getElementById('newOperatorName').value=''; document.getElementById('newOperatorPassword').value=''; loadDatosMeta(); }
+    if (res.ok) {
+      const idEl = document.getElementById('newOperatorId');
+      if (idEl) idEl.value = data.operatorId;
+      document.getElementById('newOperatorName').value='';
+      try { loadOperatorsList(); } catch (_) {}
+      try { loadDatosMeta(); } catch (_) {}
+      try { loadOperatorsForIndicators(); } catch (_) {}
+    }
   } catch(e){ displayResponse('configResponse', { error:'Error conexión' }, false); }
+}
+
+// ================================
+// Configuración: Operarios (listar/editar + selección Indicadores)
+// ================================
+let operatorsCache = [];
+
+function normalizeIndicatorsSelectionAgainstOperators(ops){
+  const list = Array.isArray(ops) ? ops : [];
+  const activeIds = new Set(list.filter(o => o && o.is_active).map(o => String(o.id)));
+  const selected = loadIndicatorsSelectedOperatorIds();
+  const next = new Set(Array.from(selected).filter(id => activeIds.has(String(id))));
+  const changed = next.size !== selected.size;
+  if (changed) saveIndicatorsSelectedOperatorIds(next);
+  return next;
+}
+
+async function loadOperatorsList(){
+  const tbody = document.querySelector('#operatorsTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" style="color:#6c757d">Cargando...</td></tr>';
+
+  try{
+    const res = await fetch(`${API_URL}/config/operators`, { headers:{'Authorization':`Bearer ${authToken}`} });
+    const data = await res.json();
+    if (!res.ok) {
+      tbody.innerHTML = '<tr><td colspan="6" style="color:#6c757d">Error cargando operarios</td></tr>';
+      return;
+    }
+    operatorsCache = Array.isArray(data) ? data : [];
+    renderOperatorsTable();
+  } catch(e){
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#6c757d">Error de conexión</td></tr>';
+  }
+}
+
+function renderOperatorsTable(){
+  const tbody = document.querySelector('#operatorsTable tbody');
+  if (!tbody) return;
+  const selected = normalizeIndicatorsSelectionAgainstOperators(operatorsCache);
+
+  if (!operatorsCache.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:#6c757d">(sin operarios)</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = operatorsCache.map(o => {
+    const id = String(o.id);
+    const isActive = !!o.is_active;
+    const isSelected = selected.has(id);
+    return `
+      <tr data-id="${escapeHtml(id)}">
+        <td>${escapeHtml(id)}</td>
+        <td><input type="text" class="op-name" value="${escapeHtml(o.name || '')}"></td>
+        <td style="text-align:center;"><input type="checkbox" class="op-active" ${isActive ? 'checked' : ''}></td>
+        <td style="text-align:center;"><input type="checkbox" class="op-indicators" data-operator-id="${escapeHtml(id)}" ${isSelected ? 'checked' : ''} ${isActive ? '' : 'disabled'}></td>
+        <td><input type="password" class="op-password" placeholder="Nueva contraseña"></td>
+        <td style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-secondary btn-sm" onclick="saveOperatorRow(${Number(id)})">Guardar</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function saveOperatorRow(id){
+  const row = document.querySelector(`#operatorsTable tbody tr[data-id="${CSS.escape(String(id))}"]`);
+  if (!row) return;
+  const name = row.querySelector('.op-name')?.value.trim();
+  const is_active = row.querySelector('.op-active')?.checked ? 1 : 0;
+  const password = row.querySelector('.op-password')?.value ?? '';
+  if (!name) return displayResponse('configResponse', { error:'Nombre requerido' }, false);
+
+  const body = { name, is_active };
+  if (String(password).trim() !== '') body.password = String(password);
+
+  try{
+    const res = await fetch(`${API_URL}/config/operators/${encodeURIComponent(String(id))}`, {
+      method:'PUT',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${authToken}`},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    displayResponse('configResponse', data, res.ok);
+    if (res.ok) {
+      const passEl = row.querySelector('.op-password');
+      if (passEl) passEl.value = '';
+      try { loadOperatorsList(); } catch (_) {}
+      try { loadDatosMeta(); } catch (_) {}
+      try { loadOperatorsForIndicators(); } catch (_) {}
+    }
+  } catch(e){
+    displayResponse('configResponse', { error:'Error guardando operario', details:String(e) }, false);
+  }
 }
 
 // Festivo
@@ -1782,12 +2654,17 @@ function emptyMonths(){
 
 function getSelectedOperatorIdSet(){
   const container = document.getElementById('indOperatorFilter');
-  if (!container) return new Set();
-  const checked = Array.from(container.querySelectorAll('input[type="checkbox"][data-operator-id]:checked'));
-  return new Set(checked.map(cb => String(cb.getAttribute('data-operator-id'))));
+  if (container) {
+    const checked = Array.from(container.querySelectorAll('input[type="checkbox"][data-operator-id]:checked'));
+    return new Set(checked.map(cb => String(cb.getAttribute('data-operator-id'))));
+  }
+  // Checklist se movió a Configuración: la fuente es localStorage
+  return loadIndicatorsSelectedOperatorIds();
 }
 
 function persistIndicatorsSelectionFromUI(){
+  const container = document.getElementById('indOperatorFilter');
+  if (!container) return;
   saveIndicatorsSelectedOperatorIds(getSelectedOperatorIdSet());
 }
 
@@ -2149,6 +3026,7 @@ function clearPlannerGrid() {
 // Listeners
 function setupEventListeners() {
   const loginBtn = document.getElementById('loginBtn'); if (loginBtn) loginBtn.addEventListener('click', login);
+  const bootstrapBtn = document.getElementById('bootstrapBtn'); if (bootstrapBtn) bootstrapBtn.addEventListener('click', runBootstrapInit);
   const usernameSel = document.getElementById('username'); if (usernameSel) usernameSel.addEventListener('change', updateOperatorSelection);
   const logoutBtn = document.getElementById('logoutBtn'); if (logoutBtn) logoutBtn.addEventListener('click', logout);
 
@@ -2250,6 +3128,26 @@ function setupEventListeners() {
     });
   }
 
+  // Configuración: selección de operarios para Indicadores
+  const operatorsTable = document.getElementById('operatorsTable');
+  if (operatorsTable) {
+    operatorsTable.addEventListener('change', () => {
+      const selected = new Set();
+      operatorsTable.querySelectorAll('input.op-indicators[data-operator-id]:checked').forEach(cb => {
+        const id = cb.getAttribute('data-operator-id');
+        if (id) selected.add(String(id));
+      });
+      saveIndicatorsSelectedOperatorIds(selected);
+
+      // Refrescar UI dependiente (Indicadores) si está abierta
+      try { updateWorkingDaysOperatorSelect(); } catch (_) {}
+      if (indicatorsCache) {
+        try { renderIndicators(indicatorsCache); } catch (_) {}
+      }
+      scheduleIndicatorsAutoLoad({ silent: true });
+    });
+  }
+
   // Calendario
   const prevMonthBtn = document.getElementById('prev-month-btn'); if (prevMonthBtn) prevMonthBtn.addEventListener('click', () => changeMonth(-1));
   const nextMonthBtn = document.getElementById('next-month-btn'); if (nextMonthBtn) nextMonthBtn.addEventListener('click', () => changeMonth(1));
@@ -2278,4 +3176,35 @@ function setupEventListeners() {
     // Autocarga (debounce) cuando aún no hay datos o cuando se quiere refrescar sin botón.
     scheduleIndicatorsAutoLoad({ silent: true });
   });
+}
+
+function ensureWorkLogsMeta() {
+  // Usa el mismo meta de Tiempos (catálogos)
+  const fill = (dlId, values) => {
+    const dl = document.getElementById(dlId);
+    if (!dl) return;
+    dl.innerHTML = (values || []).map(v => `<option value="${escapeHtml(v)}">`).join('');
+  };
+
+  const meta = tiemposMetaCache || {};
+  if (!tiemposMetaCache) {
+    // disparamos carga async pero no bloqueamos UI
+    loadTiemposMeta().then(() => {
+      const m = tiemposMetaCache || {};
+      fill('wlOperarios', (m.operators || []).map(o => o.name));
+      fill('wlProcesos', (m.processes || []).map(p => p.name));
+      fill('wlMoldes', (m.molds || []).map(x => x.name));
+      fill('wlPartes', (m.parts || []).map(x => x.name));
+      fill('wlMaquinas', (m.machines || []).map(x => x.name));
+      fill('wlOperaciones', (m.operations || []).map(o => o.name));
+    }).catch(() => null);
+    return;
+  }
+
+  fill('wlOperarios', (meta.operators || []).map(o => o.name));
+  fill('wlProcesos', (meta.processes || []).map(p => p.name));
+  fill('wlMoldes', (meta.molds || []).map(x => x.name));
+  fill('wlPartes', (meta.parts || []).map(x => x.name));
+  fill('wlMaquinas', (meta.machines || []).map(x => x.name));
+  fill('wlOperaciones', (meta.operations || []).map(o => o.name));
 }

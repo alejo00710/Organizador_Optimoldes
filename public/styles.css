@@ -220,6 +220,62 @@
       animation: statusPulse 2s ease-in-out infinite;
     }
 
+    /* ========== Mold Progress Panel ========== */
+    .mold-progress-panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+    .mold-progress-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .mold-progress-kpi {
+      background: var(--card-bg-light);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .mold-progress-kpi .label {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    .mold-progress-kpi .value {
+      font-weight: 700;
+      font-size: 1.05rem;
+      margin-top: 2px;
+    }
+    .mold-progress-bar {
+      height: 10px;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      margin-top: 10px;
+    }
+    .mold-progress-bar > div {
+      height: 100%;
+      background: var(--success);
+      width: 0%;
+    }
+
+    .calendar-mold-progress-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(320px, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 960px) {
+      .calendar-mold-progress-list { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 960px) {
+      .mold-progress-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+    }
+
     @keyframes statusPulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
@@ -572,6 +628,16 @@
 
     tfoot td {
       color: var(--primary-blue);
+    }
+
+    /* ========== WORK LOGS ALERTS (REGISTROS) ========== */
+    #workLogsTable tr.wl-alert {
+      box-shadow: inset 4px 0 0 0 var(--danger);
+    }
+
+    #workLogsTable tr.wl-alert td.wl-deviation {
+      color: var(--danger);
+      font-weight: 700;
     }
 
     /* ========== PLANNING GRID ========== */

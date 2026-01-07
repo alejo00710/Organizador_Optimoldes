@@ -1,5 +1,6 @@
 const { query } = require('../config/database');
 const bcrypt = require('bcryptjs');
+const { ROLES } = require('../utils/constants');
 
 // LISTAR máquinas (para edición)
 exports.listMachines = async (req, res, next) => {
@@ -95,15 +96,114 @@ exports.updatePart = async (req, res, next) => {
 exports.createOperator = async (req, res, next) => {
   try {
     const { name, password } = req.body;
-    if (!name || String(name).trim() === '' || !password) return res.status(400).json({ error:'Nombre y contraseña requeridos' });
+    if (!name || String(name).trim() === '') return res.status(400).json({ error:'Nombre requerido' });
+
+    const trimmedName = String(name).trim();
+
+    // Si no hay contraseña, creamos solo el operario (sin user todavía).
+    // La contraseña se puede definir luego en la lista (PUT /config/operators/:id).
+    if (!password) {
+      const opRes = await query(
+        'INSERT INTO operators (name, user_id, password_hash, is_active) VALUES (?, NULL, NULL, TRUE)',
+        [trimmedName]
+      );
+      return res.status(201).json({ operatorId: opRes.insertId, userId: null, username: null, note: 'Operario creado sin contraseña' });
+    }
 
     const username = `operario_${Date.now()}`;
-    const password_hash = await bcrypt.hash(password, 10);
+    const password_hash = await bcrypt.hash(String(password), 10);
 
     const userRes = await query('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)', [username, password_hash, 'operator']);
     const user_id = userRes.insertId;
 
-    const opRes = await query('INSERT INTO operators (name, user_id, is_active) VALUES (?, ?, TRUE)', [name.trim(), user_id]);
+    const opRes = await query(
+      'INSERT INTO operators (name, user_id, password_hash, is_active) VALUES (?, ?, ?, TRUE)',
+      [trimmedName, user_id, password_hash]
+    );
     res.status(201).json({ operatorId: opRes.insertId, userId: user_id, username });
+  } catch (e) { next(e); }
+};
+
+// LISTAR operarios (para edición)
+exports.listOperators = async (req, res, next) => {
+  try {
+    const rows = await query(`
+      SELECT o.id, o.name, o.is_active, o.created_at, o.user_id, u.username,
+             CASE
+               WHEN COALESCE(o.password_hash, u.password_hash) IS NULL OR COALESCE(o.password_hash, u.password_hash) = '' THEN 0
+               ELSE 1
+             END AS has_password
+      FROM operators o
+      LEFT JOIN users u ON u.id = o.user_id
+      ORDER BY o.name ASC
+    `);
+    res.json(rows);
+  } catch (e) { next(e); }
+};
+
+// ACTUALIZAR operario: name, is_active, password (password solo admin/jefe)
+exports.updateOperator = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { name, is_active, password } = req.body || {};
+
+    const currentRows = await query('SELECT id, user_id FROM operators WHERE id = ?', [id]);
+    if (!currentRows.length) return res.status(404).json({ error: 'Operario no encontrado' });
+    const current = currentRows[0];
+
+    const updates = [];
+    const vals = [];
+
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed) return res.status(400).json({ error: 'Nombre requerido' });
+      updates.push('name = ?');
+      vals.push(trimmed);
+    }
+
+    if (is_active !== undefined) {
+      updates.push('is_active = ?');
+      vals.push(is_active ? 1 : 0);
+    }
+
+    // Password reset/update (admin/planner)
+    let createdUsername = null;
+    if (password !== undefined) {
+      if (!req.user || ![ROLES.ADMIN, ROLES.PLANNER].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Solo admin/jefe puede establecer/restablecer contraseña' });
+      }
+      if (!password) return res.status(400).json({ error: 'Contraseña requerida' });
+
+      const password_hash = await bcrypt.hash(String(password), 10);
+
+      if (current.user_id) {
+        await query('UPDATE users SET password_hash = ? WHERE id = ?', [password_hash, current.user_id]);
+        await query('UPDATE operators SET password_hash = ? WHERE id = ?', [password_hash, id]);
+      } else {
+        const username = `operario_${id}_${Date.now()}`;
+        const userRes = await query(
+          'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)',
+          [username, password_hash, ROLES.OPERATOR]
+        );
+        const user_id = userRes.insertId;
+        await query('UPDATE operators SET user_id = ?, password_hash = ? WHERE id = ?', [user_id, password_hash, id]);
+        createdUsername = username;
+      }
+    }
+
+    if (updates.length) {
+      vals.push(id);
+      await query(`UPDATE operators SET ${updates.join(', ')} WHERE id = ?`, vals);
+    }
+
+    if (!updates.length && password === undefined) {
+      return res.status(400).json({ error: 'Nada para actualizar' });
+    }
+
+    res.json({
+      message: 'Operario actualizado',
+      id: Number(id),
+      ...(createdUsername ? { username: createdUsername, note: 'Se creó usuario para este operario' } : {})
+    });
   } catch (e) { next(e); }
 };

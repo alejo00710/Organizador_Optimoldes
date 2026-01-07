@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
+    "reset:password": "node scripts/reset-user-password.js",
     "format": "prettier --write \"src/**/*.js\"",
     "check-format": "prettier --check \"src/**/*.js\"",
     "test": "jest --coverage",

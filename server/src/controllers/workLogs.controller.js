@@ -1,13 +1,56 @@
 const { query } = require('../config/database');
 const { ROLES, OPERATOR_EDIT_DAYS_LIMIT } = require('../utils/constants');
 
+function toISODateOnly(value) {
+    if (!value) return null;
+    if (typeof value === 'string') {
+        const s = value.slice(0, 10);
+        return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    }
+    try {
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 10);
+    } catch {
+        return null;
+    }
+}
+
+function getColombiaTodayISO() {
+    try {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Bogota',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).formatToParts(new Date());
+        const y = parts.find(p => p.type === 'year')?.value;
+        const m = parts.find(p => p.type === 'month')?.value;
+        const d = parts.find(p => p.type === 'day')?.value;
+        if (!y || !m || !d) return null;
+        return `${y}-${m}-${d}`;
+    } catch {
+        return null;
+    }
+}
+
+function diffDaysISO(aISO, bISO) {
+    // aISO - bISO (ambas YYYY-MM-DD) en días
+    if (!aISO || !bISO) return 9999;
+    const [ay, am, ad] = aISO.split('-').map(Number);
+    const [by, bm, bd] = bISO.split('-').map(Number);
+    const a = Date.UTC(ay, am - 1, ad);
+    const b = Date.UTC(by, bm - 1, bd);
+    return Math.floor((a - b) / (1000 * 60 * 60 * 24));
+}
+
 /**
  * POST /work_logs
  * Crea un registro de trabajo real
  */
 const createWorkLog = async (req, res, next) => {
     try {
-        const { moldId, partId, machineId, operatorId, hours_worked, note, work_date } = req.body;
+        const { moldId, partId, machineId, operatorId, hours_worked, note, reason, work_date } = req.body;
 
         // Validaciones
         if (!moldId || !partId || !machineId || !operatorId || !hours_worked) {
@@ -35,10 +78,10 @@ const createWorkLog = async (req, res, next) => {
 
                 // Insertar
         const sql = `
-      INSERT INTO work_logs 
-            (mold_id, part_id, machine_id, operator_id, work_date, hours_worked, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-    `;
+          INSERT INTO work_logs 
+            (mold_id, part_id, machine_id, operator_id, work_date, hours_worked, reason, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
 
         const result = await query(sql, [
             moldId,
@@ -47,6 +90,7 @@ const createWorkLog = async (req, res, next) => {
             operatorId,
             dateStr,
             hours_worked,
+            reason || null,
             note || null,
         ]);
 
@@ -60,6 +104,7 @@ const createWorkLog = async (req, res, next) => {
                 operatorId,
                 work_date: dateStr,
                 hours_worked,
+                reason,
                 note,
             },
         });
@@ -75,6 +120,13 @@ const createWorkLog = async (req, res, next) => {
 const getWorkLogs = async (req, res, next) => {
     try {
         const { startDate, endDate, operatorId, machineId, moldId } = req.query;
+
+        // Paginación segura
+        let limit = parseInt(req.query.limit ?? '200', 10);
+        let offset = parseInt(req.query.offset ?? '0', 10);
+        if (!Number.isInteger(limit) || limit <= 0) limit = 200;
+        if (limit > 1000) limit = 1000;
+        if (!Number.isInteger(offset) || offset < 0) offset = 0;
 
         const whereClauses = [];
         const params = [];
@@ -110,21 +162,41 @@ const getWorkLogs = async (req, res, next) => {
 
         const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-        const sql = `
-      SELECT 
-        wl.*,
-        m.code as mold_code,
-        mp.part_number,
-        ma.name as machine_name,
-        o.name as operator_name
-      FROM work_logs wl
-      JOIN molds m ON wl.mold_id = m.id
-      JOIN mold_parts mp ON wl.part_id = mp.id
-      JOIN machines ma ON wl.machine_id = ma.id
-      JOIN operators o ON wl.operator_id = o.id
-      ${whereClause}
-      ORDER BY wl.recorded_at DESC
-    `;
+                const sql = `
+            SELECT 
+                wl.*, 
+                m.name as mold_name,
+                mp.name as part_name,
+                ma.name as machine_name,
+                o.name as operator_name,
+                pe.planned_hours,
+                (wl.hours_worked - pe.planned_hours) AS diff_hours,
+                CASE
+                    WHEN pe.planned_hours IS NULL OR pe.planned_hours <= 0 THEN NULL
+                    ELSE ROUND(ABS(wl.hours_worked - pe.planned_hours) / pe.planned_hours * 100, 2)
+                END AS deviation_pct,
+                CASE
+                    WHEN pe.planned_hours IS NULL OR pe.planned_hours <= 0 THEN 0
+                    WHEN (ABS(wl.hours_worked - pe.planned_hours) / pe.planned_hours) > 0.05 THEN 1
+                    ELSE 0
+                END AS is_alert
+            FROM work_logs wl
+            JOIN molds m ON wl.mold_id = m.id
+            JOIN mold_parts mp ON wl.part_id = mp.id
+            JOIN machines ma ON wl.machine_id = ma.id
+            JOIN operators o ON wl.operator_id = o.id
+            LEFT JOIN (
+                SELECT date, mold_id, part_id, machine_id, SUM(hours_planned) AS planned_hours
+                FROM plan_entries
+                GROUP BY date, mold_id, part_id, machine_id
+            ) pe ON pe.date = COALESCE(wl.work_date, DATE(wl.recorded_at))
+                    AND pe.mold_id = wl.mold_id
+                    AND pe.part_id = wl.part_id
+                    AND pe.machine_id = wl.machine_id
+            ${whereClause}
+            ORDER BY wl.recorded_at DESC
+            LIMIT ${limit} OFFSET ${offset}
+        `;
 
         const logs = await query(sql, params);
         res.json(logs);
@@ -140,7 +212,16 @@ const getWorkLogs = async (req, res, next) => {
 const updateWorkLog = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { hours_worked, note } = req.body;
+        const {
+            work_date,
+            operatorId,
+            moldId,
+            partId,
+            machineId,
+            hours_worked,
+            reason,
+            note,
+        } = req.body || {};
 
         // Obtener el registro actual
         const getSql = 'SELECT * FROM work_logs WHERE id = ?';
@@ -161,10 +242,10 @@ const updateWorkLog = async (req, res, next) => {
                 });
             }
 
-            // El operario solo puede editar hasta 2 días atrás
-            const recordedDate = new Date(log.recorded_at);
-            const now = new Date();
-            const daysDiff = Math.floor((now - recordedDate) / (1000 * 60 * 60 * 24));
+            // El operario solo puede editar hasta N días atrás (preferimos work_date si existe)
+            const baseISO = toISODateOnly(log.work_date) || toISODateOnly(log.recorded_at);
+            const todayISO = getColombiaTodayISO();
+            const daysDiff = diffDaysISO(todayISO, baseISO);
 
             if (daysDiff > OPERATOR_EDIT_DAYS_LIMIT) {
                 return res.status(403).json({
@@ -173,22 +254,95 @@ const updateWorkLog = async (req, res, next) => {
             }
         }
 
-        // Actualizar
+        // Validaciones básicas
+        const dateStr = work_date !== undefined ? (work_date ? String(work_date) : null) : undefined;
+        if (dateStr !== undefined && dateStr !== null && !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            return res.status(400).json({ error: 'work_date debe ser YYYY-MM-DD' });
+        }
+
+        if (hours_worked !== undefined) {
+            const hw = Number(hours_worked);
+            if (!Number.isFinite(hw) || hw <= 0) return res.status(400).json({ error: 'hours_worked debe ser mayor que 0' });
+        }
+
+        const nextOperatorId = operatorId !== undefined ? Number(operatorId) : undefined;
+        const nextMoldId = moldId !== undefined ? Number(moldId) : undefined;
+        const nextPartId = partId !== undefined ? Number(partId) : undefined;
+        const nextMachineId = machineId !== undefined ? Number(machineId) : undefined;
+
+        // Operario NO puede cambiar operator_id
+        if (req.user.role === ROLES.OPERATOR && nextOperatorId !== undefined && nextOperatorId !== req.user.operatorId) {
+            return res.status(403).json({ error: 'No puedes cambiar el operario del registro' });
+        }
+
+        // Si admin/jefe cambian operatorId, verificar que exista y esté activo
+        if (req.user.role !== ROLES.OPERATOR && nextOperatorId !== undefined) {
+            if (!Number.isFinite(nextOperatorId) || nextOperatorId <= 0) return res.status(400).json({ error: 'operatorId inválido' });
+            const ops = await query('SELECT id FROM operators WHERE id = ? AND is_active = TRUE', [nextOperatorId]);
+            if (!ops.length) return res.status(400).json({ error: 'Operario inválido o inactivo' });
+        }
+
+        // Validar IDs referenciales si vienen
+        if (nextMoldId !== undefined) {
+            if (!Number.isFinite(nextMoldId) || nextMoldId <= 0) return res.status(400).json({ error: 'moldId inválido' });
+            const rows = await query('SELECT id FROM molds WHERE id = ?', [nextMoldId]);
+            if (!rows.length) return res.status(400).json({ error: 'Molde inválido' });
+        }
+        if (nextPartId !== undefined) {
+            if (!Number.isFinite(nextPartId) || nextPartId <= 0) return res.status(400).json({ error: 'partId inválido' });
+            const rows = await query('SELECT id FROM mold_parts WHERE id = ?', [nextPartId]);
+            if (!rows.length) return res.status(400).json({ error: 'Parte inválida' });
+        }
+        if (nextMachineId !== undefined) {
+            if (!Number.isFinite(nextMachineId) || nextMachineId <= 0) return res.status(400).json({ error: 'machineId inválido' });
+            const rows = await query('SELECT id FROM machines WHERE id = ?', [nextMachineId]);
+            if (!rows.length) return res.status(400).json({ error: 'Máquina inválida' });
+        }
+
+        // Actualizar (si no viene un campo, se conserva)
         const updateSql = `
-      UPDATE work_logs 
-      SET hours_worked = ?, note = ? 
-      WHERE id = ?
-    `;
+            UPDATE work_logs
+            SET
+              mold_id = ?,
+              part_id = ?,
+              machine_id = ?,
+              operator_id = ?,
+              work_date = ?,
+              hours_worked = ?,
+              reason = ?,
+              note = ?
+            WHERE id = ?
+        `;
+
+        const finalOperatorId = req.user.role === ROLES.OPERATOR
+            ? log.operator_id
+            : (nextOperatorId !== undefined ? nextOperatorId : log.operator_id);
 
         await query(updateSql, [
-            hours_worked !== undefined ? hours_worked : log.hours_worked,
+            nextMoldId !== undefined ? nextMoldId : log.mold_id,
+            nextPartId !== undefined ? nextPartId : log.part_id,
+            nextMachineId !== undefined ? nextMachineId : log.machine_id,
+            finalOperatorId,
+            dateStr !== undefined ? dateStr : log.work_date,
+            hours_worked !== undefined ? Number(hours_worked) : log.hours_worked,
+            reason !== undefined ? reason : log.reason,
             note !== undefined ? note : log.note,
             id,
         ]);
 
         res.json({
             message: 'Registro actualizado exitosamente',
-            data: { id, hours_worked, note },
+            data: {
+                id,
+                moldId: nextMoldId,
+                partId: nextPartId,
+                machineId: nextMachineId,
+                operatorId: finalOperatorId,
+                work_date: dateStr,
+                hours_worked,
+                reason,
+                note,
+            },
         });
     } catch (error) {
         next(error);
