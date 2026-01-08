@@ -34,15 +34,15 @@ const login = async (req, res, next) => {
             const rows = await query(
                 `
                 SELECT
-                  o.id AS operatorId,
-                  o.name AS operatorName,
+                                    o.id AS "operatorId",
+                                    o.name AS "operatorName",
                   o.is_active,
                   o.password_hash AS operator_password_hash,
                   o.user_id,
-                  u.id AS userId,
+                                    u.id AS "userId",
                   u.username,
                   u.password_hash AS user_password_hash,
-                  u.role AS userRole
+                                    u.role AS "userRole"
                 FROM operators o
                 LEFT JOIN users u ON u.id = o.user_id
                 WHERE o.id = ?
@@ -243,7 +243,7 @@ const listSessions = async (req, res, next) => {
               s.logout_at,
               CASE
                 WHEN s.logout_at IS NULL THEN NULL
-                ELSE TIMESTAMPDIFF(MINUTE, s.login_at, s.logout_at)
+                                ELSE FLOOR(EXTRACT(EPOCH FROM (s.logout_at - s.login_at)) / 60)
               END AS duration_minutes
             FROM user_sessions s
             JOIN users u ON u.id = s.user_id

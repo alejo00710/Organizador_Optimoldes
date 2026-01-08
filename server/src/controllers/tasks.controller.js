@@ -554,8 +554,9 @@ exports.getMoldPlan = async (req, res, next) => {
     if (!moldRows.length) return res.status(404).json({ error: 'Molde no encontrado' });
 
     const rangeRows = await query(
-      `SELECT to_char(MIN(date), 'YYYY-MM-DD') AS startDate,
-              to_char(MAX(date), 'YYYY-MM-DD') AS endDate
+      `SELECT
+          to_char(MIN(date), 'YYYY-MM-DD') AS "startDate",
+          to_char(MAX(date), 'YYYY-MM-DD') AS "endDate"
        FROM plan_entries
        WHERE mold_id = ?`,
       [moldId]
@@ -565,12 +566,12 @@ exports.getMoldPlan = async (req, res, next) => {
 
     const entries = await query(
       `SELECT
-          p.id AS entryId,
+          p.id AS "entryId",
           to_char(p.date, 'YYYY-MM-DD') AS date,
           p.hours_planned AS hours,
-          ma.id AS machineId,
+          ma.id AS "machineId",
           ma.name AS machine,
-          mp.id AS partId,
+          mp.id AS "partId",
           mp.name AS part
        FROM plan_entries p
        JOIN machines ma ON p.machine_id = ma.id

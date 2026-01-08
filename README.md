@@ -1,173 +1,36 @@
-# 📋 Sistema de Planificación y Registro de Producción de Moldes (Checkpoint)
+# Sistema de Planificación y Registro de Producción de Moldes
 
-Estado a la fecha: 2026-01-07
+Aplicación web (frontend estático + API) para planificar horas de fabricación por máquina/parte, registrar tiempos reales por operario y ver calendario/reportes/indicadores.
 
-Este proyecto es una aplicación web para planificar y registrar trabajo de producción de moldes. Incluye:
-- Autenticación por roles con JWT
-- Planificador inteligente que distribuye horas automáticamente en días hábiles
-- Calendario mensual interactivo con festivos y fines de semana
-- Gestión de datos maestros (máquinas, moldes, partes)
-- Reportes de planificado vs real
-- Indicadores (KPIs): 3 tablas (Horas, Días hábiles manuales, Indicador) + exportación CSV
-- Indicadores: selección de operarios persistente (checkboxes) y carga automática de tablas
-- Avance Plan vs Real por molde (panel de progreso)
-  - Vista "Moldes en curso" debajo del Calendario (no filtrado por mes)
-  - Rango del plan visible: inicio → fin
+## Arquitectura
 
-Este README refleja exactamente el estado actual del código.
+- Frontend: HTML/CSS/JS (Vanilla) en `public/`.
+- Backend: Node.js + Express en `server/`.
+- Base de datos: PostgreSQL (schema en `server/schema.sql`).
 
----
+El backend sirve el frontend como estáticos y expone la API bajo `/api`.
 
-## 🏗️ Arquitectura
+## Requisitos
+
+- Node.js 18+
+- PostgreSQL 14+
+
+## Estructura del repo
 
 ```
-┌─────────────────────────────────────────────────┐
-│              FRONTEND (Cliente)                  │
-│  HTML + CSS + JavaScript (Vanilla)              │
-│  Servido como estáticos desde Express           │
-└─────────────────┬───────────────────────────────┘
-                  │ HTTP/REST API
-                  │
-┌─────────────────▼───────────────────────────────┐
-│              BACKEND (Servidor)                  │
-│  Node.js + Express                               │
-│  Puerto: 3000                                    │
-└─────────────────┬───────────────────────────────┘
-                  │ PostgreSQL
-                  │
-┌─────────────────▼───────────────────────────────┐
-│                BASE DE DATOS                    │
-│  PostgreSQL 14+                                 │
-└─────────────────────────────────────────────────┘
+public/         Frontend (index.html, app.js, styles.css)
+server/         Backend (Express + PostgreSQL)
+  src/
+  schema.sql
+  package.json
+tests/
+README.md
 ```
 
----
+## Configuración (server/.env)
 
-## 🛠️ Tecnologías
+El backend lee variables con `dotenv` (ver `server/src/config/env.js`). Ejemplo recomendado:
 
-- Backend: Node.js (Express), pg (PostgreSQL), JWT, Helmet, CORS, dotenv
-- Frontend: HTML5, CSS3, JavaScript ES6+
-- DB: PostgreSQL 14+
-- Dev: nodemon
-
----
-
-## 📂 Estructura
-
-```
-Organizador_Optimoldes/
-├── public/                      # Frontend
-│   ├── index.html
-│   ├── app.js
-│   └── styles.css
-│
-├── server/                      # Backend (API)
-│   ├── src/
-│   │   ├── config/              # env, conexión y setup de DB
-│   │   ├── controllers/         # lógica HTTP
-│   │   ├── middleware/          # auth, errores
-│   │   ├── routes/              # endpoints
-│   │   ├── services/            # negocio (scheduler, festivos)
-│   │   ├── utils/               # constantes
-│   │   └── app.js               # arranque del servidor
-│   ├── package.json
-│   └── schema.sql               # esquema de BD
-└── README.md
-```
-
----
-
-## 🔑 Funcionalidades actuales
-
-1) Autenticación y roles
-- Login con usuarios por rol: admin, jefe (planner), operarios
-- JWT con middleware `authenticateToken`
-- Rutas con autorización por rol (`authorizeRoles`)
-
-2) Planificador (Cuadro planificador)
-- Grid por partes (filas) y máquinas (columnas)
-- Campo “Cantidad de Moldes/Partes a Producir”
-- Cálculo en tiempo real:
-  - Total por fila = (suma horas por máquina) × cantidad
-  - Resumen total superior (proyectado y base por máquina)
-- Envío de planificación: genera múltiples POST /tasks/plan (una por celda con horas > 0)
- - Configuración de parrilla robusta:
-   - Siempre muestra una selección principal por defecto (máquinas/partes fijas)
-   - Si el catálogo no carga, mantiene la selección y hace fallback a los fijos
-   - La selección guardada no se borra si el catálogo está vacío
-
-3) Scheduler (Distribución automática)
-- Distribuye `totalHours` en días hábiles por máquina a partir de `startDate`
-- Capacidad por máquina:
-  - 1 operario: 9h/día
-  - >1 operario: operarios × 8h/día
-- Respeta capacidad ya usada en cada día (suma de `plan_entries`)
-- Días hábiles: excluye sábados, domingos y festivos
-
-4) Festivos (automáticos + base de datos)
-- Generación automática de festivos de Colombia (Ley Emiliani + fechas religiosas)
-- Combinación con festivos registrados en DB (empresa)
-- Caché en memoria: se recarga al iniciar el servidor y al crear/eliminar festivos
-- Frontend muestra festivos en el calendario
-
-5) Calendario mensual
-- Vista de mes con:
-  - Fines de semana resaltados
-  - Festivos resaltados (nombre visible)
-  - Indicador con total de horas planificadas por día
-  - Modal con detalle de tareas por día
-- Endpoint unificado: GET /api/calendar/month-view → { events, holidays }
-
- 5.1) Moldes en curso (debajo del Calendario)
- - Lista compacta de paneles de progreso (uno por molde en curso)
- - Cada panel muestra: % completado, plan total, plan a hoy, real a hoy, desviación, y rango del plan (inicio → fin)
- - Fuente de datos: GET /api/molds/in-progress (una sola llamada para eficiencia)
-
-6) Reportes (backend listo)
-- Reporte planificado vs real (`/reports/planned-vs-actual`)
-- Reporte detallado con combinaciones y alertas (`/reports/detailed-deviations`)
-- Umbral de alerta configurable: 5%
-
-7) Indicadores (KPIs)
-- Tablas por año (enero..diciembre):
-  - Tabla 1: **Suma de Horas** (fuente: `work_logs`)
-  - Tabla 2: **Días Hábiles Trabajados** (manual por operario/mes)
-  - Indicador (principal): **Horas / (Días × 8)**
-- Filtro de operarios con **checkboxes** ("Operarios a mostrar")
-  - La selección se **guarda en el navegador** (localStorage) y se rehidrata al volver a entrar
-  - Si hay selección guardada, las **3 tablas se cargan automáticamente** al abrir la pestaña
-- Exportación CSV del indicador principal
-
-
-## ✅ Correcciones recientes (críticas)
-
-- SQL corregido (espacios erróneos en alias/columnas) en:
-  - services/calendar.service.js
-  - services/deviation.service.js
-  - controllers/workLogs.controller.js
-- Caché de festivos se recarga en `createHoliday` y `deleteHoliday`
-- Fechas en `calendar.controller` robustas (evita problemas de zona horaria)
-- server/package.json: script `start` corregido (sin espacio en `app.js`)
-- server/src/app.js: `startServer()` corregido (sintaxis y arranque)
-- Configuración de parrilla: evita limpiar selección cuando catálogos no cargan; fallback a selección por defecto
-- Paneles de progreso: agregados "Moldes en curso" (debajo del Calendario) y rango del plan visible
-- Endpoint nuevo: `/api/molds/in-progress` (admin/planner)
-- Endpoint de progreso por molde: `/api/molds/:moldId/progress` (admin/planner)
-
----
-
-## 🚀 Instalación
-
-Requisitos: Node.js 18+, PostgreSQL 14+
-
-1) Clonar e instalar
-```bash
-git clone https://github.com/alejo00710/Organizador_Optimoldes.git
-cd Organizador_Optimoldes/server
-npm install
-```
-
-2) Variables de entorno (server/.env)
 ```env
 PORT=3000
 NODE_ENV=development
@@ -182,21 +45,181 @@ JWT_SECRET=cambia_este_secreto
 JWT_EXPIRES_IN=8h
 ```
 
-3) Base de datos
-- En `NODE_ENV=development`, el servidor:
-  - Crea la BD si no existe
-  - Ejecuta `schema.sql`
-  - Se asegura de crear usuario admin (admin/admin)
+Notas:
 
-4) Iniciar
+- Si no defines variables, hay defaults (por ejemplo `DB_NAME=production_scheduler`).
+- En `NODE_ENV=development` el servidor intenta:
+  - Crear la base de datos si no existe.
+  - Ejecutar `server/schema.sql` (tablas `IF NOT EXISTS`) y algunas migraciones pequeñas.
+
+## Instalación y arranque
+
+Desde la carpeta del backend:
+
 ```bash
+cd server
+npm install
 npm run dev
-# Servirá la app en http://localhost:3000
 ```
 
-5) Frontend
-- Express sirve /public como estáticos
-- Abre http://localhost:3000 en el navegador
+Abrir la app:
+
+- UI: `http://localhost:3000`
+- Healthcheck: `http://localhost:3000/health`
+
+## Autenticación y roles
+
+La API usa JWT (header `Authorization: Bearer <token>`).
+
+Roles:
+
+- `admin`
+- `planner` (en la UI aparece como “Jefe (Planner)”)
+- `operator`
+
+### Bootstrap inicial (crear admin/jefe)
+
+Cuando la BD está vacía, el login muestra un bloque de “Configuración inicial”. Eso llama a:
+
+- `GET /api/auth/bootstrap/status`
+- `POST /api/auth/bootstrap` (sin token)
+
+Ese bootstrap solo permite crear `admin` y `jefe` si todavía no existen.
+
+### Login
+
+- `POST /api/auth/login`
+- `GET /api/auth/operators?username=...` (para llenar el selector de operarios)
+
+La UI ofrece 3 opciones en el selector:
+
+- `admin`
+- `jefe` (role `planner`)
+- `operarios`: requiere seleccionar un operario y valida contraseña asociada al operario.
+
+## Funcionalidades principales (según el código)
+
+- Planificación por bloque y planificación con prioridad (reubica lo existente).
+- Calendario mensual unificado: eventos + festivos.
+- Festivos (tabla `holidays`) + reglas de negocio (servicio de días hábiles).
+- Registro de tiempos reales (work logs) con `work_date` y `reason`.
+- Reportes plan vs real.
+- Indicadores: resumen y carga/edición de días hábiles mensuales por operario.
+- Auditoría de sesiones (login/logout) en `user_sessions`.
+
+## API (mapa de endpoints)
+
+Base URL: `http://localhost:3000/api`
+
+### Auth
+
+- `POST /auth/login`
+- `GET /auth/operators`
+- `GET /auth/bootstrap/status`
+- `POST /auth/bootstrap`
+- `GET /auth/verify` (requiere token)
+- `POST /auth/logout` (requiere token)
+- `GET /auth/sessions` (admin/planner)
+
+### Planificación (admin/planner)
+
+- `POST /tasks/plan/block`
+- `POST /tasks/plan/priority`
+- `GET /tasks/plan/mold/:moldId`
+- `PATCH /tasks/plan/entry/:entryId`
+- `PATCH /tasks/plan/entry/:entryId/next-available`
+
+### Calendario
+
+- `GET /calendar/month-view` (requiere token)
+
+### Work logs
+
+- `POST /work_logs` (requiere token)
+- `GET /work_logs` (requiere token)
+- `PUT /work_logs/:id` (requiere token)
+- `DELETE /work_logs/:id` (admin/planner)
+
+### Moldes / Partes
+
+- `GET /molds` (requiere token)
+- `POST /molds` (admin/planner)
+- `GET /molds/parts` (requiere token)
+- `POST /molds/parts` (admin/planner)
+- `GET /molds/in-progress` (admin/planner)
+- `GET /molds/:moldId/progress` (admin/planner)
+
+### Recetas de molde
+
+- `GET /molds/:moldId/recipe` (requiere token)
+- `POST /molds/:moldId/recipe` (requiere token)
+
+### Máquinas
+
+- `GET /machines` (requiere token)
+- `GET /machines/:id` (requiere token)
+- `POST /machines` (solo admin)
+- `PUT /machines/:id` (solo admin)
+- `DELETE /machines/:id` (solo admin)
+
+### Festivos (holidays)
+
+- `GET /holidays` (requiere token)
+- `POST /holidays` (solo admin)
+- `DELETE /holidays/:date` (solo admin)
+
+### Días laborables (override)
+
+- `GET /working/check` (requiere token)
+- `POST /working/override` (admin/planner)
+
+### Datos (histórico)
+
+- `GET /datos` (requiere token)
+- `POST /datos` (admin/planner/operator)
+- `PUT /datos/:id` (admin/planner)
+- `DELETE /datos/:id` (solo admin)
+- `GET /datos/meta` (requiere token)
+
+### Importación
+
+- `POST /import/datos` (multipart/form-data, campo `file`, requiere token)
+- `GET /import/datos/:batchId/errors` (requiere token)
+
+### Catálogos
+
+- `GET /catalogs/meta` (requiere token)
+- `POST /catalogs/sync` (requiere token)
+
+### Configuración (admin/planner)
+
+Todas estas rutas cuelgan de `/api` (no de `/api/config`):
+
+- `GET /config/machines`
+- `POST /config/machines`
+- `PUT /config/machines/:id`
+- `POST /config/molds`
+- `POST /config/parts`
+- `GET /config/parts`
+- `PUT /config/parts/:id`
+- `POST /config/operators`
+- `GET /config/operators`
+- `PUT /config/operators/:id`
+
+### Indicadores (admin/planner)
+
+- `GET /indicators/summary`
+- `POST /indicators/working-days`
+
+## Scripts (backend)
+
+En `server/package.json`:
+
+- `npm run dev` (nodemon)
+- `npm start` (node)
+- `npm test` (jest)
+- `npm run reset:password` (utilidad para reset)
+- `npm run format` / `npm run check-format`
 
 ---
 

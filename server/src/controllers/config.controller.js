@@ -17,7 +17,7 @@ exports.createMachine = async (req, res, next) => {
     if (!name || String(name).trim() === '') return res.status(400).json({ error:'Nombre requerido' });
     const cap = daily_capacity !== undefined && daily_capacity !== null && daily_capacity !== '' ? parseFloat(daily_capacity) : null;
     const result = await query('INSERT INTO machines (name, daily_capacity, is_active) VALUES (?, ?, TRUE)', [name.trim(), cap]);
-    res.status(201).json({ id: result.insertId, name: name.trim(), daily_capacity: cap, is_active: 1 });
+    res.status(201).json({ message: 'Máquina creada', id: result.insertId, name: name.trim(), daily_capacity: cap, is_active: 1 });
   } catch (e) { next(e); }
 };
 
@@ -54,7 +54,7 @@ exports.createMold = async (req, res, next) => {
     const { name } = req.body;
     if (!name || String(name).trim() === '') return res.status(400).json({ error:'Nombre requerido' });
     const result = await query('INSERT INTO molds (name, is_active) VALUES (?, TRUE)', [name.trim()]);
-    res.status(201).json({ id: result.insertId, name: name.trim() });
+    res.status(201).json({ message: 'Molde creado', id: result.insertId, name: name.trim() });
   } catch (e) { next(e); }
 };
 
@@ -65,7 +65,7 @@ exports.createPart = async (req, res, next) => {
     if (!name || String(name).trim() === '') return res.status(400).json({ error:'Nombre requerido' });
     // Por defecto se crea INACTIVA para que el checklist decida qué se muestra.
     const result = await query('INSERT INTO mold_parts (name, is_active) VALUES (?, FALSE)', [name.trim()]);
-    res.status(201).json({ id: result.insertId, name: name.trim(), is_active: 0 });
+    res.status(201).json({ message: 'Parte creada', id: result.insertId, name: name.trim(), is_active: 0 });
   } catch (e) { next(e); }
 };
 
@@ -107,7 +107,7 @@ exports.createOperator = async (req, res, next) => {
         'INSERT INTO operators (name, user_id, password_hash, is_active) VALUES (?, NULL, NULL, TRUE)',
         [trimmedName]
       );
-      return res.status(201).json({ operatorId: opRes.insertId, userId: null, username: null, note: 'Operario creado sin contraseña' });
+      return res.status(201).json({ message: 'Operario creado', operatorId: opRes.insertId, userId: null, username: null, note: 'Operario creado sin contraseña' });
     }
 
     const username = `operario_${Date.now()}`;
@@ -120,7 +120,7 @@ exports.createOperator = async (req, res, next) => {
       'INSERT INTO operators (name, user_id, password_hash, is_active) VALUES (?, ?, ?, TRUE)',
       [trimmedName, user_id, password_hash]
     );
-    res.status(201).json({ operatorId: opRes.insertId, userId: user_id, username });
+    res.status(201).json({ message: 'Operario creado', operatorId: opRes.insertId, userId: user_id, username });
   } catch (e) { next(e); }
 };
 

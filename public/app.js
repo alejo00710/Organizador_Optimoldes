@@ -227,9 +227,107 @@ async function initPlannerGridFromCatalogs() {
 }
 
 // Helpers
+const UI_VERBOSE_RESPONSES = false;
+let toastTimer = null;
+
+function getOrCreateToastHost() {
+  let host = document.getElementById('toastHost');
+  if (host) return host;
+  host = document.createElement('div');
+  host.id = 'toastHost';
+  host.className = 'toast-host';
+  document.body.appendChild(host);
+  return host;
+}
+
+function extractUserMessage(data, success) {
+  if (typeof data === 'string') return data;
+  if (data && typeof data === 'object') {
+    if (typeof data.error === 'string' && data.error.trim()) return data.error;
+    if (typeof data.message === 'string' && data.message.trim()) return data.message;
+    if (typeof data.note === 'string' && data.note.trim()) return data.note;
+  }
+  if (!success) return 'Ocurrió un error';
+  return null;
+}
+
+function showToast(message, success = true) {
+  const msg = String(message ?? '').trim();
+  if (!msg) return;
+  const host = getOrCreateToastHost();
+  host.innerHTML = '';
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${success ? 'success' : 'error'}`;
+  toast.textContent = msg;
+  host.appendChild(toast);
+
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    host.innerHTML = '';
+    toastTimer = null;
+  }, 3000);
+}
+
+// CSP: en algunos entornos se bloquea onclick="..." (script-src-attr 'none').
+// Para botones dinámicos usamos delegación con data-action.
+try {
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target?.closest?.('button[data-action]');
+    if (!btn) return;
+    const action = btn.getAttribute('data-action');
+    const id = btn.getAttribute('data-id');
+
+    switch (action) {
+      case 'save-machine':
+        return saveMachineRow(id);
+      case 'save-operator':
+        return saveOperatorRow(id);
+      case 'wl-edit':
+        return startEditWorkLogRow(id);
+      case 'wl-save':
+        return saveWorkLogRow(id);
+      case 'dato-save':
+        return saveDatoRow(id);
+      case 'dato-delete':
+        return deleteDatoRow(id);
+      default:
+        return;
+    }
+  });
+} catch (_) {}
+
+// Si algo falla en runtime (botones que no hacen nada), mostrar el error al usuario.
+try {
+  window.addEventListener('error', (ev) => {
+    const msg = ev?.message || 'Error inesperado en la aplicación';
+    showToast(msg, false);
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    const reason = ev?.reason;
+    const msg = (reason && reason.message) ? reason.message : (reason ? String(reason) : 'Error inesperado (promesa)');
+    showToast(msg, false);
+  });
+} catch (_) {}
+
 function displayResponse(id, data, success = true) {
   const el = document.getElementById(id);
+  const msg = extractUserMessage(data, success);
+  if (msg) showToast(msg, success);
+
+  try {
+    if (!success) console.error('[UI]', id, data);
+    else if (UI_VERBOSE_RESPONSES) console.log('[UI]', id, data);
+  } catch (_) {}
+
+  // Evitar que se acumulen mensajes largos al final.
   if (!el) return;
+  if (!UI_VERBOSE_RESPONSES) {
+    el.textContent = '';
+    el.className = 'response-box hidden';
+    return;
+  }
+
   el.className = `response-box ${success ? 'success' : 'error'}`;
   try { el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2); }
   catch { el.textContent = String(data); }
@@ -1562,12 +1660,34 @@ function setWorkLogRowEditing(row, enabled, role) {
   if (saveBtn) saveBtn.style.display = enabled ? '' : 'none';
 }
 
+function findRowByDataId(tbodySelector, id) {
+  const tbody = document.querySelector(tbodySelector);
+  if (!tbody) return null;
+  const target = String(id ?? '').trim();
+  if (!target) return null;
+  const rows = tbody.querySelectorAll('tr[data-id]');
+  for (const tr of rows) {
+    if (String(tr.getAttribute('data-id')) === target) return tr;
+  }
+  return null;
+}
+
 function startEditWorkLogRow(id) {
-  const row = document.querySelector(`#workLogsTable tbody tr[data-id="${CSS.escape(String(id))}"]`);
-  if (!row) return;
-  const canEdit = row.getAttribute('data-can-edit') === '1';
-  if (!canEdit) return;
-  setWorkLogRowEditing(row, true, currentUser?.role);
+  try {
+    const row = findRowByDataId('#workLogsTable tbody', id);
+    if (!row) {
+      displayResponse('workLogsResponse', { error: 'No se encontró el registro para editar' }, false);
+      return;
+    }
+    const canEdit = row.getAttribute('data-can-edit') === '1';
+    if (!canEdit) {
+      displayResponse('workLogsResponse', { error: 'No tienes permiso para editar este registro' }, false);
+      return;
+    }
+    setWorkLogRowEditing(row, true, currentUser?.role);
+  } catch (e) {
+    displayResponse('workLogsResponse', { error: 'No se pudo habilitar edición', details: String(e) }, false);
+  }
 }
 
 function renderWorkLogsTable(rows) {
@@ -1652,8 +1772,8 @@ function renderWorkLogsTable(rows) {
         <td>${escapeHtml(r.note || '')}</td>
         <td>
           ${canEdit ? `
-            <button class="btn btn-primary btn-sm wl-edit" onclick="startEditWorkLogRow(${Number(r.id)})">Editar</button>
-            <button class="btn btn-primary btn-sm wl-save" style="display:none" onclick="saveWorkLogRow(${Number(r.id)})">Guardar</button>
+            <button class="btn btn-primary btn-sm wl-edit" data-action="wl-edit" data-id="${escapeHtml(String(r.id))}">Editar</button>
+            <button class="btn btn-primary btn-sm wl-save" style="display:none" data-action="wl-save" data-id="${escapeHtml(String(r.id))}">Guardar</button>
           ` : `<span style="color:#6c757d">Bloqueado</span>`}
         </td>
       </tr>
@@ -1670,7 +1790,7 @@ function renderWorkLogsTable(rows) {
 }
 
 async function saveWorkLogRow(id) {
-  const row = document.querySelector(`#workLogsTable tbody tr[data-id="${CSS.escape(String(id))}"]`);
+  const row = findRowByDataId('#workLogsTable tbody', id);
   if (!row) return;
   // Asegurar meta (catálogos) para resolver IDs por nombre
   if (!tiemposMetaCache) {
@@ -1888,8 +2008,8 @@ function renderDatosTable(items) {
         <td>${r.source === 'import' ? 'Importado' : 'Manual'}</td>
         <td>${createdAt}</td>
         <td>
-          ${showSave ? `<button class="btn btn-primary btn-sm" onclick="saveDatoRow(${r.id})">Guardar</button>` : ''}
-          <button class="btn btn-danger btn-sm" onclick="deleteDatoRow(${r.id})">Eliminar</button>
+          ${showSave ? `<button class="btn btn-primary btn-sm" data-action="dato-save" data-id="${escapeHtml(String(r.id))}">Guardar</button>` : ''}
+          <button class="btn btn-danger btn-sm" data-action="dato-delete" data-id="${escapeHtml(String(r.id))}">Eliminar</button>
         </td>
       </tr>
     `;
@@ -2224,7 +2344,7 @@ async function openMoldEditorView(moldId, moldName) {
               const curDate = String(e.date || '');
               const curMachine = String(e.machine || '');
               return `
-                <tr data-entry-id="${e.entryId}">
+                <tr data-entry-id="${e.entryId ?? ''}">
                   <td>${escapeHtml(curDate)}</td>
                   <td>${escapeHtml(curMachine)}</td>
                   <td>${escapeHtml(String(e.part || ''))}</td>
@@ -2260,10 +2380,15 @@ async function openMoldEditorView(moldId, moldName) {
     body.querySelectorAll('button.pe-save-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const tr = btn.closest('tr');
-        const entryId = tr?.getAttribute('data-entry-id');
+        const rawEntryId = tr?.getAttribute('data-entry-id');
+        const entryId = Number.parseInt(String(rawEntryId || ''), 10);
         const newDate = tr?.querySelector('.pe-new-date')?.value;
         const newMachineName = tr?.querySelector('.pe-new-machine')?.value;
-        if (!entryId || !newDate || !newMachineName) return;
+        if (!Number.isFinite(entryId) || entryId <= 0) {
+          displayResponse('moldEditorResponse', { error: 'Entrada inválida (sin id). Recarga el calendario e inténtalo de nuevo.' }, false);
+          return;
+        }
+        if (!newDate || !newMachineName) return;
 
         try {
           const resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(entryId)}`,
@@ -2291,10 +2416,14 @@ async function openMoldEditorView(moldId, moldName) {
     body.querySelectorAll('button.pe-next-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const tr = btn.closest('tr');
-        const entryId = tr?.getAttribute('data-entry-id');
+        const rawEntryId = tr?.getAttribute('data-entry-id');
+        const entryId = Number.parseInt(String(rawEntryId || ''), 10);
         const baseDate = tr?.querySelector('.pe-new-date')?.value;
         const machineName = tr?.querySelector('.pe-new-machine')?.value;
-        if (!entryId) return;
+        if (!Number.isFinite(entryId) || entryId <= 0) {
+          displayResponse('moldEditorResponse', { error: 'Entrada inválida (sin id). Recarga el calendario e inténtalo de nuevo.' }, false);
+          return;
+        }
 
         try {
           const resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(entryId)}/next-available`,
@@ -2368,7 +2497,7 @@ function renderMachinesTable() {
       <td><input type="text" class="mc-name" value="${escapeHtml(m.name || '')}"></td>
       <td><input type="number" class="mc-cap" step="0.5" min="0" value="${m.daily_capacity != null ? Number(m.daily_capacity) : ''}" placeholder="Ej: 14"></td>
       <td style="text-align:center;"><input type="checkbox" class="mc-active" ${m.is_active ? 'checked' : ''}></td>
-      <td><button class="btn btn-secondary btn-sm" onclick="saveMachineRow(${m.id})">Guardar</button></td>
+      <td><button class="btn btn-secondary btn-sm" data-action="save-machine" data-id="${escapeHtml(String(m.id))}">Guardar</button></td>
     </tr>
   `).join('');
 }
@@ -2540,7 +2669,7 @@ function renderOperatorsTable(){
         <td style="text-align:center;"><input type="checkbox" class="op-indicators" data-operator-id="${escapeHtml(id)}" ${isSelected ? 'checked' : ''} ${isActive ? '' : 'disabled'}></td>
         <td><input type="password" class="op-password" placeholder="Nueva contraseña"></td>
         <td style="display:flex; gap:8px; align-items:center;">
-          <button class="btn btn-secondary btn-sm" onclick="saveOperatorRow(${Number(id)})">Guardar</button>
+          <button class="btn btn-secondary btn-sm" data-action="save-operator" data-id="${escapeHtml(id)}">Guardar</button>
         </td>
       </tr>
     `;
@@ -2548,7 +2677,7 @@ function renderOperatorsTable(){
 }
 
 async function saveOperatorRow(id){
-  const row = document.querySelector(`#operatorsTable tbody tr[data-id="${CSS.escape(String(id))}"]`);
+  const row = findRowByDataId('#operatorsTable tbody', id);
   if (!row) return;
   const name = row.querySelector('.op-name')?.value.trim();
   const is_active = row.querySelector('.op-active')?.checked ? 1 : 0;

@@ -66,18 +66,29 @@ const insertPlanEntries = async (planEntries) => {
 
     const connection = await getConnection();
     try {
-        await connection.beginTransaction();
-        const sql = `INSERT INTO plan_entries (mold_id, part_id, machine_id, date, hours_planned, created_by) VALUES (?, ?, ?, ?, ?, ?)`;
+        await connection.query('BEGIN');
+        const sql = `
+            INSERT INTO plan_entries (mold_id, part_id, machine_id, date, hours_planned, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+        `;
         const insertedIds = [];
         for (const entry of planEntries) {
             const dateStr = entry.date.toISOString().split('T')[0];
-            const [result] = await connection.execute(sql, [entry.moldId, entry.partId, entry.machineId, dateStr, entry.hoursPlanned, entry.createdBy]);
-            insertedIds.push(result.insertId);
+            const res = await connection.query(sql, [
+                entry.moldId,
+                entry.partId,
+                entry.machineId,
+                dateStr,
+                entry.hoursPlanned,
+                entry.createdBy,
+            ]);
+            insertedIds.push(res.rows?.[0]?.id);
         }
-        await connection.commit();
+        await connection.query('COMMIT');
         return insertedIds;
     } catch (error) {
-        await connection.rollback();
+        try { await connection.query('ROLLBACK'); } catch (_) {}
         throw error;
     } finally {
         connection.release();

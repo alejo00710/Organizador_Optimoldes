@@ -95,10 +95,10 @@ const getMoldProgress = async (req, res, next) => {
 
         const plannedRows = await query(
             `SELECT
-                             to_char(MIN(date), 'YYYY-MM-DD') AS startDate,
-                             to_char(MAX(date), 'YYYY-MM-DD') AS endDate,
-               SUM(hours_planned) AS plannedTotal,
-               SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS plannedToDate
+                             to_char(MIN(date), 'YYYY-MM-DD') AS "startDate",
+                             to_char(MAX(date), 'YYYY-MM-DD') AS "endDate",
+                             SUM(hours_planned) AS "plannedTotal",
+                             SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS "plannedToDate"
              FROM plan_entries
              WHERE mold_id = ?`,
             [todayISO, moldId]
@@ -107,8 +107,8 @@ const getMoldProgress = async (req, res, next) => {
 
         const actualRows = await query(
             `SELECT
-               SUM(hours_worked) AS actualTotal,
-                             SUM(CASE WHEN COALESCE(work_date, recorded_at::date) <= ? THEN hours_worked ELSE 0 END) AS actualToDate
+               SUM(hours_worked) AS "actualTotal",
+               SUM(CASE WHEN COALESCE(work_date, recorded_at::date) <= ? THEN hours_worked ELSE 0 END) AS "actualToDate"
              FROM work_logs
              WHERE mold_id = ?`,
             [todayISO, moldId]
@@ -191,35 +191,35 @@ const getMoldsInProgress = async (req, res, next) => {
 
         const rows = await query(
             `SELECT
-               mo.id AS moldId,
-               mo.name AS moldName,
-               pe.startDate,
-               pe.endDate,
-               pe.plannedTotal,
-               pe.plannedToDate,
-               wl.actualTotal,
-               wl.actualToDate
+                             mo.id AS "moldId",
+                             mo.name AS "moldName",
+                             pe."startDate" AS "startDate",
+                             pe."endDate" AS "endDate",
+                             pe."plannedTotal" AS "plannedTotal",
+                             pe."plannedToDate" AS "plannedToDate",
+                             wl."actualTotal" AS "actualTotal",
+                             wl."actualToDate" AS "actualToDate"
              FROM molds mo
              JOIN (
                SELECT
                  mold_id,
-                                 to_char(MIN(date), 'YYYY-MM-DD') AS startDate,
-                                 to_char(MAX(date), 'YYYY-MM-DD') AS endDate,
-                 SUM(hours_planned) AS plannedTotal,
-                 SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS plannedToDate
+                                 to_char(MIN(date), 'YYYY-MM-DD') AS "startDate",
+                                 to_char(MAX(date), 'YYYY-MM-DD') AS "endDate",
+                                 SUM(hours_planned) AS "plannedTotal",
+                                 SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS "plannedToDate"
                FROM plan_entries
                GROUP BY mold_id
              ) pe ON pe.mold_id = mo.id
              LEFT JOIN (
                SELECT
                  mold_id,
-                 SUM(hours_worked) AS actualTotal,
-                                 SUM(CASE WHEN COALESCE(work_date, recorded_at::date) <= ? THEN hours_worked ELSE 0 END) AS actualToDate
+                                 SUM(hours_worked) AS "actualTotal",
+                                 SUM(CASE WHEN COALESCE(work_date, recorded_at::date) <= ? THEN hours_worked ELSE 0 END) AS "actualToDate"
                FROM work_logs
                GROUP BY mold_id
              ) wl ON wl.mold_id = mo.id
              WHERE mo.is_active = TRUE
-             ORDER BY (pe.endDate IS NULL) ASC, pe.endDate ASC, mo.name ASC`,
+             ORDER BY (pe."endDate" IS NULL) ASC, pe."endDate" ASC, mo.name ASC`,
             [todayISO, todayISO]
         );
 
