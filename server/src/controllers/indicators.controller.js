@@ -71,11 +71,11 @@ exports.summary = async (req, res, next) => {
     // Tabla 1: suma de horas por operario/mes (fuente: work_logs)
     const hoursRows = await query(
       `SELECT operator_id,
-              MONTH(COALESCE(work_date, DATE(recorded_at))) AS month,
+              EXTRACT(MONTH FROM COALESCE(work_date, recorded_at::date))::int AS month,
               SUM(hours_worked) AS hours
        FROM work_logs
-       WHERE YEAR(COALESCE(work_date, DATE(recorded_at))) = ?
-       GROUP BY operator_id, MONTH(COALESCE(work_date, DATE(recorded_at)))`,
+       WHERE EXTRACT(YEAR FROM COALESCE(work_date, recorded_at::date))::int = ?
+       GROUP BY operator_id, EXTRACT(MONTH FROM COALESCE(work_date, recorded_at::date))`,
       [year]
     );
 
@@ -212,10 +212,10 @@ exports.upsertWorkingDays = async (req, res, next) => {
     await query(
       `INSERT INTO operator_working_days_monthly (operator_id, year, month, working_days, updated_by)
        VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         working_days = VALUES(working_days),
-         updated_by = VALUES(updated_by),
-         updated_at = CURRENT_TIMESTAMP`,
+       ON CONFLICT (operator_id, year, month) DO UPDATE SET
+         working_days = EXCLUDED.working_days,
+         updated_by = EXCLUDED.updated_by,
+         updated_at = NOW()`,
       [operatorId, year, month, workingDays, req.user?.id || null]
     );
 

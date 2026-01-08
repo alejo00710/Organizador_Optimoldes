@@ -13,7 +13,7 @@ const getHolidays = async (req, res, next) => {
         const params = [];
 
         if (year) {
-            sql += ' WHERE YEAR(date) = ?';
+            sql += ' WHERE EXTRACT(YEAR FROM date) = ?';
             params.push(year);
         }
 
@@ -64,7 +64,7 @@ const createHoliday = async (req, res, next) => {
             data: { date, name },
         });
     } catch (error) {
-        if (error.code === 'ER_DUP_ENTRY') {
+        if (String(error?.code || '') === '23505' || error.code === 'ER_DUP_ENTRY') {
             return res.status(400).json({
                 error: 'Ya existe un festivo para esta fecha',
             });

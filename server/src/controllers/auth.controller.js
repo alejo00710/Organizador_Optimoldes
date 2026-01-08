@@ -347,7 +347,8 @@ module.exports = {
 async function bootstrapStatus(req, res, next) {
     try {
         const rows = await query(
-            'SELECT username, role FROM users WHERE username IN ("admin", "jefe") LIMIT 2'
+            'SELECT username, role FROM users WHERE username IN (?, ?) LIMIT 2',
+            ['admin', 'jefe']
         );
         const adminExists = rows.some((r) => r.username === 'admin' && r.role === ROLES.ADMIN);
         const jefeExists = rows.some((r) => r.username === 'jefe' && r.role === ROLES.PLANNER);
@@ -368,7 +369,8 @@ async function bootstrapInit(req, res, next) {
 
         // Estado actual
         const rows = await query(
-            'SELECT username, role FROM users WHERE username IN ("admin", "jefe") LIMIT 2'
+            'SELECT username, role FROM users WHERE username IN (?, ?) LIMIT 2',
+            ['admin', 'jefe']
         );
         const adminExists = rows.some((r) => r.username === 'admin' && r.role === ROLES.ADMIN);
         const jefeExists = rows.some((r) => r.username === 'jefe' && r.role === ROLES.PLANNER);
@@ -408,7 +410,7 @@ async function bootstrapInit(req, res, next) {
         res.status(201).json({ message: 'Bootstrap completado', created });
     } catch (e) {
         // Si hay carrera y ya existe, devolvemos mensaje claro
-        if (String(e?.code || '').toUpperCase() === 'ER_DUP_ENTRY') {
+        if (String(e?.code || '') === '23505' || String(e?.code || '').toUpperCase() === 'ER_DUP_ENTRY') {
             return res.status(409).json({ error: 'Bootstrap ya se ejecutó (usuario existente)' });
         }
         next(e);

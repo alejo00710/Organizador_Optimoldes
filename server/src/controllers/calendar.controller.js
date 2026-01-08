@@ -23,7 +23,7 @@ const getMonthView = async (req, res, next) => {
         // 1) Plan: fechas como strings YYYY-MM-DD para evitar TZ
         const planSql = `
             SELECT 
-                DATE_FORMAT(p.date, '%Y-%m-%d') AS date_str,
+                to_char(p.date, 'YYYY-MM-DD') AS date_str,
                 p.id AS entry_id,
                 p.hours_planned,
                 p.is_priority,

@@ -95,8 +95,8 @@ const getMoldProgress = async (req, res, next) => {
 
         const plannedRows = await query(
             `SELECT
-               MIN(DATE_FORMAT(date, '%Y-%m-%d')) AS startDate,
-               MAX(DATE_FORMAT(date, '%Y-%m-%d')) AS endDate,
+                             to_char(MIN(date), 'YYYY-MM-DD') AS startDate,
+                             to_char(MAX(date), 'YYYY-MM-DD') AS endDate,
                SUM(hours_planned) AS plannedTotal,
                SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS plannedToDate
              FROM plan_entries
@@ -108,7 +108,7 @@ const getMoldProgress = async (req, res, next) => {
         const actualRows = await query(
             `SELECT
                SUM(hours_worked) AS actualTotal,
-               SUM(CASE WHEN COALESCE(work_date, DATE(recorded_at)) <= ? THEN hours_worked ELSE 0 END) AS actualToDate
+                             SUM(CASE WHEN COALESCE(work_date, recorded_at::date) <= ? THEN hours_worked ELSE 0 END) AS actualToDate
              FROM work_logs
              WHERE mold_id = ?`,
             [todayISO, moldId]
@@ -123,7 +123,7 @@ const getMoldProgress = async (req, res, next) => {
 
         // Series diaria (para poder graficar si se desea)
         const plannedDaily = await query(
-            `SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, SUM(hours_planned) AS planned
+            `SELECT to_char(date, 'YYYY-MM-DD') AS d, SUM(hours_planned) AS planned
              FROM plan_entries
              WHERE mold_id = ?
              GROUP BY date
@@ -131,11 +131,11 @@ const getMoldProgress = async (req, res, next) => {
             [moldId]
         );
         const actualDaily = await query(
-            `SELECT DATE_FORMAT(COALESCE(work_date, DATE(recorded_at)), '%Y-%m-%d') AS d, SUM(hours_worked) AS actual
+            `SELECT to_char(COALESCE(work_date, recorded_at::date), 'YYYY-MM-DD') AS d, SUM(hours_worked) AS actual
              FROM work_logs
              WHERE mold_id = ?
-             GROUP BY d
-             ORDER BY d ASC`,
+             GROUP BY COALESCE(work_date, recorded_at::date)
+             ORDER BY COALESCE(work_date, recorded_at::date) ASC`,
             [moldId]
         );
 
@@ -203,8 +203,8 @@ const getMoldsInProgress = async (req, res, next) => {
              JOIN (
                SELECT
                  mold_id,
-                 MIN(DATE_FORMAT(date, '%Y-%m-%d')) AS startDate,
-                 MAX(DATE_FORMAT(date, '%Y-%m-%d')) AS endDate,
+                                 to_char(MIN(date), 'YYYY-MM-DD') AS startDate,
+                                 to_char(MAX(date), 'YYYY-MM-DD') AS endDate,
                  SUM(hours_planned) AS plannedTotal,
                  SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS plannedToDate
                FROM plan_entries
@@ -214,7 +214,7 @@ const getMoldsInProgress = async (req, res, next) => {
                SELECT
                  mold_id,
                  SUM(hours_worked) AS actualTotal,
-                 SUM(CASE WHEN COALESCE(work_date, DATE(recorded_at)) <= ? THEN hours_worked ELSE 0 END) AS actualToDate
+                                 SUM(CASE WHEN COALESCE(work_date, recorded_at::date) <= ? THEN hours_worked ELSE 0 END) AS actualToDate
                FROM work_logs
                GROUP BY mold_id
              ) wl ON wl.mold_id = mo.id

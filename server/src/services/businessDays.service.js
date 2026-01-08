@@ -15,7 +15,7 @@ const loadHolidays = async () => {
 
     // Festivos de DB
     try {
-        const rows = await query('SELECT DATE_FORMAT(date, "%Y-%m-%d") AS date_str, name FROM holidays');
+        const rows = await query("SELECT to_char(date, 'YYYY-MM-DD') AS date_str, name FROM holidays");
         for (const r of rows) {
             newSet.add(r.date_str);
             newMap.set(r.date_str, r.name);
@@ -40,7 +40,7 @@ const loadHolidays = async () => {
 
     // Overrides desde DB (si existe)
     try {
-        const orows = await query('SELECT DATE_FORMAT(date, "%Y-%m-%d") AS date_str, is_working FROM working_overrides');
+        const orows = await query("SELECT to_char(date, 'YYYY-MM-DD') AS date_str, is_working FROM working_overrides");
         workingOverrides = new Map(orows.map(r => [r.date_str, !!r.is_working]));
     } catch (e) {
         workingOverrides = new Map();
@@ -51,11 +51,14 @@ const loadHolidays = async () => {
 
 const setWorkingOverride = async (dateStr, isWorking) => {
     try {
-        await query(`
-            INSERT INTO working_overrides (date, is_working) 
-            VALUES (?, ?) 
-            ON DUPLICATE KEY UPDATE is_working = VALUES(is_working)
-        `, [dateStr, isWorking ? 1 : 0]);
+        await query(
+            `
+            INSERT INTO working_overrides (date, is_working)
+            VALUES (?, ?)
+            ON CONFLICT (date) DO UPDATE SET is_working = EXCLUDED.is_working
+        `,
+            [dateStr, !!isWorking]
+        );
         workingOverrides.set(dateStr, !!isWorking);
     } catch (e) {
         console.error('Error guardando override:', e.message);

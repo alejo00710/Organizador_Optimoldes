@@ -15,8 +15,14 @@ async function initializeDatabase() {
     let rootConnection;
     try {
         rootConnection = await createRootConnection();
-        await rootConnection.query(`CREATE DATABASE IF NOT EXISTS \`${db.name}\`;`);
-        console.log(`✅ Base de datos "${db.name}" asegurada.`);
+        const exists = await rootConnection.query('SELECT 1 FROM pg_database WHERE datname = $1', [db.name]);
+        if (!exists.rows.length) {
+            const qName = rootConnection.__quoteDbName ? rootConnection.__quoteDbName() : `"${db.name}"`;
+            await rootConnection.query(`CREATE DATABASE ${qName};`);
+            console.log(`✅ Base de datos "${db.name}" creada.`);
+        } else {
+            console.log(`✅ Base de datos "${db.name}" ya existe.`);
+        }
     } catch (error) {
         console.error(`❌ Error fatal al crear la base de datos:`, error.message);
         process.exit(1);
@@ -29,6 +35,7 @@ async function initializeDatabase() {
         const schemaPath = path.join(__dirname, '../../schema.sql');
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
         const pool = require('./database').createPool();
+        // pg permite múltiples sentencias en query simple (sin parámetros)
         await pool.query(schemaSql);
         console.log('✅ Tablas verificadas y aseguradas.');
 
@@ -37,13 +44,13 @@ async function initializeDatabase() {
             const col = await query(
                 `SELECT COUNT(1) AS cnt
                  FROM information_schema.columns
-                 WHERE table_schema = DATABASE()
+                 WHERE table_schema = 'public'
                    AND table_name = 'plan_entries'
                    AND column_name = 'is_priority'`
             );
             const hasCol = Number(col?.[0]?.cnt || 0) > 0;
             if (!hasCol) {
-                await query(`ALTER TABLE plan_entries ADD COLUMN is_priority TINYINT(1) NOT NULL DEFAULT 0`);
+                await query(`ALTER TABLE plan_entries ADD COLUMN is_priority BOOLEAN NOT NULL DEFAULT FALSE`);
                 console.log('✅ Migración aplicada: plan_entries.is_priority');
             }
         } catch (e) {
@@ -55,14 +62,14 @@ async function initializeDatabase() {
             const col = await query(
                 `SELECT COUNT(1) AS cnt
                  FROM information_schema.columns
-                 WHERE table_schema = DATABASE()
+                 WHERE table_schema = 'public'
                    AND table_name = 'work_logs'
                    AND column_name = 'work_date'`
             );
             const hasCol = Number(col?.[0]?.cnt || 0) > 0;
             if (!hasCol) {
-                await query(`ALTER TABLE work_logs ADD COLUMN work_date DATE NULL AFTER operator_id`);
-                await query(`UPDATE work_logs SET work_date = DATE(recorded_at) WHERE work_date IS NULL`);
+                await query(`ALTER TABLE work_logs ADD COLUMN work_date DATE NULL`);
+                await query(`UPDATE work_logs SET work_date = recorded_at::date WHERE work_date IS NULL`);
                 try {
                     await query(`CREATE INDEX idx_work_logs_work_date ON work_logs (work_date)`);
                 } catch (_) {}
@@ -80,13 +87,13 @@ async function initializeDatabase() {
             const col = await query(
                 `SELECT COUNT(1) AS cnt
                  FROM information_schema.columns
-                 WHERE table_schema = DATABASE()
+                 WHERE table_schema = 'public'
                    AND table_name = 'work_logs'
                    AND column_name = 'reason'`
             );
             const hasCol = Number(col?.[0]?.cnt || 0) > 0;
             if (!hasCol) {
-                await query(`ALTER TABLE work_logs ADD COLUMN reason TEXT NULL AFTER hours_worked`);
+                await query(`ALTER TABLE work_logs ADD COLUMN reason TEXT NULL`);
                 console.log('✅ Migración aplicada: work_logs.reason');
             }
         } catch (e) {
@@ -98,13 +105,13 @@ async function initializeDatabase() {
             const col = await query(
                 `SELECT COUNT(1) AS cnt
                  FROM information_schema.columns
-                 WHERE table_schema = DATABASE()
+                 WHERE table_schema = 'public'
                    AND table_name = 'operators'
                    AND column_name = 'password_hash'`
             );
             const hasCol = Number(col?.[0]?.cnt || 0) > 0;
             if (!hasCol) {
-                await query(`ALTER TABLE operators ADD COLUMN password_hash VARCHAR(255) NULL AFTER user_id`);
+                await query(`ALTER TABLE operators ADD COLUMN password_hash VARCHAR(255) NULL`);
                 console.log('✅ Migración aplicada: operators.password_hash');
             }
         } catch (e) {
@@ -115,20 +122,18 @@ async function initializeDatabase() {
         try {
             await query(
                 `CREATE TABLE IF NOT EXISTS user_sessions (
-                  id INT AUTO_INCREMENT PRIMARY KEY,
-                  user_id INT NOT NULL,
-                  operator_id INT NULL,
-                  role ENUM('admin', 'planner', 'operator') NOT NULL,
+                  id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  operator_id INTEGER NULL REFERENCES operators(id) ON DELETE SET NULL,
+                  role TEXT NOT NULL CHECK (role IN ('admin','planner','operator')),
                   ip VARCHAR(64) NULL,
                   user_agent VARCHAR(255) NULL,
-                  login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  logout_at TIMESTAMP NULL,
-                  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE SET NULL,
-                  INDEX idx_user_sessions_user (user_id),
-                  INDEX idx_user_sessions_login (login_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
+                  login_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  logout_at TIMESTAMPTZ NULL
+                );`
             );
+            try { await query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions (user_id)`); } catch (_) {}
+            try { await query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_login ON user_sessions (login_at)`); } catch (_) {}
         } catch (e) {
             console.warn('⚠️ No se pudo asegurar tabla user_sessions:', e.message);
         }

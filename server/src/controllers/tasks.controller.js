@@ -34,8 +34,8 @@ function isValidISODateString(s) {
    ========================================= */
 async function getWorkingMeta() {
   // Cadenas YYYY-MM-DD desde SQL para evitar TZ
-  const holidays = await query(`SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d FROM holidays`);
-  const overrides = await query(`SELECT DATE_FORMAT(date, '%Y-%m-%d') AS d, is_working FROM working_overrides`);
+  const holidays = await query("SELECT to_char(date, 'YYYY-MM-DD') AS d FROM holidays");
+  const overrides = await query("SELECT to_char(date, 'YYYY-MM-DD') AS d, is_working FROM working_overrides");
   const holidaySet = new Set(holidays.map(h => h.d));
 
   // Alinear con el calendario: incluir festivos automáticos de Colombia
@@ -238,7 +238,7 @@ async function placeBlockNoPreempt({ mold_id, machine_id, capPerDay, baseDateISO
 // Bloques existentes desde baseDate, preservando orden original
 async function getExistingBlocksFrom(machine_id, baseDateISO, holidaySet, overrideMap) {
   const rows = await query(
-    `SELECT DATE_FORMAT(date, '%Y-%m-%d') AS date_str, mold_id, part_id, hours_planned, is_priority
+    `SELECT to_char(date, 'YYYY-MM-DD') AS date_str, mold_id, part_id, hours_planned, is_priority
      FROM plan_entries
      WHERE machine_id = ? AND date >= ?
      ORDER BY date ASC, id ASC`,
@@ -554,8 +554,8 @@ exports.getMoldPlan = async (req, res, next) => {
     if (!moldRows.length) return res.status(404).json({ error: 'Molde no encontrado' });
 
     const rangeRows = await query(
-      `SELECT DATE_FORMAT(MIN(date), '%Y-%m-%d') AS startDate,
-              DATE_FORMAT(MAX(date), '%Y-%m-%d') AS endDate
+      `SELECT to_char(MIN(date), 'YYYY-MM-DD') AS startDate,
+              to_char(MAX(date), 'YYYY-MM-DD') AS endDate
        FROM plan_entries
        WHERE mold_id = ?`,
       [moldId]
@@ -566,7 +566,7 @@ exports.getMoldPlan = async (req, res, next) => {
     const entries = await query(
       `SELECT
           p.id AS entryId,
-          DATE_FORMAT(p.date, '%Y-%m-%d') AS date,
+          to_char(p.date, 'YYYY-MM-DD') AS date,
           p.hours_planned AS hours,
           ma.id AS machineId,
           ma.name AS machine,
@@ -612,7 +612,7 @@ exports.updatePlanEntry = async (req, res, next) => {
     if (!newMachineName) return res.status(400).json({ error: 'machineName requerido' });
 
     const entryRows = await query(
-      `SELECT id, mold_id, machine_id, DATE_FORMAT(date,'%Y-%m-%d') AS date_str, hours_planned
+      `SELECT id, mold_id, machine_id, to_char(date,'YYYY-MM-DD') AS date_str, hours_planned
        FROM plan_entries WHERE id = ? LIMIT 1`,
       [entryId]
     );
@@ -674,7 +674,7 @@ exports.movePlanEntryToNextAvailable = async (req, res, next) => {
     }
 
     const entryRows = await query(
-      `SELECT id, mold_id, machine_id, DATE_FORMAT(date,'%Y-%m-%d') AS date_str, hours_planned
+      `SELECT id, mold_id, machine_id, to_char(date,'YYYY-MM-DD') AS date_str, hours_planned
        FROM plan_entries WHERE id = ? LIMIT 1`,
       [entryId]
     );

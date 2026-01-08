@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const path = require('path');
 const { port } = require('./config/env');
 const errorHandler = require('./middleware/errorHandler');
 const { initializeDatabase } = require('./config/setupDatabase');
@@ -50,7 +51,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Servir archivos estáticos ANTES de las rutas API
-app.use(express.static('public'));
+const publicDir = path.join(__dirname, '..', '..', 'public');
+app.use(express.static(publicDir));
 
 // Logging middleware (opcional pero útil)
 app.use((req, res, next) => {

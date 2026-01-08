@@ -19,8 +19,8 @@ const getPlannedVsActual = async (filters) => {
     if (startDate) { plannedConds.push('date >= ?'); plannedParams.push(startDate); }
     if (endDate) { plannedConds.push('date <= ?'); plannedParams.push(endDate); }
 
-    if (startDate) { actualConds.push('DATE(recorded_at) >= ?'); actualParams.push(startDate); }
-    if (endDate) { actualConds.push('DATE(recorded_at) <= ?'); actualParams.push(endDate); }
+    if (startDate) { actualConds.push('recorded_at::date >= ?'); actualParams.push(startDate); }
+    if (endDate) { actualConds.push('recorded_at::date <= ?'); actualParams.push(endDate); }
 
     const plannedWhere = plannedConds.length ? `WHERE ${plannedConds.join(' AND ')}` : '';
     const actualWhere = actualConds.length ? `WHERE ${actualConds.join(' AND ')}` : '';

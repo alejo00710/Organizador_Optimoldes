@@ -33,11 +33,11 @@ Este README refleja exactamente el estado actual del código.
 │  Node.js + Express                               │
 │  Puerto: 3000                                    │
 └─────────────────┬───────────────────────────────┘
-                  │ MySQL
+                  │ PostgreSQL
                   │
 ┌─────────────────▼───────────────────────────────┐
 │                BASE DE DATOS                    │
-│  MySQL 8.0+                                     │
+│  PostgreSQL 14+                                 │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -45,9 +45,9 @@ Este README refleja exactamente el estado actual del código.
 
 ## 🛠️ Tecnologías
 
-- Backend: Node.js (Express), MySQL2, JWT, Helmet, CORS, dotenv
+- Backend: Node.js (Express), pg (PostgreSQL), JWT, Helmet, CORS, dotenv
 - Frontend: HTML5, CSS3, JavaScript ES6+
-- DB: MySQL 8.0+
+- DB: PostgreSQL 14+
 - Dev: nodemon
 
 ---
@@ -158,7 +158,7 @@ Organizador_Optimoldes/
 
 ## 🚀 Instalación
 
-Requisitos: Node.js 18+, MySQL 8+
+Requisitos: Node.js 18+, PostgreSQL 14+
 
 1) Clonar e instalar
 ```bash
@@ -173,8 +173,8 @@ PORT=3000
 NODE_ENV=development
 
 DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
+DB_PORT=5432
+DB_USER=postgres
 DB_PASSWORD=tu_password
 DB_NAME=production_scheduler
 
