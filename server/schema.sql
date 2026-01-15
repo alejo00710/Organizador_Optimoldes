@@ -108,6 +108,35 @@ CREATE TABLE IF NOT EXISTS working_overrides (
 );
 
 -- ============================================
+-- Snapshots de parrilla del Planificador (para reabrir exactamente lo digitado)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS planner_grid_snapshots (
+  mold_id INTEGER NOT NULL REFERENCES molds(id) ON DELETE CASCADE,
+  start_date DATE NOT NULL,
+  snapshot_json JSONB NOT NULL,
+  created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+  updated_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (mold_id, start_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_planner_grid_snapshots_updated_at ON planner_grid_snapshots (updated_at);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_planner_grid_snapshots_set_updated_at'
+  ) THEN
+    CREATE TRIGGER trg_planner_grid_snapshots_set_updated_at
+    BEFORE UPDATE ON planner_grid_snapshots
+    FOR EACH ROW
+    EXECUTE FUNCTION set_updated_at();
+  END IF;
+END$$;
+
+-- ============================================
 -- Tiempos trabajados (Work logs)
 -- ============================================
 

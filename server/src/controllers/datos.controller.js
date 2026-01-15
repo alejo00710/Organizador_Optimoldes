@@ -226,4 +226,22 @@ const getMeta = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-module.exports = { listDatos, createDato, updateDato, deleteDato, getMeta };
+// GET /datos/hours-options
+// Devuelve lista de horas (distinct) realmente importadas/registradas en datos.
+const getHoursOptions = async (req, res, next) => {
+  try {
+    const rows = await query(
+      `SELECT DISTINCT horas AS v
+       FROM datos
+       WHERE horas IS NOT NULL
+       ORDER BY horas ASC
+       LIMIT 500`
+    );
+    const hours = rows
+      .map(r => (r && r.v != null ? Number(r.v) : null))
+      .filter(v => Number.isFinite(v));
+    res.json({ hours });
+  } catch (e) { next(e); }
+};
+
+module.exports = { listDatos, createDato, updateDato, deleteDato, getMeta, getHoursOptions };

@@ -12,6 +12,30 @@ router.post(
   tasksController.planBlock
 );
 
+// Listado de moldes planificados
+router.get(
+  '/plan/molds',
+  authenticateToken,
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  tasksController.listPlannedMolds
+);
+
+// Snapshot de parrilla del planificador (para reabrir exactamente lo digitado)
+router.get(
+  '/plan/snapshot',
+  authenticateToken,
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  tasksController.getPlannerSnapshot
+);
+
+// Reemplazar planificación de un molde (desde startDate)
+router.post(
+  '/plan/replace',
+  authenticateToken,
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  tasksController.replaceMoldPlan
+);
+
 // Planificación con PRIORIDAD en bloque (global, reubica bloques existentes)
 router.post(
   '/plan/priority',

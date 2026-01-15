@@ -81,6 +81,39 @@ function toStr(v) { return v == null ? null : String(v).trim(); }
 function round025(n) { return Math.round(n / 0.25) * 0.25; }
 function getRequestUserId(req) { return req.user?.id ?? req.user?.userId ?? req.user?.uid ?? null; }
 
+async function upsertPlannerGridSnapshot({ mold_id, startDateISO, snapshot, userId }) {
+  if (!mold_id || !startDateISO || !snapshot) return;
+  if (!isValidISODateString(startDateISO)) return;
+
+  const payload = (typeof snapshot === 'string') ? snapshot : JSON.stringify(snapshot);
+
+  await query(
+    `INSERT INTO planner_grid_snapshots (mold_id, start_date, snapshot_json, created_by, updated_by)
+     VALUES (?,?,?::jsonb,?,?)
+     ON CONFLICT (mold_id, start_date)
+     DO UPDATE SET snapshot_json = EXCLUDED.snapshot_json, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+    [mold_id, startDateISO, payload, userId, userId]
+  );
+}
+
+async function getPlannerGridSnapshot({ mold_id, startDateISO }) {
+  if (!mold_id) return null;
+  if (startDateISO && !isValidISODateString(startDateISO)) return null;
+
+  const rows = await query(
+    `SELECT to_char(start_date,'YYYY-MM-DD') AS start_date, snapshot_json
+     FROM planner_grid_snapshots
+     WHERE mold_id = ?
+     ${startDateISO ? 'AND start_date = ?' : ''}
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    startDateISO ? [mold_id, startDateISO] : [mold_id]
+  );
+  if (!rows.length) return null;
+
+  return { startDate: rows[0].start_date, snapshot: rows[0].snapshot_json };
+}
+
 // Mapeo de alias del frontend -> nombres canónicos en BD
 function mapMachineAlias(name) {
   const ALIAS_TO_NAME = {
@@ -283,7 +316,7 @@ exports.planBlock = async (req, res, next) => {
     const createdBy = getRequestUserId(req);
     if (!createdBy) return res.status(403).json({ error: 'Usuario no válido para crear planificación' });
 
-    const { moldName, startDate, tasks } = req.body;
+    const { moldName, startDate, tasks, gridSnapshot } = req.body;
     if (!moldName || !startDate) return res.status(400).json({ error: 'moldName y startDate son requeridos' });
     if (!Array.isArray(tasks) || tasks.length === 0) return res.status(400).json({ error: 'Debe enviar tasks' });
 
@@ -373,8 +406,185 @@ exports.planBlock = async (req, res, next) => {
       results.push({ machineName, machine_id, startDate: localISO(startLocal), endDate: lastDay, capacityPerDay: cap });
     }
 
+    // Snapshot opcional (rehidratar parrilla exactamente como se digitó)
+    try {
+      if (gridSnapshot) {
+        await upsertPlannerGridSnapshot({ mold_id, startDateISO: localISO(startLocal), snapshot: gridSnapshot, userId: createdBy });
+      }
+    } catch (e) {
+      console.warn('[planner snapshot] no se pudo guardar (planBlock):', e?.message || e);
+    }
+
     res.status(201).json({ message: 'Plan en bloque creado (no mezcla)', results });
   } catch (e) { next(e); }
+};
+
+// Listado de moldes con planificación (por defecto: desde hoy)
+exports.listPlannedMolds = async (req, res, next) => {
+  try {
+    const from = (req.query?.from ? String(req.query.from) : '').trim();
+    const to = (req.query?.to ? String(req.query.to) : '').trim();
+
+    const isoRe = /^\d{4}-\d{2}-\d{2}$/;
+    const fromISO = from && isoRe.test(from) ? from : localISO(todayLocal());
+    const toISO = to && isoRe.test(to) ? to : null;
+
+    const sql = `
+      SELECT
+        mo.id AS "moldId",
+        mo.name AS "moldName",
+        to_char(MIN(p.date), 'YYYY-MM-DD') AS "startDate",
+        to_char(MAX(p.date), 'YYYY-MM-DD') AS "endDate",
+        SUM(p.hours_planned) AS "totalHours"
+      FROM plan_entries p
+      JOIN molds mo ON p.mold_id = mo.id
+      WHERE p.date >= ?
+      ${toISO ? 'AND p.date <= ?' : ''}
+      GROUP BY mo.id, mo.name
+      ORDER BY MIN(p.date) ASC, mo.name ASC
+    `;
+
+    const rows = await query(sql, toISO ? [fromISO, toISO] : [fromISO]);
+    res.json({ from: fromISO, to: toISO, molds: (rows || []).map(r => ({
+      moldId: Number(r.moldId),
+      moldName: r.moldName,
+      startDate: r.startDate,
+      endDate: r.endDate,
+      totalHours: Number(r.totalHours || 0)
+    })) });
+  } catch (e) {
+    next(e);
+  }
+};
+
+// Obtener snapshot de parrilla (por molde y opcionalmente startDate)
+exports.getPlannerSnapshot = async (req, res, next) => {
+  try {
+    const moldId = Number.parseInt(String(req.query?.moldId || ''), 10);
+    const startDate = (req.query?.startDate ? String(req.query.startDate) : '').trim();
+
+    if (!Number.isFinite(moldId) || moldId <= 0) return res.status(400).json({ error: 'moldId inválido' });
+    if (startDate && !isValidISODateString(startDate)) return res.status(400).json({ error: 'startDate inválida (YYYY-MM-DD)' });
+
+    const snap = await getPlannerGridSnapshot({ mold_id: moldId, startDateISO: startDate || null });
+    if (!snap) return res.status(404).json({ error: 'Snapshot no encontrado' });
+    res.json({ moldId, startDate: snap.startDate, snapshot: snap.snapshot });
+  } catch (e) {
+    next(e);
+  }
+};
+
+// Reemplaza la planificación FUTURA de un molde desde startDate
+exports.replaceMoldPlan = async (req, res, next) => {
+  try {
+    const createdBy = getRequestUserId(req);
+    if (!createdBy) return res.status(403).json({ error: 'Usuario no válido para crear planificación' });
+
+    const { moldName, startDate, tasks, gridSnapshot } = req.body;
+    if (!moldName || !startDate) return res.status(400).json({ error: 'moldName y startDate son requeridos' });
+    if (!Array.isArray(tasks) || tasks.length === 0) return res.status(400).json({ error: 'Debe enviar tasks' });
+
+    const rawStart = (startDate || '').trim();
+    const startLocal = parseLocalISO(rawStart);
+    if (!rawStart || isNaN(startLocal.getTime())) return res.status(400).json({ error: 'startDate inválida (YYYY-MM-DD)' });
+
+    const { holidaySet, overrideMap } = await getWorkingMeta();
+    const today = todayLocal();
+
+    if (localISO(startLocal) < localISO(today)) return res.status(400).json({ error: 'No se puede planificar en fechas pasadas' });
+    if (!isWorkingDayLocal(startLocal, holidaySet, overrideMap)) return res.status(400).json({ error: 'La fecha seleccionada no es laborable' });
+
+    const mold_id = await getOrCreateMoldId(moldName);
+
+    // Validación estricta del payload
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      const partName = toStr(t?.partName);
+      const machineName = mapMachineAlias(toStr(t?.machineName));
+      const rawHours = parseFloat(t?.totalHours);
+      const hours = round025(rawHours);
+
+      if (!partName) return res.status(400).json({ error: `Tarea inválida en index ${i}: partName requerido` });
+      if (!machineName) return res.status(400).json({ error: `Tarea inválida en index ${i}: machineName requerido` });
+      if (!Number.isFinite(rawHours)) return res.status(400).json({ error: `Tarea inválida en index ${i}: totalHours inválido` });
+      if (hours <= 0) return res.status(400).json({ error: `Tarea inválida en index ${i}: totalHours debe ser > 0` });
+    }
+
+    // Borrar planificación futura de ESTE molde desde startDate
+    const baseISO = localISO(startLocal);
+    await query('DELETE FROM plan_entries WHERE mold_id = ? AND date >= ?', [mold_id, baseISO]);
+
+    // Re-armar tareas por máquina
+    const byMachine = new Map();
+    for (const t of tasks) {
+      const partName = toStr(t?.partName);
+      const machineName = mapMachineAlias(toStr(t?.machineName));
+      const hours = round025(parseFloat(t?.totalHours));
+      const part_id = await getOrCreatePartId(partName);
+      const arr = byMachine.get(machineName) || [];
+      arr.push({ part_id, hours });
+      byMachine.set(machineName, arr);
+    }
+
+    // Misma restricción del plan normal: startDate debe estar libre por máquina (con excepción último día)
+    for (const [machineName] of byMachine.entries()) {
+      const { id: machine_id, daily_capacity } = await getOrCreateMachineByName(machineName);
+      const cap = daily_capacity != null ? Number(daily_capacity) : 8;
+
+      const { used, moldIds } = await getDayUsage(machine_id, baseISO);
+      const capLeft = round025(cap - used);
+
+      if (used === 0) continue;
+
+      let allowed = false;
+      if (moldIds.length === 1 && capLeft > 0) {
+        const lastDay = await isLastDayOfBlock(machine_id, moldIds[0], baseISO, holidaySet, overrideMap);
+        if (lastDay) allowed = true;
+      }
+
+      if (!allowed) {
+        const existingMoldId = moldIds.length ? moldIds[0] : null;
+        const existingMoldName = existingMoldId ? await getMoldNameById(existingMoldId) : null;
+        return res.status(400).json({
+          error: `No se puede planificar en ${baseISO}: la máquina "${machineName}" ya tiene un molde planificado${existingMoldName ? ` ("${existingMoldName}")` : ''}. Use PRIORIDAD si desea correr la planificación existente.`
+        });
+      }
+    }
+
+    const results = [];
+    for (const [machineName, items] of byMachine.entries()) {
+      const { id: machine_id, daily_capacity } = await getOrCreateMachineByName(machineName);
+      const cap = daily_capacity != null ? Number(daily_capacity) : 8;
+
+      const lastDay = await placeBlockNoPreempt({
+        mold_id,
+        machine_id,
+        capPerDay: cap,
+        baseDateISO: baseISO,
+        tasksQueue: items,
+        createdBy,
+        holidaySet,
+        overrideMap,
+        allowShareLastDay: true,
+        isPriority: false
+      });
+
+      results.push({ machineName, machine_id, startDate: baseISO, endDate: lastDay, capacityPerDay: cap });
+    }
+
+    // Snapshot actualizado (si viene)
+    try {
+      if (gridSnapshot) {
+        await upsertPlannerGridSnapshot({ mold_id, startDateISO: baseISO, snapshot: gridSnapshot, userId: createdBy });
+      }
+    } catch (e) {
+      console.warn('[planner snapshot] no se pudo guardar (replaceMoldPlan):', e?.message || e);
+    }
+
+    res.status(200).json({ message: 'Plan del molde actualizado (reemplazo desde startDate)', results });
+  } catch (e) {
+    next(e);
+  }
 };
 
 // Planificación con PRIORIDAD (GLOBAL, bloques sin mezcla)
@@ -384,7 +594,7 @@ exports.planPriority = async (req, res, next) => {
     const createdBy = getRequestUserId(req);
     if (!createdBy) return res.status(403).json({ error: 'Usuario no válido para crear planificación' });
 
-    const { moldName, startDate, tasks } = req.body;
+    const { moldName, startDate, tasks, gridSnapshot } = req.body;
     if (!moldName) return res.status(400).json({ error: 'moldName es requerido' });
     if (!Array.isArray(tasks) || tasks.length === 0) return res.status(400).json({ error: 'Debe enviar tasks' });
 
@@ -406,6 +616,15 @@ exports.planPriority = async (req, res, next) => {
     const baseISO = localISO(base);
 
     const mold_id = await getOrCreateMoldId(moldName);
+
+    // Snapshot opcional (en prioridad, el startDate efectivo es baseISO)
+    try {
+      if (gridSnapshot) {
+        await upsertPlannerGridSnapshot({ mold_id, startDateISO: baseISO, snapshot: gridSnapshot, userId: createdBy });
+      }
+    } catch (e) {
+      console.warn('[planner snapshot] no se pudo guardar (planPriority):', e?.message || e);
+    }
 
     // Validación estricta del payload (no ignorar filas inválidas)
     for (let i = 0; i < tasks.length; i++) {

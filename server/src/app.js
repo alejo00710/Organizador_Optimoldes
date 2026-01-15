@@ -153,17 +153,19 @@ async function startServer() {
         });
     });
 }
-startServer();
+if (require.main === module) {
+    startServer();
 
-// Manejo de errores no capturados
-process.on('uncaughtException', (error) => {
-    console.error('❌ Error no capturado:', error);
-    process.exit(1);
-});
+    // Manejo de errores no capturados
+    process.on('uncaughtException', (error) => {
+        console.error('❌ Error no capturado:', error);
+        process.exit(1);
+    });
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Promesa rechazada no manejada:', reason);
-    process.exit(1);
-});
+    process.on('unhandledRejection', (reason, promise) => {
+        console.error('❌ Promesa rechazada no manejada:', reason);
+        process.exit(1);
+    });
+}
 
 module.exports = app;

@@ -12,6 +12,8 @@ router.post('/', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER, R
 router.put('/:id', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER), datosController.updateDato);
 // Eliminar (solo admin)
 router.delete('/:id', authenticateToken, authorizeRoles(ROLES.ADMIN), datosController.deleteDato);
+// Horas disponibles (distinct) desde datos
+router.get('/hours-options', authenticateToken, datosController.getHoursOptions);
 // Meta para autocompletar
 router.get('/meta', authenticateToken, datosController.getMeta);
 

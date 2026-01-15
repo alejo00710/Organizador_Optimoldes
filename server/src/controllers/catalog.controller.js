@@ -7,8 +7,31 @@ exports.getMeta = async (req, res, next) => {
     const parts = await query('SELECT id, name, is_active FROM mold_parts WHERE is_active = TRUE ORDER BY name ASC');
     const machines = await query('SELECT id, name, daily_capacity, is_active FROM machines WHERE is_active = TRUE ORDER BY name ASC');
     const operators = await query('SELECT id, name, is_active FROM operators WHERE is_active = TRUE ORDER BY name ASC');
-    const processes = await query('SELECT id, name, is_active FROM processes WHERE is_active = TRUE ORDER BY name ASC');
-    const operations = await query('SELECT id, name, is_active FROM operations WHERE is_active = TRUE ORDER BY name ASC');
+    // Importante: procesos/operaciones se crean automáticamente al crear/importar datos.
+    // Para evitar que queden "fantasmas" en UI cuando se borran los últimos datos,
+    // devolvemos SOLO los que están en uso por al menos un registro en datos.
+    const processes = await query(`
+      SELECT p.id, p.name, p.is_active
+      FROM processes p
+      WHERE p.is_active = TRUE
+        AND EXISTS (
+          SELECT 1 FROM datos d
+          WHERE (d.process_id = p.id)
+             OR (d.tipo_proceso IS NOT NULL AND d.tipo_proceso <> '' AND LOWER(d.tipo_proceso) = LOWER(p.name))
+        )
+      ORDER BY p.name ASC
+    `);
+    const operations = await query(`
+      SELECT o.id, o.name, o.is_active
+      FROM operations o
+      WHERE o.is_active = TRUE
+        AND EXISTS (
+          SELECT 1 FROM datos d
+          WHERE (d.operation_id = o.id)
+             OR (d.operacion IS NOT NULL AND d.operacion <> '' AND LOWER(d.operacion) = LOWER(o.name))
+        )
+      ORDER BY o.name ASC
+    `);
     const yearsRows = await query(`SELECT DISTINCT anio AS v FROM datos WHERE anio IS NOT NULL ORDER BY anio DESC`);
     res.json({
       molds, parts, machines, operators, processes, operations, years: yearsRows.map(r=>r.v)

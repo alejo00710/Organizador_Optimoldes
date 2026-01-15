@@ -2,6 +2,11 @@ const jwt = require('jsonwebtoken');
 const { jwt: jwtConfig } = require('../config/env');
 const { ROLES } = require('../utils/constants');
 
+function isJefeUser(user) {
+  const u = user?.username == null ? '' : String(user.username).trim().toLowerCase();
+  return u === 'jefe';
+}
+
 /**
  * Normaliza el payload del JWT a un objeto user con id y role.
  * Acepta claves comunes: id, userId, uid; y role en raíz o en user.role.
@@ -56,6 +61,14 @@ const authorizeRoles = (...roles) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Usuario no autenticado' });
     }
+
+    // Compatibilidad: el usuario "jefe" debe tener permisos equivalentes a ADMIN.
+    // En la BD "jefe" existe como usuario (role=planner), así que lo elevamos aquí
+    // para que pase en endpoints que exigen explícitamente ROLES.ADMIN.
+    if (roles.includes(ROLES.ADMIN) && isJefeUser(req.user)) {
+      return next();
+    }
+
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         error: 'No tienes permisos para realizar esta acción',

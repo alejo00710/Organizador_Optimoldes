@@ -5,29 +5,35 @@ const { db } = require('./env');
 const { createRootConnection, query } = require('./database');
 
 async function initializeDatabase() {
-    if (process.env.NODE_ENV !== 'development') {
+    if (!['development', 'test'].includes(process.env.NODE_ENV)) {
         return;
     }
 
-    console.log('Entorno de desarrollo. Iniciando configuración de la base de datos...');
+    console.log(
+        process.env.NODE_ENV === 'test'
+            ? 'Entorno de test. Verificando esquema/migraciones (sin crear base de datos)...'
+            : 'Entorno de desarrollo. Iniciando configuración de la base de datos...'
+    );
 
-    // 1. Crear la base de datos si no existe
-    let rootConnection;
-    try {
-        rootConnection = await createRootConnection();
-        const exists = await rootConnection.query('SELECT 1 FROM pg_database WHERE datname = $1', [db.name]);
-        if (!exists.rows.length) {
-            const qName = rootConnection.__quoteDbName ? rootConnection.__quoteDbName() : `"${db.name}"`;
-            await rootConnection.query(`CREATE DATABASE ${qName};`);
-            console.log(`✅ Base de datos "${db.name}" creada.`);
-        } else {
-            console.log(`✅ Base de datos "${db.name}" ya existe.`);
+    // 1. Crear la base de datos si no existe (solo development)
+    if (process.env.NODE_ENV === 'development') {
+        let rootConnection;
+        try {
+            rootConnection = await createRootConnection();
+            const exists = await rootConnection.query('SELECT 1 FROM pg_database WHERE datname = $1', [db.name]);
+            if (!exists.rows.length) {
+                const qName = rootConnection.__quoteDbName ? rootConnection.__quoteDbName() : `"${db.name}"`;
+                await rootConnection.query(`CREATE DATABASE ${qName};`);
+                console.log(`✅ Base de datos "${db.name}" creada.`);
+            } else {
+                console.log(`✅ Base de datos "${db.name}" ya existe.`);
+            }
+        } catch (error) {
+            console.error(`❌ Error fatal al crear la base de datos:`, error.message);
+            process.exit(1);
+        } finally {
+            if (rootConnection) await rootConnection.end();
         }
-    } catch (error) {
-        console.error(`❌ Error fatal al crear la base de datos:`, error.message);
-        process.exit(1);
-    } finally {
-        if (rootConnection) await rootConnection.end();
     }
 
     // 2. Crear las tablas (el script SQL ahora maneja "IF NOT EXISTS")
@@ -136,6 +142,25 @@ async function initializeDatabase() {
             try { await query(`CREATE INDEX IF NOT EXISTS idx_user_sessions_login ON user_sessions (login_at)`); } catch (_) {}
         } catch (e) {
             console.warn('⚠️ No se pudo asegurar tabla user_sessions:', e.message);
+        }
+
+        // planner_grid_snapshots (snapshots de parrilla del Planificador)
+        try {
+            await query(
+                `CREATE TABLE IF NOT EXISTS planner_grid_snapshots (
+                  mold_id INTEGER NOT NULL REFERENCES molds(id) ON DELETE CASCADE,
+                  start_date DATE NOT NULL,
+                  snapshot_json JSONB NOT NULL,
+                  created_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+                  updated_by INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                  PRIMARY KEY (mold_id, start_date)
+                );`
+            );
+            try { await query(`CREATE INDEX IF NOT EXISTS idx_planner_grid_snapshots_updated_at ON planner_grid_snapshots (updated_at)`); } catch (_) {}
+        } catch (e) {
+            console.warn('⚠️ No se pudo asegurar tabla planner_grid_snapshots:', e.message);
         }
     } catch (error) {
         console.error(`❌ Error al ejecutar el script del schema:`, error.message);

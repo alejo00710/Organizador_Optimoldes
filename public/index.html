@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sistema de Producción de Moldes</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260109b">
   <link rel="icon"
     href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🏭%3C/text%3E%3C/svg%3E">
 </head>
@@ -87,14 +87,14 @@
       <div class="card">
         <div class="tabs">
           <button class="tab active" data-tab="plan">📊 Cuadro Planificador</button>
-          <button class="tab" data-tab="datos">🗂️ Datos</button>
-          <button class="tab" data-tab="tiempos">⏱️ Tiempos de Moldes</button>
-          <button class="tab" data-tab="registros">📋 Registros</button>
-          <button class="tab" data-tab="importar">📥 Importar</button>
-          <button class="tab" data-tab="config">⚙️ Configuración</button>
           <button class="tab" data-tab="calendar">📅 Calendario</button>
+          <button class="tab" data-tab="config">⚙️ Configuración</button>
+          <button class="tab" data-tab="datos">🗂️ Datos</button>
+          <button class="tab" data-tab="importar">📥 Importar</button>
           <button class="tab" data-tab="indicators">📊 Indicadores</button>
           <button class="tab" data-tab="sesiones">🕒 Sesiones</button>
+          <button class="tab" data-tab="tiempos">⏱️ Tiempos de Moldes</button>
+          <button class="tab" data-tab="registros">📋 Registros</button>
         </div>
 
         <!-- Planificador simplificado (sin cambios aquí) -->
@@ -160,6 +160,18 @@
 
           <div id="planningGridContainer" class="table-container" style="margin-top:12px">Cargando parrilla...</div>
           <div id="gridResponse" class="response-box"></div>
+
+          <div style="margin-top: 14px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+              <h3 style="margin: 0;">📌 Moldes planificados</h3>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button class="btn btn-secondary" id="refreshPlannedMoldsBtn">Refrescar</button>
+                <button class="btn btn-danger" id="exitPlannedMoldEditBtn" style="display:none;">Salir de edición</button>
+              </div>
+            </div>
+            <div id="plannerLoadedMoldBanner" style="margin-top:8px;"></div>
+            <div id="plannedMoldsList" class="table-container" style="margin-top: 10px; max-height: 260px; overflow:auto;">Cargando...</div>
+          </div>
         </div>
 
         <!-- Datos (historial) -->
@@ -179,8 +191,8 @@
                   placeholder="Tipo de proceso"></div>
               <div class="form-group"><label>Operación</label><input type="text" id="datoOperacion"
                   placeholder="Operación"></div>
-              <div class="form-group"><label>Horas</label><input type="number" id="datoHoras" step="0.25" min="0.25"
-                  max="12" placeholder="0.25"></div>
+              <div class="form-group"><label>Horas</label><input type="number" id="datoHoras" list="hoursOptions" step="0.25" min="0" max="24"
+                  placeholder="Ej: 9.5"></div>
               <button class="btn btn-secondary" id="datoCrearBtn">Guardar</button>
             </div>
             <div class="response-box" id="datoCrearResponse"></div>
@@ -250,8 +262,7 @@
             </div>
             <div class="form-group"><label>Operación</label><input list="tmOperaciones" id="tmOperacion"><datalist
                 id="tmOperaciones"></datalist></div>
-            <div class="form-group"><label>Horas</label><input type="number" id="tmHoras" step="0.01" min="0.01"
-              max="12" placeholder="0.00"></div>
+            <div class="form-group"><label>Horas</label><select id="tmHoras"></select></div>
 
             <div class="form-group" style="grid-column: 1 / -1;">
               <label>Motivo (si hubo desviación)</label>
@@ -275,6 +286,7 @@
           <datalist id="wlPartes"></datalist>
           <datalist id="wlMaquinas"></datalist>
           <datalist id="wlOperaciones"></datalist>
+          <datalist id="hoursOptions"></datalist>
 
           <div class="table-container">
             <table id="workLogsTable">
@@ -379,7 +391,7 @@
               </div>
               <div class="form-group">
                 <label>Horas disponibles (día)</label>
-                <input type="number" step="0.5" min="0" id="newMachineCapacity" placeholder="Ej: 9.5">
+                <input type="number" step="0.5" min="0" id="newMachineCapacity" list="hoursOptions" placeholder="Ej: 9.5">
               </div>
               <div class="form-group">
                 <label>ID</label>
@@ -403,11 +415,15 @@
                     <th>Nombre</th>
                     <th>Horas disp./día</th>
                     <th>Activa</th>
-                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody></tbody>
               </table>
+            </div>
+
+            <div style="display:flex; gap:8px; align-items:center; margin-top: 10px; flex-wrap: wrap;">
+              <button class="btn btn-secondary" id="saveMachinesBtn">Guardar cambios de máquinas</button>
+              <div class="text-muted" style="font-size: 0.9rem;">Edita varias filas y guarda una sola vez.</div>
             </div>
           </div>
 
@@ -437,6 +453,11 @@
             <h3>✅ Partes activas (Planificador)</h3>
             <p class="text-muted" style="font-size: 0.9rem;">Marca solo las partes que quieres usar/mostrar.</p>
             <div id="configPartsChecklist" class="operator-filter"></div>
+
+            <div style="display:flex; gap:8px; align-items:center; margin-top: 10px; flex-wrap: wrap;">
+              <button class="btn btn-secondary" id="savePartsBtn">Guardar cambios de partes</button>
+              <button class="btn" id="reloadPartsBtn">Refrescar</button>
+            </div>
           </div>
 
           <hr style="margin: 30px 0;">
@@ -464,11 +485,15 @@
                         <th>Activo</th>
                         <th>Indicadores</th>
                         <th>Contraseña</th>
-                        <th>Acción</th>
                       </tr>
                     </thead>
                     <tbody></tbody>
                   </table>
+                </div>
+
+                <div style="display:flex; gap:8px; align-items:center; margin-top: 10px; flex-wrap: wrap;">
+                  <button class="btn btn-secondary" id="saveOperatorsBtn">Guardar cambios de operarios</button>
+                  <div class="text-muted" style="font-size: 0.9rem;">Edita nombres/activos/contraseñas y guarda al final.</div>
                 </div>
               </div>
             </div>
@@ -597,7 +622,7 @@
       </div>
     </div>
 
-    <script src="app.js" defer></script>
+      <script src="app.js?v=20260114b" defer></script>
   </div>
 </body>
 

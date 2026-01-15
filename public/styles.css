@@ -269,6 +269,16 @@
       grid-template-columns: repeat(2, minmax(320px, 1fr));
       gap: 12px;
     }
+
+    .planned-mold-item {
+      transition: all 0.2s ease;
+    }
+    .planned-mold-item:hover {
+      border-color: var(--primary-blue) !important;
+      background: var(--card-bg-light) !important;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+    }
     @media (max-width: 960px) {
       .calendar-mold-progress-list { grid-template-columns: 1fr; }
     }
@@ -307,7 +317,7 @@
       box-shadow: 
         0 10px 40px rgba(0, 0, 0, 0.4),
         0 0 0 1px var(--border-color);
-      overflow: hidden;
+       overflow: visible;
     }
 
     /* ========== TABS ========== */
@@ -319,6 +329,23 @@
       overflow-x: auto;
       scrollbar-width: thin;
       scrollbar-color: var(--primary-blue) var(--darker-bg);
+      position: sticky;
+      top: var(--tabs-sticky-top, 0px);
+      z-index: 99;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+    }
+
+    .tabs.is-fixed {
+      position: fixed;
+      top: var(--tabs-sticky-top, 0px);
+      left: var(--tabs-fixed-left, 0px);
+      width: var(--tabs-fixed-width, 100%);
+      z-index: 101;
+    }
+
+    .tabs-placeholder {
+      display: none;
+      height: 0;
     }
 
     .tabs::-webkit-scrollbar {
@@ -617,6 +644,23 @@
       background: rgba(3, 15, 171, 0.05);
     }
 
+    /* Cambios pendientes por guardar */
+    tbody tr.pending-save {
+      background: rgba(255, 184, 0, 0.08);
+      box-shadow: inset 4px 0 0 0 var(--warning);
+    }
+
+    tbody tr.pending-save:hover {
+      background: rgba(255, 184, 0, 0.12);
+    }
+
+    label.pending-save {
+      background: rgba(255, 184, 0, 0.08);
+      border: 1px dashed rgba(255, 184, 0, 0.45);
+      border-radius: 8px;
+      padding: 6px 8px;
+    }
+
     tbody td {
       color: var(--text-secondary);
     }
@@ -829,6 +873,35 @@
       font-size: 0.85rem;
       line-height: 1;
       box-shadow: 0 2px 8px rgba(255, 184, 0, 0.25);
+    }
+
+    .working-override-icon {
+      position: absolute;
+      top: 8px;
+      right: 36px;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      font-weight: 900;
+      font-size: 0.85rem;
+      line-height: 1;
+      user-select: none;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    }
+
+    .working-override-icon.disabled {
+      background: rgba(255, 71, 87, 0.16);
+      border: 1px solid var(--danger);
+      color: var(--danger);
+    }
+
+    .working-override-icon.enabled {
+      background: rgba(0, 217, 163, 0.16);
+      border: 1px solid var(--success);
+      color: var(--success);
     }
 
     .holiday-name {

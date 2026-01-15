@@ -20,6 +20,18 @@ const getMonthView = async (req, res, next) => {
         const lastDay = new Date(year, month, 0).getDate(); // month es 1..12 aquí
         const endDate = `${year}-${pad2(month)}-${pad2(lastDay)}`;
 
+        // Overrides (habilitar/deshabilitar día) para el mes
+        const overrideSql = `
+            SELECT to_char(date, 'YYYY-MM-DD') AS date_str, is_working
+            FROM working_overrides
+            WHERE date BETWEEN ? AND ?
+        `;
+        const overrideRows = await query(overrideSql, [startDate, endDate]).catch(() => []);
+        const overrides = {};
+        for (const r of overrideRows || []) {
+            overrides[r.date_str] = !!r.is_working;
+        }
+
         // 1) Plan: fechas como strings YYYY-MM-DD para evitar TZ
         const planSql = `
             SELECT 
@@ -79,6 +91,7 @@ const getMonthView = async (req, res, next) => {
         res.json({
             events: eventsByDay,
             holidays,
+            overrides,
         });
     } catch (error) {
         next(error);
