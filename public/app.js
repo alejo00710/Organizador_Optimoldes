@@ -539,7 +539,9 @@ async function loadHoursOptions() {
 function hoursToPayload(v) {
   if (v === '') return '';
   const n = parseLocaleNumber(v);
-  return Number.isFinite(n) ? Math.round(n / 0.25) * 0.25 : '';
+  // IMPORTANTE: no “snap” a 0.25h. Guardar tal cual (con precisión de 2 decimales).
+  // La BD usa NUMERIC(5,2), así que normalizamos a 2 decimales para evitar artefactos de float.
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : '';
 }
 async function isDateLaborable(dateStr) {
   try {
@@ -671,15 +673,27 @@ function showMainApp(user) {
   authToken = localStorage.getItem('authToken');
 
   const usrEl = document.getElementById('displayUsername');
-  const roleEl = document.getElementById('displayRole');
   const opEl = document.getElementById('displayOperator');
-  if (usrEl) usrEl.textContent = user.username || '';
-  if (roleEl) roleEl.textContent = (user.role || '').toUpperCase();
-  if (opEl) opEl.textContent = user.operatorName || 'N/A';
+  const opRowEl = document.getElementById('userInfoOperatorRow');
 
-  // Tabs por rol
+  // Nota: mantenemos los roles internos (admin/planner/operator) para permisos,
+  // pero en UI mostramos: admin / jefe / operario.
   const role = String(user.role || '').toLowerCase();
   const isOperator = role === 'operator';
+
+  const uiUserLabel = role === 'admin'
+    ? 'admin'
+    : role === 'planner'
+      ? 'jefe'
+      : role === 'operator'
+        ? 'operario'
+        : (user.username || '');
+
+  if (usrEl) usrEl.textContent = uiUserLabel;
+  if (opEl) opEl.textContent = isOperator ? (user.operatorName || 'N/A') : '';
+  if (opRowEl) opRowEl.classList.toggle('hidden', !isOperator);
+
+  // Tabs por rol
   const canSeeAll = role === 'admin' || role === 'planner';
 
   // Por defecto, mostramos todo a admin/planner y limitamos al operario solo a "tiempos"
@@ -1243,7 +1257,9 @@ async function renderInProgressMoldList() {
   container.innerHTML = '<div style="color:var(--text-muted)">Cargando moldes en curso...</div>';
 
   try {
-    const res = await fetch(`${API_URL}/molds/in-progress`, {
+    const asOf = getBogotaTodayISO && getBogotaTodayISO();
+    const url = asOf ? `${API_URL}/molds/in-progress?asOf=${encodeURIComponent(asOf)}` : `${API_URL}/molds/in-progress`;
+    const res = await fetch(url, {
       headers: { 'Authorization': `Bearer ${authToken}` },
       cache: 'no-store'
     });
@@ -2737,6 +2753,32 @@ function localISOFromDate(d) {
   return `${y}-${m}-${day}`;
 }
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function isoFromYMD(year, monthIndex0, dayOfMonth) {
+  return `${year}-${pad2(monthIndex0 + 1)}-${pad2(dayOfMonth)}`;
+}
+
+function getBogotaTodayISO() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const y = parts.find(p => p.type === 'year')?.value;
+    const m = parts.find(p => p.type === 'month')?.value;
+    const d = parts.find(p => p.type === 'day')?.value;
+    if (!y || !m || !d) return null;
+    return `${y}-${m}-${d}`;
+  } catch {
+    return null;
+  }
+}
+
 let lastDayDetailsContext = null;
 
 async function loadCalendar() {
@@ -2764,7 +2806,7 @@ function renderCalendar(year, month, events = {}, holidays = {}, overrides = {})
   const grid = document.getElementById('calendar-grid');
   if (!grid) return;
   grid.innerHTML = '';
-  const todayStr = localISOFromDate(new Date());
+  const todayStr = getBogotaTodayISO() || localISOFromDate(new Date());
   const firstDay = new Date(year, month, 1);
   const startDayIndex = firstDay.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -2773,12 +2815,13 @@ function renderCalendar(year, month, events = {}, holidays = {}, overrides = {})
 
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(year, month, d);
-    const dateStr = localISOFromDate(date);
+    const dateStr = isoFromYMD(year, month, d);
     const cell = document.createElement('div'); cell.className = 'calendar-day';
     cell.innerHTML = `<div class="day-number">${d}</div>`;
     if (dateStr === todayStr) cell.classList.add('today');
 
-    const isWeekend = (date.getDay() === 0 || date.getDay() === 6);
+    const dow = new Date(Date.UTC(year, month, d)).getUTCDay();
+    const isWeekend = (dow === 0 || dow === 6);
     const holidayName = holidays[dateStr];
     const isHoliday = Boolean(holidayName);
     const isBaseNonWorking = isWeekend || isHoliday;
@@ -2826,7 +2869,7 @@ function renderDayDetailsView(date, events, holiday) {
   if (titleEl) titleEl.textContent = date.toLocaleDateString();
 
   let html = '';
-  if (holiday) html += `<p>🎉 ${escapeHtml(holiday)}</p>`;
+  if (holiday) html += `<p>${escapeHtml(holiday)}</p>`;
 
   if (events && events.tasks && events.tasks.length) {
     // Agrupar por molde
@@ -4170,6 +4213,7 @@ function exportIndicatorsCSV(){
 
 // Entry
 document.addEventListener('DOMContentLoaded', () => {
+  setupLegalFooter();
   setupEventListeners();
   setupStickyTabsOffset();
   setupFixedTabsBar();
@@ -4188,6 +4232,143 @@ document.addEventListener('DOMContentLoaded', () => {
   if (savedToken) verifySession(savedToken);
   else showLoginScreen();
 });
+
+function setupLegalFooter() {
+  const footer = document.getElementById('appFooter');
+  if (!footer) return;
+
+  const modal = document.getElementById('legal-modal');
+  const titleEl = document.getElementById('legal-modal-title');
+  const bodyEl = document.getElementById('legal-modal-body');
+  const closeBtn = document.getElementById('legal-modal-close-btn');
+
+  if (!modal || !titleEl || !bodyEl || !closeBtn) return;
+
+  const contentByKey = {
+    aviso: {
+      title: 'Aviso Legal de Uso del Sistema',
+      bodyHtml: `
+        <p>Este sistema es propiedad y de uso exclusivo de Optimoldes S.A.S.</p>
+        <p>
+          Su acceso y utilización están permitidos únicamente a personal autorizado de la empresa
+          para realizar labores operativas, administrativas y de gestión interna.
+        </p>
+        <p>
+          La información registrada en este aplicativo es confidencial y está destinada exclusivamente
+          a fines laborales y de mejora de procesos internos.
+        </p>
+        <p>
+          Queda estrictamente prohibida la reproducción, distribución, modificación o uso no autorizado
+          de este sistema o su contenido fuera del ámbito de Optimoldes S.A.S.
+        </p>
+      `.trim()
+    },
+    datos: {
+      title: 'Política de Tratamiento de Datos Personales',
+      bodyHtml: `
+        <p>
+          Optimoldes S.A.S., identificado con NIT 900069620, con domicilio principal en Cra. 41c #50-16(Itagüi, Antioquia),
+          es el responsable del tratamiento de los datos personales que sean registrados en este sistema.
+        </p>
+
+        <h4>1. Finalidad del Tratamiento</h4>
+        <p>
+          Los datos personales que se recolectan y procesan en este aplicativo, tales como nombre, cargo,
+          área de trabajo, información de tareas, tiempos y producción, serán utilizados exclusivamente para:
+        </p>
+        <ul>
+          <li>Control operativo interno.</li>
+          <li>Generación de indicadores de eficiencia y mejora de procesos.</li>
+          <li>Gestión y seguimiento administrativo y operativo de trabajo dentro de la empresa.</li>
+        </ul>
+
+        <h4>2. Principios Aplicables</h4>
+        <p>
+          El tratamiento de los datos personales se realiza observando los principios de legalidad, finalidad,
+          acceso y circulación restringida, veracidad, transparencia y seguridad, conforme a lo dispuesto en la
+          Ley 1581 de 2012 y normas reglamentarias.
+        </p>
+
+        <h4>3. Derechos de los Titulares</h4>
+        <p>Los titulares de los datos tienen derecho a:</p>
+        <ul>
+          <li>Conocer, actualizar y rectificar sus datos personales frente a Optimoldes S.A.S.</li>
+          <li>Solicitar prueba de la autorización otorgada para su tratamiento (en los casos que se requiera).</li>
+          <li>Ser informado sobre el uso dado a sus datos.</li>
+          <li>Presentar quejas ante la Superintendencia de Industria y Comercio por infracciones a la ley.</li>
+          <li>
+            Revocar la autorización y/o solicitar la supresión de los datos cuando no se respeten los principios,
+            derechos y garantías legales.
+          </li>
+        </ul>
+
+        <h4>4. Medios de Atención</h4>
+        <p>
+          Las solicitudes de acceso, consulta, corrección o eliminación pueden dirigirse a través de los canales
+          internos de atención dispuestos por Optimoldes S.A.S., o según los procesos internos establecidos por
+          la empresa para estos efectos.
+        </p>
+      `.trim()
+    },
+    propiedad: {
+      title: 'Información Legal',
+      bodyHtml: `
+        <p><strong>© 2026 Optimoldes S.A.S. Todos los derechos reservados.</strong></p>
+        <p>
+          Este software y su código fuente son propiedad exclusiva de Optimoldes S.A.S.
+        </p>
+        <p>
+          Queda prohibida la reproducción, distribución, modificación, publicación o uso no autorizado de este sistema
+          o cualquier parte del mismo sin el consentimiento expreso de Optimoldes S.A.S.
+        </p>
+      `.trim()
+    }
+  };
+
+  let lastActiveEl = null;
+
+  const open = (key) => {
+    const entry = contentByKey[key];
+    if (!entry) return;
+
+    lastActiveEl = document.activeElement;
+    titleEl.textContent = entry.title;
+    bodyEl.innerHTML = entry.bodyHtml;
+    modal.classList.remove('hidden');
+    closeBtn.focus();
+  };
+
+  const close = () => {
+    modal.classList.add('hidden');
+    bodyEl.scrollTop = 0;
+    if (lastActiveEl && typeof lastActiveEl.focus === 'function') {
+      try { lastActiveEl.focus(); } catch (_) {}
+    }
+    lastActiveEl = null;
+  };
+
+  footer.addEventListener('click', (e) => {
+    const a = e.target?.closest?.('a[data-legal]');
+    if (!a) return;
+    e.preventDefault();
+    open(String(a.getAttribute('data-legal') || '').trim());
+  });
+
+  closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    close();
+  });
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) close();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (modal.classList.contains('hidden')) return;
+    close();
+  });
+}
 
 function setupStickyTabsOffset() {
   if (window.__stickyTabsOffsetApi) {

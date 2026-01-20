@@ -4,20 +4,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sistema de Producción de Moldes</title>
+  <title>Planificador de Moldes</title>
   <link rel="stylesheet" href="styles.css?v=20260109b">
-  <link rel="icon"
-    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E🏭%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png">
 </head>
 
 <body>
   <div class="container">
     <div class="login-container" id="loginContainer">
       <div class="login-card">
-        <div class="login-icon">🏭</div>
-        <h2>Sistema de Producción</h2>
+        <div class="login-icon">
+          <img class="brand-logo brand-logo--login" src="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png" alt="Optimoldes S.A.S.">
+        </div>
+        <h2>Planificador de Moldes</h2>
         <p class="login-subtitle">
-          <span>⚙️</span>
           <span>Control Industrial de Moldes</span>
         </p>
 
@@ -25,7 +25,7 @@
           <label>Usuario</label>
           <select id="username">
             <option value="admin">Administrador</option>
-            <option value="jefe" selected>Jefe (Planner)</option>
+            <option value="jefe" selected>Jefe</option>
             <option value="operarios">Operarios</option>
           </select>
         </div>
@@ -50,7 +50,7 @@
 
         <div id="bootstrapCard" class="hidden" style="margin-top: 18px;">
           <hr style="margin: 18px 0;">
-          <h3 style="margin: 0 0 6px 0;">🔐 Configuración inicial</h3>
+          <h3 style="margin: 0 0 6px 0;">Configuración inicial</h3>
           <p class="text-muted" style="font-size: 0.9rem; margin-top: 0;">Crea las cuentas <strong>admin</strong> y <strong>jefe</strong> una sola vez. Después se oculta automáticamente.</p>
 
           <div id="bootstrapAdminGroup" class="form-group">
@@ -71,14 +71,16 @@
     <div class="main-app hidden" id="mainApp">
       <div class="header">
         <div class="header-title">
-          <h1>🏭 Sistema de Producción de Moldes</h1>
+          <h1>
+            <img class="brand-logo brand-logo--header" src="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png" alt="Optimoldes S.A.S.">
+            Planificador de Moldes
+          </h1>
         </div>
         <div class="header-right">
           <span class="status disconnected" id="status">● Desconectado</span>
           <div class="user-info" id="userInfo">
             <p><strong>Usuario:</strong> <span id="displayUsername"></span></p>
-            <p><strong>Rol:</strong> <span id="displayRole"></span></p>
-            <p><strong>Operario:</strong> <span id="displayOperator">N/A</span></p>
+            <p id="userInfoOperatorRow"><strong>Operario:</strong> <span id="displayOperator">N/A</span></p>
           </div>
           <button class="btn btn-danger" id="logoutBtn">Cerrar Sesión</button>
         </div>
@@ -86,20 +88,20 @@
 
       <div class="card">
         <div class="tabs">
-          <button class="tab active" data-tab="plan">📊 Cuadro Planificador</button>
-          <button class="tab" data-tab="calendar">📅 Calendario</button>
-          <button class="tab" data-tab="config">⚙️ Configuración</button>
-          <button class="tab" data-tab="datos">🗂️ Datos</button>
-          <button class="tab" data-tab="importar">📥 Importar</button>
-          <button class="tab" data-tab="indicators">📊 Indicadores</button>
-          <button class="tab" data-tab="sesiones">🕒 Sesiones</button>
-          <button class="tab" data-tab="tiempos">⏱️ Tiempos de Moldes</button>
-          <button class="tab" data-tab="registros">📋 Registros</button>
+          <button class="tab active" data-tab="plan">Cuadro Planificador</button>
+          <button class="tab" data-tab="calendar">Calendario</button>
+          <button class="tab" data-tab="config">Configuración</button>
+          <button class="tab" data-tab="datos">Datos</button>
+          <button class="tab" data-tab="importar">Importar</button>
+          <button class="tab" data-tab="indicators">Indicadores</button>
+          <button class="tab" data-tab="sesiones">Sesiones</button>
+          <button class="tab" data-tab="tiempos">Tiempos de Moldes</button>
+          <button class="tab" data-tab="registros">Registros</button>
         </div>
 
         <!-- Planificador simplificado (sin cambios aquí) -->
         <div class="tab-content active" id="tab-plan">
-          <h2>📊 Cuadro Planificador</h2>
+          <h2>Cuadro Planificador</h2>
           <p>Molde con búsqueda, Fecha de inicio y parrilla con Partes y Máquinas fijas.</p>
           <div class="planning-controls" style="display:flex;gap:12px;align-items:end;">
             <div class="form-group" style="flex:1">
@@ -115,7 +117,7 @@
               <label style="display:flex; align-items:center; gap:6px;"
                 title="Planificar este molde como prioridad (reprograma lo existente)">
                 <input type="checkbox" id="prioritySwitch">
-                ⭐ Prioridad
+                Prioridad
               </label>
             </div>
             <div class="form-group" style="display:flex;gap:8px;">
@@ -126,7 +128,7 @@
           </div>
 
           <details style="margin-top: 10px;">
-            <summary><strong>⚙️ Configurar parrilla (máquinas y partes)</strong></summary>
+            <summary><strong>Configurar parrilla (máquinas y partes)</strong></summary>
             <div style="display:flex; gap:16px; margin-top: 10px; flex-wrap: wrap;">
               <div style="flex: 1; min-width: 320px;">
                 <h4 style="margin: 0 0 6px 0;">Máquinas</h4>
@@ -163,7 +165,7 @@
 
           <div style="margin-top: 14px;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-              <h3 style="margin: 0;">📌 Moldes planificados</h3>
+              <h3 style="margin: 0;">Moldes planificados</h3>
               <div style="display:flex; gap:8px; align-items:center;">
                 <button class="btn btn-secondary" id="refreshPlannedMoldsBtn">Refrescar</button>
                 <button class="btn btn-danger" id="exitPlannedMoldEditBtn" style="display:none;">Salir de edición</button>
@@ -176,10 +178,10 @@
 
         <!-- Datos (historial) -->
         <div class="tab-content" id="tab-datos">
-          <h2>🗂️ Datos</h2>
+          <h2>Datos</h2>
 
           <details style="margin-bottom: 12px;">
-            <summary><strong>➕ Añadir registro manual</strong></summary>
+            <summary><strong>Añadir registro manual</strong></summary>
             <div class="form-grid-3-col" style="margin-top: 10px;">
               <div class="form-group">
                 <label>Año</label>
@@ -232,7 +234,7 @@
 
         <!-- Tiempos de Moldes (sin cambios) -->
         <div class="tab-content" id="tab-tiempos">
-          <h2>⏱️ Tiempos de Moldes</h2>
+          <h2>Tiempos de Moldes</h2>
           <div class="form-grid-3-col">
             <div class="form-group"><label>Día</label><select id="tmDia"></select></div>
             <div class="form-group"><label>Mes</label><select id="tmMes"></select></div>
@@ -277,7 +279,7 @@
 
         <!-- Registros (historial editable de Tiempos) -->
         <div class="tab-content" id="tab-registros">
-          <h2>📋 Registros (Tiempos)</h2>
+          <h2>Registros (Tiempos)</h2>
           <p class="text-muted" style="font-size: 0.9rem;">Los operarios pueden corregir hasta 2 días atrás. Alertas &gt; 5% se marcan en rojo.</p>
 
           <datalist id="wlOperarios"></datalist>
@@ -318,7 +320,7 @@
 
         <!-- Sesiones (auditoría) -->
         <div class="tab-content" id="tab-sesiones">
-          <h2>🕒 Historial de Sesiones</h2>
+          <h2>Historial de Sesiones</h2>
           <p class="text-muted" style="font-size: 0.9rem;">Solo Admin/Jefe. Muestra entradas/salidas.</p>
 
           <div class="table-container">
@@ -342,7 +344,7 @@
 
         <!-- Importar (sin cambios funcionales) -->
         <div class="tab-content" id="tab-importar">
-          <h2>📥 Importar Datos</h2>
+          <h2>Importar Datos</h2>
           <div class="form-group">
             <label>Importar archivo</label>
             <input type="file" id="importFile" accept=".xlsx,.xls,.xlsm,.xlsb,.ods,.csv">
@@ -351,7 +353,7 @@
           <div class="response-box" id="importResponse"></div>
 
           <details style="margin-top: 12px;">
-            <summary><strong>🔎 Diagnóstico de importación</strong></summary>
+            <summary><strong>Diagnóstico de importación</strong></summary>
             <div id="importDiagSummary" class="text-muted" style="margin: 8px 0;"></div>
             <div class="table-container">
               <table id="importDiagTable">
@@ -378,12 +380,12 @@
 
         <!-- Config -->
         <div class="tab-content" id="tab-config">
-          <h2>⚙️ Gestión de Datos Maestros</h2>
+          <h2>Gestión de Datos Maestros</h2>
           <p>Registra y edita máquinas, moldes, partes y operarios.</p>
 
           <!-- Máquinas -->
           <div class="form-column">
-            <h3>🔧 Máquinas</h3>
+            <h3>Máquinas</h3>
             <div class="form-grid-3-col">
               <div class="form-group">
                 <label>Nombre</label>
@@ -432,7 +434,7 @@
           <!-- Moldes y Partes -->
           <div class="form-grid-3-col">
             <div class="form-column">
-              <h3>📦 Moldes</h3>
+              <h3>Moldes</h3>
               <div class="form-group"><label>Nombre</label><input type="text" id="newMoldName"
                   placeholder="Ej: Molde pieza X"></div>
               <div class="form-group"><label>ID</label><input type="text" id="newMoldId" readonly
@@ -440,7 +442,7 @@
               <button class="btn btn-secondary" id="createMoldBtn">Registrar Molde</button>
             </div>
             <div class="form-column">
-              <h3>🧩 Partes del Molde</h3>
+              <h3>Partes del Molde</h3>
               <div class="form-group"><label>Nombre</label><input type="text" id="newPartName" placeholder="Ej: Hembra">
               </div>
               <div class="form-group"><label>ID</label><input type="text" id="newPartId" readonly
@@ -450,7 +452,7 @@
           </div>
 
           <div style="margin-top: 16px;">
-            <h3>✅ Partes activas (Planificador)</h3>
+            <h3>Partes activas (Planificador)</h3>
             <p class="text-muted" style="font-size: 0.9rem;">Marca solo las partes que quieres usar/mostrar.</p>
             <div id="configPartsChecklist" class="operator-filter"></div>
 
@@ -465,7 +467,7 @@
           <!-- Operarios y Festivos -->
           <div class="form-grid-2-col" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
             <div class="form-column">
-              <h3>👷 Operarios</h3>
+              <h3>Operarios</h3>
               <p class="text-muted" style="font-size: 0.9rem;">Solo Admin/Jefe pueden crear/restablecer contraseña.</p>
               <div class="form-group"><label>Nombre Operario</label><input type="text" id="newOperatorName"
                   placeholder="Ej: Juan Pérez"></div>
@@ -474,7 +476,7 @@
                 <button class="btn btn-secondary" id="createOperatorBtn">Crear Operario</button>
 
               <div style="margin-top: 16px;">
-                <h3 style="margin-bottom: 6px;">✅ Operarios (Indicadores)</h3>
+                <h3 style="margin-bottom: 6px;">Operarios (Indicadores)</h3>
                 <p class="text-muted" style="font-size: 0.9rem; margin-top: 0;">Activa/desactiva, edita el nombre y marca quién aparece en Indicadores.</p>
                 <div class="table-container">
                   <table id="operatorsTable">
@@ -499,7 +501,7 @@
             </div>
 
             <div class="form-column">
-              <h3>🎉 Festivo/Día No Laborable</h3>
+              <h3>Festivo/Día No Laborable</h3>
               <div class="form-group"><label>Fecha</label><input type="date" id="newHolidayDate"></div>
               <div class="form-group"><label>Nombre/Motivo</label><input type="text" id="newHolidayName"
                   placeholder="Ej: Feriado Nacional"></div>
@@ -543,7 +545,7 @@
         </div>
 
         <div class="tab-content" id="tab-indicators">
-          <h2>📊 Indicadores</h2>
+          <h2>Indicadores</h2>
 
           <div class="form-grid-3-col">
             <div class="form-group">
@@ -621,6 +623,28 @@
         <div id="modal-body"></div>
       </div>
     </div>
+
+    <div class="modal-overlay hidden" id="legal-modal" role="dialog" aria-modal="true" aria-labelledby="legal-modal-title">
+      <div class="modal-content legal-modal-content" role="document">
+        <div class="modal-header">
+          <h3 id="legal-modal-title"></h3>
+          <button class="modal-close" id="legal-modal-close-btn" aria-label="Cerrar">&times;</button>
+        </div>
+        <div id="legal-modal-body" class="legal-modal-body"></div>
+      </div>
+    </div>
+
+    <footer class="app-footer" id="appFooter" aria-label="Información legal">
+      <div class="app-footer-inner">
+        <span class="app-footer-copy">© 2026 Optimoldes S.A.S.</span>
+        <span class="footer-sep">|</span>
+        <a class="footer-link" href="#" data-legal="aviso">Aviso Legal</a>
+        <span class="footer-sep">|</span>
+        <a class="footer-link" href="#" data-legal="datos">Política de Datos</a>
+        <span class="footer-sep">|</span>
+        <a class="footer-link" href="#" data-legal="propiedad">Información Legal</a>
+      </div>
+    </footer>
 
       <script src="app.js?v=20260114b" defer></script>
   </div>

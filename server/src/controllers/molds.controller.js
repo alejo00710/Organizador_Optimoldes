@@ -27,6 +27,17 @@ function isFiniteNumber(n) {
     return typeof n === 'number' && Number.isFinite(n);
 }
 
+function isValidISODateString(s) {
+    return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function getAsOfISO(req) {
+    const asOfRaw = req?.query?.asOf;
+    if (asOfRaw == null) return null;
+    const asOf = String(asOfRaw).trim();
+    return isValidISODateString(asOf) ? asOf : null;
+}
+
 // --- Controladores para MOLDES ---
 const createMold = async (req, res, next) => {
     try {
@@ -82,7 +93,12 @@ const getMoldProgress = async (req, res, next) => {
             return res.status(400).json({ error: 'moldId inválido' });
         }
 
-        const todayISO = getColombiaTodayISO();
+        const asOfISO = getAsOfISO(req);
+        if (req.query.asOf != null && !asOfISO) {
+            return res.status(400).json({ error: 'asOf inválido (use YYYY-MM-DD)' });
+        }
+
+        const todayISO = asOfISO || getColombiaTodayISO();
         if (!todayISO) {
             return res.status(500).json({ error: 'No se pudo determinar la fecha de hoy (America/Bogota)' });
         }
@@ -179,7 +195,12 @@ const getMoldProgress = async (req, res, next) => {
 // Devuelve moldes con plan (>0) que aún no han completado sus horas planificadas
 const getMoldsInProgress = async (req, res, next) => {
     try {
-        const todayISO = getColombiaTodayISO();
+        const asOfISO = getAsOfISO(req);
+        if (req.query.asOf != null && !asOfISO) {
+            return res.status(400).json({ error: 'asOf inválido (use YYYY-MM-DD)' });
+        }
+
+        const todayISO = asOfISO || getColombiaTodayISO();
         if (!todayISO) {
             return res.status(500).json({ error: 'No se pudo determinar la fecha de hoy (America/Bogota)' });
         }

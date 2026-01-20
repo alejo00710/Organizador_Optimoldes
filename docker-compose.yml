@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:14
+    container_name: production_db
+    restart: always
+    environment:
+      POSTGRES_DB: organizador_taller
+      POSTGRES_USER: optimoldes_user
+      POSTGRES_PASSWORD: Optimoldes2026dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+  backend:
+    build: .
+    container_name: production_backend
+    depends_on:
+      - db
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: optimoldes_user
+      DB_PASSWORD: Optimoldes2026dev
+      DB_NAME: organizador_taller
+      JWT_SECRET: 88ALn!d&GRdTYq%Kh4y8E2j@GHWoNf
+      JWT_EXPIRES_IN: 8h
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run dev
+    restart: always
+
+volumes:
+  pgdata:

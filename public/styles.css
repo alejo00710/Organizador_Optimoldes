@@ -36,6 +36,29 @@
       background: linear-gradient(135deg, var(--darker-bg) 0%, var(--dark-bg) 100%);
       color: var(--text-primary);
       line-height: 1.6;
+      padding-bottom: 64px;
+    }
+
+    .brand-logo {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+      object-position: center;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .brand-logo--login {
+      width: clamp(86px, 10vw, 110px);
+      height: clamp(86px, 10vw, 110px);
+      transform: scale(1.25);
+      transform-origin: center;
+    }
+
+    .brand-logo--header {
+      width: 125px;
+      height: 125px;
     }
 
     /* Patrón de fondo industrial */
@@ -151,6 +174,7 @@
       font-size: 2.5rem;
       margin-bottom: 1.5rem;
       text-align: center;
+      line-height: 0;
     }
 
     /* ========== MAIN APP ========== */
@@ -1069,6 +1093,89 @@
     /* ========== UTILITIES ========== */
     .hidden {
       display: none !important;
+    }
+
+    /* ========== APP FOOTER (LEGAL) ========== */
+    .app-footer {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 900;
+      background: rgba(10, 14, 39, 0.9);
+      border-top: 1px solid var(--border-color);
+      backdrop-filter: blur(10px);
+    }
+
+    .app-footer-inner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .app-footer-copy {
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .footer-sep {
+      color: var(--text-muted);
+      opacity: 0.9;
+      user-select: none;
+    }
+
+    .footer-link {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-weight: 700;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+
+    .footer-link:hover {
+      color: var(--text-primary);
+      border-color: var(--border-color);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .footer-link:focus-visible {
+      outline: 2px solid rgba(0, 217, 163, 0.8);
+      outline-offset: 2px;
+    }
+
+    .legal-modal-content {
+      max-width: 900px;
+    }
+
+    .legal-modal-body {
+      color: var(--text-secondary);
+    }
+
+    .legal-modal-body h4 {
+      color: var(--text-primary);
+      margin: 18px 0 8px 0;
+      font-size: 1.05rem;
+    }
+
+    .legal-modal-body p {
+      margin: 10px 0;
+    }
+
+    .legal-modal-body ul {
+      margin: 10px 0 10px 18px;
+    }
+
+    .legal-modal-body li {
+      margin: 6px 0;
     }
 
     .text-muted {
