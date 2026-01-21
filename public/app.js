@@ -2158,12 +2158,32 @@ function fmtDateTime(v) {
   if (!v) return '';
   try { return new Date(v).toLocaleString(); } catch { return String(v); }
 }
+
+function parseISODateOnlyLocal(v) {
+  if (!v) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  }
+  const s = String(v).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  const out = new Date(y, m - 1, d);
+  if (Number.isNaN(out.getTime())) return null;
+  return out;
+}
+
 function fmtDateOnly(v) {
   if (!v) return '';
   try {
+    const s = String(v).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
     const d = new Date(v);
     if (Number.isNaN(d.getTime())) return String(v);
-    return d.toISOString().slice(0, 10);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   } catch { return String(v); }
 }
 
@@ -2290,7 +2310,7 @@ function renderWorkLogsTable(rows) {
     const recordedAt = fmtDateTime(r.recorded_at);
     let day = '', mes = '', anio = '';
     try {
-      const d = workDateIso ? new Date(workDateIso) : null;
+      const d = workDateIso ? parseISODateOnlyLocal(workDateIso) : null;
       if (d && !Number.isNaN(d.getTime())) {
         day = String(d.getDate());
         const mIdx = d.getMonth();
