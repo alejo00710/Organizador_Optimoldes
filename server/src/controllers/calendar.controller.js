@@ -1,6 +1,12 @@
 const { query } = require('../config/database');
 const { getHolidaysForMonth } = require('../services/businessDays.service');
 
+function parseBoolQuery(v) {
+    if (v == null) return false;
+    const s = String(v).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === 'on';
+}
+
 function pad2(n) {
     return String(n).padStart(2, '0');
 }
@@ -54,12 +60,85 @@ const getMonthView = async (req, res, next) => {
         `;
         const planRows = await query(planSql, [startDate, endDate]);
 
+        // Por defecto, el calendario debe mostrar todo lo planificado (incluyendo días movidos/ajustados),
+        // aunque el molde se marque como completo. Esto preserva el historial de planificación por día.
+        //
+        // Si se desea el comportamiento anterior (recortar días FUTUROS de moldes completos), usar:
+        //   GET /api/calendar/month-view?...&trimCompletedFuture=1
+        const trimCompletedFuture = parseBoolQuery(req.query?.trimCompletedFuture);
+        const moldIds = Array.from(new Set((planRows || []).map(r => Number(r.mold_id)).filter(n => Number.isFinite(n))));
+        let filteredPlanRows = planRows;
+        if (trimCompletedFuture && moldIds.length) {
+            // plan_total + plan_created_at por molde
+            const placeholders = moldIds.map(() => '?').join(',');
+            const planMeta = await query(
+                `SELECT mold_id, SUM(hours_planned) AS planned_total, MIN(created_at) AS plan_created_at
+                 FROM plan_entries
+                 WHERE mold_id IN (${placeholders})
+                 GROUP BY mold_id`,
+                moldIds,
+            );
+
+            const metaByMold = new Map();
+            for (const r of planMeta || []) {
+                metaByMold.set(Number(r.mold_id), {
+                    plannedTotal: Number(r.planned_total || 0),
+                    planCreatedAt: r.plan_created_at || null,
+                });
+            }
+
+            const completedIds = new Set();
+            // Para evitar N queries, agregamos actual + última fecha trabajada por molde con join a meta
+            const actualRows = await query(
+                `SELECT 
+                    wl.mold_id,
+                    SUM(wl.hours_worked) AS actual_total,
+                    to_char(MAX(wl.recorded_at), 'YYYY-MM-DD') AS last_work_date
+                 FROM work_logs wl
+                 JOIN (
+                    SELECT mold_id, MIN(created_at) AS plan_created_at
+                    FROM plan_entries
+                    WHERE mold_id IN (${placeholders})
+                    GROUP BY mold_id
+                 ) pm ON pm.mold_id = wl.mold_id
+                 WHERE wl.recorded_at >= pm.plan_created_at
+                 GROUP BY wl.mold_id`,
+                moldIds,
+            );
+
+            const actualByMold = new Map();
+            const lastWorkDateByMold = new Map();
+            for (const r of actualRows || []) {
+                const mid = Number(r.mold_id);
+                actualByMold.set(mid, Number(r.actual_total || 0));
+                if (r.last_work_date) lastWorkDateByMold.set(mid, String(r.last_work_date));
+            }
+
+            for (const mid of moldIds) {
+                const meta = metaByMold.get(mid);
+                if (!meta || !(meta.plannedTotal > 0)) continue;
+                const actual = Number(actualByMold.get(mid) || 0);
+                if (Number.isFinite(actual) && actual >= (meta.plannedTotal - 0.01)) completedIds.add(mid);
+            }
+
+            if (completedIds.size) {
+                // Para moldes completados: dejar solo las filas planificadas hasta la última fecha real trabajada
+                filteredPlanRows = (planRows || []).filter(r => {
+                    const mid = Number(r.mold_id);
+                    if (!completedIds.has(mid)) return true;
+                    const lastWorkDate = lastWorkDateByMold.get(mid);
+                    if (!lastWorkDate) return false;
+                    return String(r.date_str) <= lastWorkDate;
+                });
+            }
+        }
+
         // 2) Festivos automáticos + DB combinados desde el servicio en memoria
         const holidays = getHolidaysForMonth(year, month);
 
         // 3) Agrupar tareas por día
         const eventsByDay = {};
-        for (const row of planRows) {
+        for (const row of filteredPlanRows) {
             const day = parseInt(row.date_str.slice(8, 10), 10);
 
             if (!eventsByDay[day]) {

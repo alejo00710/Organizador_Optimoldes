@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS work_logs (
   operator_id INTEGER NOT NULL REFERENCES operators(id) ON DELETE RESTRICT,
   work_date DATE NULL,
   hours_worked NUMERIC(5,2) NOT NULL,
+  planned_hours_snapshot NUMERIC(5,2) NULL,
   reason TEXT NULL,
   note TEXT NULL,
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

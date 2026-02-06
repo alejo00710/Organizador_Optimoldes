@@ -3,7 +3,7 @@
 // (edición de máquinas), Calendario y NUEVO: Indicadores (KPIs) con exportación CSV.
 // =================================================================================
 
-const API_URL = 'http://localhost:3000/api';
+const API_URL = '/api';
 const SERVER_URL = API_URL.replace(/\/api\/?$/, '');
 let authToken = null;
 let currentUser = null;
@@ -65,6 +65,20 @@ let plannerMachinesInGrid = [];  // [{id,name,daily_capacity}]
 let plannerPartsInGrid = [];     // [{name}]
 let plannerLoadedMold = null;    // { moldId, moldName, startDate, endDate } cuando se carga desde "Moldes planificados"
 
+function normalizeDateInputValue(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  if (m) return m[1];
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return '';
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${da}`;
+}
+
 function buildPlannerGridSnapshotFromUI() {
   const cfg = readPlannerGridConfig() || null;
   const state = {
@@ -109,8 +123,9 @@ async function tryLoadPlannerSnapshot(moldId, startDate) {
   if (typeof snap === 'string') {
     try { snap = JSON.parse(snap); } catch (_) {}
   }
-  // Adjuntar startDate del registro (útil si el snapshot no lo trae dentro)
-  if (snap && !snap.startDate && data?.startDate) {
+  // IMPORTANTE: el startDate canónico es el del registro (planner_grid_snapshots.start_date).
+  // El snapshot JSON puede contener un startDate viejo (ej. antes de “Seguir consecutivamente”).
+  if (snap && data?.startDate) {
     try { snap.startDate = String(data.startDate); } catch (_) {}
   }
   return snap || null;
@@ -388,8 +403,16 @@ try {
   document.addEventListener('click', (ev) => {
     const btn = ev.target?.closest?.('button[data-action]');
     if (!btn) return;
+    // Defensa extra: si el botón está deshabilitado, no ejecutar acciones.
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
     const action = btn.getAttribute('data-action');
     const id = btn.getAttribute('data-id');
+
+    // Evitar mostrar mensajes por intentos de edición en filas bloqueadas.
+    if (action === 'wl-edit') {
+      const tr = btn.closest('tr[data-id]');
+      if (tr && tr.getAttribute('data-can-edit') !== '1') return;
+    }
 
     switch (action) {
       case 'save-machine':
@@ -832,6 +855,10 @@ function openTab(tabName) {
   }
 
   if (tabName === 'calendar') try { loadCalendar(); } catch (e) {}
+  if (tabName === 'terminados') {
+    try { wireCompletedMoldsViewControls(); } catch (_) {}
+    try { renderCompletedMoldList(); } catch (_) {}
+  }
   if (tabName === 'plan') {
     try { initPlannerTab(); } catch (e) {}
   }
@@ -1003,11 +1030,15 @@ function setPlannerLoadedMold(mold) {
   const exitBtn = document.getElementById('exitPlannedMoldEditBtn');
   if (exitBtn) exitBtn.style.display = plannerLoadedMold ? '' : 'none';
 
+  const consecutiveBtnTop = document.getElementById('consecutivePlannedMoldBtn');
+  if (consecutiveBtnTop) consecutiveBtnTop.style.display = plannerLoadedMold ? '' : 'none';
+
   const submitBtn = document.getElementById('submitGridPlanBtn');
   if (submitBtn) submitBtn.textContent = plannerLoadedMold ? 'Actualizar Planificación' : 'Crear Planificación';
 
   if (!banner) return;
   if (!plannerLoadedMold) {
+    try { clearPlannerProgressLocks(); } catch (_) {}
     banner.innerHTML = '';
     return;
   }
@@ -1017,12 +1048,145 @@ function setPlannerLoadedMold(mold) {
     <div style="padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg);">
       <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:baseline;">
         <div style="font-weight:800;">Editando molde planificado</div>
-        <div style="color:var(--text-muted); font-size:0.9rem;">Rango: ${range}</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <div style="color:var(--text-muted); font-size:0.9rem;">Rango: ${range}</div>
+          <button class="btn btn-danger btn-sm" id="deletePlannedMoldBtn" title="Eliminar toda la planificación de este molde">Eliminar</button>
+        </div>
       </div>
       <div style="margin-top:6px;">Molde: <strong>${name}</strong></div>
-      <div style="margin-top:6px; color:var(--text-muted); font-size:0.9rem;">Al crear planificación en este modo, se reemplaza el plan futuro de este molde desde la fecha de inicio seleccionada.</div>
+      <div style="margin-top:6px; color:var(--text-muted); font-size:0.9rem;">Al actualizar en este modo, se elimina la planificación previa del molde y se vuelve a planificar desde la fecha de inicio seleccionada.</div>
     </div>
   `;
+
+  const delBtn = document.getElementById('deletePlannedMoldBtn');
+  if (delBtn) {
+    delBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (!plannerLoadedMold?.moldId) return;
+
+      const moldName = String(plannerLoadedMold.moldName || '');
+      const ok = window.confirm(`¿Eliminar la planificación completa del molde "${moldName}"?\n\nEsto lo removerá del calendario y de la lista de moldes planificados.`);
+      if (!ok) return;
+
+      displayResponse('gridResponse', { message: 'Eliminando planificación...' }, true);
+      try {
+        const res = await fetch(`${API_URL}/tasks/plan/mold/${encodeURIComponent(String(plannerLoadedMold.moldId))}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${authToken}` },
+          cache: 'no-store'
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          displayResponse('gridResponse', data?.error || 'No se pudo eliminar la planificación', false);
+          return;
+        }
+
+        setPlannerLoadedMold(null);
+        try { clearPlannerGrid(); } catch (_) {}
+        try { await loadPlannedMoldsList(); } catch (_) {}
+        displayResponse('gridResponse', { message: data?.message || 'Planificación eliminada.' }, true);
+      } catch (err) {
+        displayResponse('gridResponse', { error: 'Error de conexión eliminando la planificación', details: String(err) }, false);
+      }
+    }, { once: true });
+  }
+
+  // Botón superior (junto a Refrescar/Salir): seguir consecutivamente
+  if (consecutiveBtnTop) {
+    consecutiveBtnTop.onclick = async (e) => {
+      e.preventDefault();
+      if (!plannerLoadedMold?.moldId) return;
+
+      const moldName = String(plannerLoadedMold.moldName || '');
+      const ok = window.confirm(
+        `¿Seguir consecutivamente con "${moldName}"?\n\n` +
+        `El sistema buscará el molde anterior (por orden de creación de la planificación).\n` +
+        `Solo permitirá la acción si el molde anterior está COMPLETO; entonces intentará pegar este molde detrás de él.`
+      );
+      if (!ok) return;
+
+      // Construir tasks desde la parrilla (en modo edición puede haber inputs deshabilitados)
+      const grid = document.getElementById('planningGridFixed');
+      if (!grid) {
+        displayResponse('gridResponse', 'La parrilla no está lista.', false);
+        return;
+      }
+
+      const tasks = [];
+      const allowDisabledInputs = true;
+
+      grid.querySelectorAll('tbody tr').forEach(row => {
+        const partName = row.getAttribute('data-part-name');
+        if (!partName) return;
+
+        const qtyEl = row.querySelector('.qty-input');
+        if (qtyEl && qtyEl.disabled && !allowDisabledInputs) return;
+        const qty = parseLocaleNumber(qtyEl?.value);
+        if (isNaN(qty) || qty <= 0) return;
+
+        row.querySelectorAll('.hours-input').forEach(inp => {
+          if (inp.disabled && !allowDisabledInputs) return;
+          const base = parseLocaleNumber(inp.value);
+          if (isNaN(base) || base <= 0) return;
+
+          const machineId = inp.getAttribute('data-machine-id');
+          const machinesForPlan = (plannerMachinesInGrid && plannerMachinesInGrid.length)
+            ? plannerMachinesInGrid
+            : (window.FIXED_MACHINES || FIXED_MACHINES || []);
+          const machineName =
+            machinesForPlan.find(m => String(m.id) === String(machineId))?.name
+            || machineId;
+
+          const totalHours = round2(base * qty);
+          if (totalHours > 0) tasks.push({ partName, machineName, totalHours });
+        });
+      });
+
+      if (!tasks.length) {
+        displayResponse('gridResponse', 'No hay datos para planificar.', false);
+        return;
+      }
+
+      const payload = {
+        moldName: getPlannerSelectedMoldName() || moldName,
+        moldId: Number(plannerLoadedMold.moldId),
+        tasks,
+        gridSnapshot: buildPlannerGridSnapshotFromUI()
+      };
+
+      const responseBox = document.getElementById('gridResponse');
+      if (responseBox) responseBox.textContent = 'Buscando consecutivo y reprogramando...';
+
+      try {
+        const res = await fetch(`${API_URL}/tasks/plan/consecutive`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          displayResponse('gridResponse', data?.error || 'No se pudo reprogramar consecutivamente', false);
+          return;
+        }
+
+        displayResponse('gridResponse', data?.message || 'Planificación actualizada (consecutivo).', true);
+
+        // Si el backend devuelve startDate, actualizamos el input para que quede consistente
+        try {
+          const startDateEl = document.getElementById('gridStartDate');
+          if (startDateEl && data?.startDate) startDateEl.value = String(data.startDate);
+        } catch (_) {}
+
+        loadCalendar();
+        try { await loadPlannedMoldsList(); } catch (_) {}
+      } catch (err) {
+        displayResponse('gridResponse', { error: 'Error de conexión', details: String(err) }, false);
+      }
+    };
+  }
 }
 
 async function loadPlannedMoldsList() {
@@ -1135,6 +1299,60 @@ function fillPlannerGridFromMoldPlanTotals(moldPlan) {
   persistPlannerStateToStorage();
 }
 
+function clearPlannerProgressLocks() {
+  const grid = document.getElementById('planningGridFixed');
+  if (!grid) return;
+  grid.querySelectorAll('tbody tr').forEach(row => {
+    const qtyInput = row.querySelector('.qty-input');
+    if (qtyInput) qtyInput.disabled = false;
+    row.querySelectorAll('.hours-input').forEach(inp => {
+      inp.disabled = false;
+      inp.classList.remove('planner-cell-done');
+    });
+  });
+}
+
+function applyPlannerProgressLocksFromBreakdown(breakdown) {
+  const grid = document.getElementById('planningGridFixed');
+  if (!grid) return;
+
+  const parts = Array.isArray(breakdown?.parts) ? breakdown.parts : [];
+  const doneCells = new Map(); // norm(partName) -> Set(machineId)
+
+  for (const p of parts) {
+    const pKey = normKey(p?.partName);
+    if (!pKey) continue;
+    const machines = Array.isArray(p?.machines) ? p.machines : [];
+    for (const m of machines) {
+      if (!m?.isComplete) continue;
+      const mid = String(m.machineId);
+      if (!doneCells.has(pKey)) doneCells.set(pKey, new Set());
+      doneCells.get(pKey).add(mid);
+    }
+  }
+
+  grid.querySelectorAll('tbody tr').forEach(row => {
+    const partName = String(row.getAttribute('data-part-name') || '');
+    const pKey = normKey(partName);
+    if (!pKey) return;
+
+    const qtyInput = row.querySelector('.qty-input');
+
+    // En edición por molde planificado, deshabilitamos cantidad siempre.
+    // La parrilla representa totales por máquina (qty=1), así evitamos que cambien horas completadas indirectamente.
+    if (plannerLoadedMold && qtyInput) qtyInput.disabled = true;
+    else if (qtyInput) qtyInput.disabled = false;
+
+    const midsDone = doneCells.get(pKey);
+    row.querySelectorAll('.hours-input').forEach(inp => {
+      const mid = String(inp.getAttribute('data-machine-id') || '');
+      const cellDone = midsDone && mid && midsDone.has(mid);
+      inp.disabled = !!cellDone;
+      inp.classList.toggle('planner-cell-done', !!cellDone);
+    });
+  });
+}
+
 // Planificador
 function getPlannerSelectedMoldName() {
   const sel = document.getElementById('planMoldSelect');
@@ -1195,25 +1413,99 @@ function fmtHours(n) {
   return Number.isFinite(x) ? x.toFixed(2) : '0.00';
 }
 
-function buildMoldProgressContent(data, fallbackMoldName) {
+function clampPct(p) {
+  const x = Number(p);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(100, x));
+}
+
+function normKey(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+function renderMoldPartsProgressList(breakdown) {
+  const parts = Array.isArray(breakdown?.parts) ? breakdown.parts : [];
+  if (!parts.length) return '<div style="color:var(--text-muted)">(Sin detalle por partes)</div>';
+
+  return `
+    <div class="parts-progress-list">
+      ${parts.map(p => {
+        const planH = fmtHours(p?.plannedHoursTotal || 0);
+        const realH = fmtHours(p?.actualHoursTotal || 0);
+        const machines = Array.isArray(p?.machines) ? p.machines : [];
+        return `
+          <div class="parts-progress-item">
+            <div class="parts-progress-head">
+              <div class="parts-progress-name">${escapeHtml(String(p?.partName || 'Parte'))}</div>
+              <div class="parts-progress-meta">
+                <span class="parts-progress-hours">${escapeHtml(realH)}h / ${escapeHtml(planH)}h</span>
+              </div>
+            </div>
+            ${machines.length ? `
+              <div class="pm-progress-list">
+                ${machines.map(m => {
+                  const mPlan = Number(m?.plannedHours || 0);
+                  const mReal = Number(m?.actualHours || 0);
+                  const mPct = clampPct(m?.percentComplete == null ? (m?.isComplete ? 100 : 0) : m.percentComplete);
+                  const done = !!m?.isComplete;
+                  return `
+                    <div class="pm-progress-item ${done ? 'done' : 'pending'}">
+                      <div class="pm-head">
+                        <div class="pm-name">${escapeHtml(String(m?.machineName || 'Máquina'))}</div>
+                        <div class="pm-meta">
+                          <span class="pm-status">${done ? 'Terminado' : 'Pendiente'}</span>
+                          <span>${escapeHtml(fmtHours(mReal))}h / ${escapeHtml(fmtHours(mPlan))}h</span>
+                        </div>
+                      </div>
+                      <div class="pm-bar"><div style="width:${mPct}%;"></div></div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : '<div style="color:var(--text-muted); margin-top:8px;">(Sin máquinas en plan)</div>'}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function buildMoldProgressContent(data, fallbackMoldName, opts) {
+  const listKind = opts?.listKind ? String(opts.listKind) : '';
+  const isCompletedList = listKind === 'completed';
+
   const pct = (data?.totals?.percentComplete == null) ? null : Number(data.totals.percentComplete);
   const plannedTotal = Number(data?.totals?.plannedTotalHours || 0);
-  const plannedToDate = Number(data?.totals?.plannedToDateHours || 0);
-  const actualToDate = Number(data?.totals?.actualToDateHours || 0);
-  const variance = Number(data?.totals?.varianceToDateHours || 0);
+  const actualTotal = Number(data?.totals?.actualTotalHours || 0);
+
+  const completedParts = Number(data?.totals?.completedParts);
+  const totalParts = Number(data?.totals?.totalPartsWithPlan);
+  const partsLabel = (Number.isFinite(completedParts) && Number.isFinite(totalParts) && totalParts > 0)
+    ? `${completedParts}/${totalParts}`
+    : null;
+
+  const completedCells = Number(data?.breakdown?.totals?.completedCells);
+  const totalCells = Number(data?.breakdown?.totals?.totalCellsWithPlan);
+  const cellsLabel = (Number.isFinite(completedCells) && Number.isFinite(totalCells) && totalCells > 0)
+    ? `${completedCells}/${totalCells}`
+    : null;
 
   const planStart = data?.planWindow?.startDate ? String(data.planWindow.startDate) : '';
   const planEnd = data?.planWindow?.endDate ? String(data.planWindow.endDate) : '';
   const planRange = (planStart || planEnd) ? `${planStart || '—'} → ${planEnd || '—'}` : '';
 
-  const barPct = pct == null ? 0 : Math.max(0, Math.min(100, pct));
-  const varianceLabel = variance >= 0 ? `+${fmtHours(variance)}h` : `${fmtHours(variance)}h`;
-  const varianceColor = variance > 0.01 ? 'var(--warning)' : (variance < -0.01 ? 'var(--success)' : 'var(--text-secondary)');
+  const varianceTotalHours = actualTotal - plannedTotal;
+  const varianceTotalPct = (plannedTotal > 0 && Number.isFinite(varianceTotalHours)) ? (varianceTotalHours / plannedTotal) * 100 : null;
+
+  // En "Moldes terminados" el avance debe ser 100% (ya se sabe que terminó).
+  // La diferencia vs plan se muestra aparte como desviación.
+  const shownPct = isCompletedList ? 100 : pct;
+  const barPct = shownPct == null ? 0 : clampPct(shownPct);
 
   return `
     <div style="display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap;">
       <div>
-        <div style="font-weight:800;">Avance vs plan</div>
+        <div style="font-weight:800;">Avance vs plan${isCompletedList ? ' (Terminado)' : ''}</div>
         <div style="color:var(--text-muted); font-size:0.9rem;">Molde: <strong>${escapeHtml(String(data?.moldName || fallbackMoldName || ''))}</strong></div>
         ${planRange ? `<div style="color:var(--text-muted); font-size:0.85rem;">Plan: ${escapeHtml(planRange)}</div>` : ''}
       </div>
@@ -1225,22 +1517,44 @@ function buildMoldProgressContent(data, fallbackMoldName) {
     </div>
 
     <div class="mold-progress-grid">
-      <div class="mold-progress-kpi">
-        <div class="label">% completado (real/plan total)</div>
-        <div class="value">${pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
-      </div>
-      <div class="mold-progress-kpi">
-        <div class="label">Plan total</div>
-        <div class="value">${fmtHours(plannedTotal)}h</div>
-      </div>
-      <div class="mold-progress-kpi">
-        <div class="label">Plan a hoy</div>
-        <div class="value">${fmtHours(plannedToDate)}h</div>
-      </div>
-      <div class="mold-progress-kpi">
-        <div class="label">Real a hoy (vs plan a hoy)</div>
-        <div class="value" style="color:${varianceColor}">${fmtHours(actualToDate)}h (${escapeHtml(varianceLabel)})</div>
-      </div>
+      ${isCompletedList ? `
+        <div class="mold-progress-kpi">
+          <div class="label">% completado (avance)</div>
+          <div class="value">100.00%</div>
+        </div>
+        <div class="mold-progress-kpi">
+          <div class="label">Plan total</div>
+          <div class="value">${fmtHours(plannedTotal)}h</div>
+        </div>
+        <div class="mold-progress-kpi">
+          <div class="label">Real total</div>
+          <div class="value">${fmtHours(actualTotal)}h</div>
+        </div>
+        <div class="mold-progress-kpi">
+          <div class="label">Desviación (real - plan)</div>
+          <div class="value" style="color:${varianceTotalHours > 0.01 ? 'var(--danger)' : (varianceTotalHours < -0.01 ? 'var(--success)' : 'var(--text)')}">
+            ${Number.isFinite(varianceTotalHours) ? `${varianceTotalHours >= 0 ? '+' : ''}${fmtHours(varianceTotalHours)}h` : '—'}
+            ${Number.isFinite(varianceTotalPct) ? ` <span style="color:var(--text-muted); font-weight:600; font-size:0.95rem;">(${varianceTotalPct >= 0 ? '+' : ''}${varianceTotalPct.toFixed(2)}%)</span>` : ''}
+          </div>
+        </div>
+      ` : `
+        <div class="mold-progress-kpi">
+          <div class="label">% completado (real/plan total)</div>
+          <div class="value">${pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
+        </div>
+        <div class="mold-progress-kpi">
+          <div class="label">Plan total</div>
+          <div class="value">${fmtHours(plannedTotal)}h</div>
+        </div>
+        <div class="mold-progress-kpi">
+          <div class="label">Real total</div>
+          <div class="value">${fmtHours(actualTotal)}h</div>
+        </div>
+        <div class="mold-progress-kpi">
+          <div class="label">Partes completadas</div>
+          <div class="value">${partsLabel ? escapeHtml(partsLabel) : (cellsLabel ? escapeHtml(cellsLabel) : '—')}</div>
+        </div>
+      `}
     </div>
   `;
 }
@@ -1278,6 +1592,190 @@ async function renderInProgressMoldList() {
     container.innerHTML = molds.map(m => `<div class="mold-progress-panel">${buildMoldProgressContent(m, m?.moldName)}</div>`).join('');
   } catch (_) {
     container.innerHTML = '<div style="color:var(--danger)">Error de conexión cargando moldes en curso</div>';
+  }
+}
+
+function buildMoldProgressPanelWithToggle(m, listKind) {
+  const moldId = m?.moldId;
+  const key = `${String(listKind || 'list')}:${String(moldId ?? '')}`;
+  return `
+    <div class="mold-progress-panel" data-mold-panel="${escapeHtml(key)}" data-mold-id="${escapeHtml(String(moldId ?? ''))}">
+      ${buildMoldProgressContent(m, m?.moldName, { listKind })}
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-secondary" data-toggle-mold-detail="${escapeHtml(key)}">Detalle (partes/máquinas)</button>
+        ${m?.lastWorkDate ? `<span style="color:var(--text-muted); font-size:0.85rem;">Último registro: ${escapeHtml(String(m.lastWorkDate))}</span>` : ''}
+      </div>
+      <div data-mold-detail="${escapeHtml(key)}" style="margin-top:10px; display:none;"></div>
+    </div>
+  `;
+}
+
+function safeCssEscape(v) {
+  const s = String(v ?? '');
+  try {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(s);
+  } catch (_) {}
+  // Fallback simple (suficiente para nuestros data-attributes)
+  return s.replace(/[^a-zA-Z0-9_\-]/g, '\\$&');
+}
+
+async function wireMoldDetailToggles(container) {
+  if (!container) return;
+  const buttons = Array.from(container.querySelectorAll('button[data-toggle-mold-detail]'));
+  if (!buttons.length) return;
+
+  buttons.forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const key = btn.getAttribute('data-toggle-mold-detail');
+      if (!key) return;
+      const panel = container.querySelector(`[data-mold-panel="${safeCssEscape(key)}"]`);
+      if (!panel) return;
+      const moldId = panel.getAttribute('data-mold-id');
+      const detail = panel.querySelector(`[data-mold-detail="${safeCssEscape(key)}"]`);
+      if (!detail) return;
+
+      const isOpen = detail.style.display !== 'none';
+      if (isOpen) {
+        detail.style.display = 'none';
+        return;
+      }
+
+      // Lazy load only once
+      if (detail.getAttribute('data-loaded') === '1') {
+        detail.style.display = 'block';
+        return;
+      }
+
+      detail.style.display = 'block';
+      detail.innerHTML = '<div style="color:var(--text-muted)">Cargando detalle...</div>';
+      try {
+        const progress = await fetchMoldProgressDetail(moldId);
+        if (!progress || !progress.breakdown) {
+          detail.innerHTML = '<div style="color:var(--text-muted)">(Sin detalle disponible)</div>';
+          detail.setAttribute('data-loaded', '1');
+          return;
+        }
+        detail.innerHTML = renderMoldPartsProgressList(progress.breakdown);
+        detail.setAttribute('data-loaded', '1');
+      } catch (_) {
+        detail.innerHTML = '<div style="color:var(--danger)">Error cargando detalle</div>';
+      }
+    });
+  });
+}
+
+async function renderCompletedMoldList() {
+  const container = document.getElementById('completedMoldList');
+  if (!container) return;
+
+  if (!authToken) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = '<div style="color:var(--text-muted)">Cargando moldes terminados...</div>';
+
+  try {
+    const qs = new URLSearchParams();
+    qs.set('limit', '200');
+
+    const monthSel = document.getElementById('completedMoldsMonth');
+    const yearInp = document.getElementById('completedMoldsYear');
+    const month = monthSel ? String(monthSel.value || '').trim() : '';
+    const year = yearInp ? String(yearInp.value || '').trim() : '';
+    if (month && year) {
+      qs.set('month', month);
+      qs.set('year', year);
+    }
+
+    const url = `${API_URL}/molds/completed?${qs.toString()}`;
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      cache: 'no-store'
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      container.innerHTML = `<div style="color:var(--danger)">${escapeHtml(String(data?.error || 'No se pudo cargar moldes terminados'))}</div>`;
+      return;
+    }
+
+    let molds = Array.isArray(data?.molds) ? data.molds : [];
+
+    const q = String(document.getElementById('completedMoldsSearch')?.value || '').trim().toLowerCase();
+    if (q) {
+      molds = molds.filter(m => String(m?.moldName || '').toLowerCase().includes(q));
+    }
+
+    if (!molds.length) {
+      container.innerHTML = '<div style="color:var(--text-muted)">(No hay moldes terminados)</div>';
+      return;
+    }
+
+    container.innerHTML = molds.map(m => buildMoldProgressPanelWithToggle(m, 'completed')).join('');
+    await wireMoldDetailToggles(container);
+  } catch (_) {
+    container.innerHTML = '<div style="color:var(--danger)">Error de conexión cargando moldes terminados</div>';
+  }
+}
+
+function wireCompletedMoldsViewControls() {
+  const list = document.getElementById('completedMoldList');
+  if (!list) return;
+  if (list.getAttribute('data-wired') === '1') return;
+  list.setAttribute('data-wired', '1');
+
+  // Defaults: mes/año actual (Bogotá si está disponible)
+  try {
+    const monthSel = document.getElementById('completedMoldsMonth');
+    const yearInp = document.getElementById('completedMoldsYear');
+    if (monthSel && yearInp && !monthSel.value && !yearInp.value) {
+      const iso = (typeof getBogotaTodayISO === 'function') ? getBogotaTodayISO() : null;
+      const now = iso ? iso : new Date().toISOString().slice(0, 10);
+      const y = now.slice(0, 4);
+      const m = String(Number(now.slice(5, 7)));
+      yearInp.value = y;
+      monthSel.value = m;
+    }
+  } catch (_) {}
+
+  const refreshBtn = document.getElementById('completedMoldsRefreshBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => {
+      try { renderCompletedMoldList(); } catch (_) {}
+    });
+  }
+
+  const clearBtn = document.getElementById('completedMoldsClearBtn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      const search = document.getElementById('completedMoldsSearch');
+      if (search) search.value = '';
+      const monthSel = document.getElementById('completedMoldsMonth');
+      const yearInp = document.getElementById('completedMoldsYear');
+      if (monthSel) monthSel.value = '';
+      if (yearInp) yearInp.value = '';
+      try { renderCompletedMoldList(); } catch (_) {}
+    });
+  }
+
+  const searchInput = document.getElementById('completedMoldsSearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      try { renderCompletedMoldList(); } catch (_) {}
+    });
+  }
+
+  const monthSel = document.getElementById('completedMoldsMonth');
+  if (monthSel) {
+    monthSel.addEventListener('change', () => {
+      try { renderCompletedMoldList(); } catch (_) {}
+    });
+  }
+  const yearInp = document.getElementById('completedMoldsYear');
+  if (yearInp) {
+    yearInp.addEventListener('change', () => {
+      try { renderCompletedMoldList(); } catch (_) {}
+    });
   }
 }
 
@@ -1469,6 +1967,11 @@ async function submitGridPlan(e) {
   console.log('startDate (raw):', startDate);
   console.log('isPriority:', isPriority);
 
+  if (plannerLoadedMold && isPriority) {
+    displayResponse('gridResponse', 'En modo edición no se permite PRIORIDAD (para no borrar/reprogramar trabajo ya completado). Desmarca Prioridad o sal de edición.', false);
+    return;
+  }
+
   if (!moldName) {
     displayResponse('gridResponse', 'Selecciona un Molde.', false);
     return;
@@ -1526,16 +2029,23 @@ async function submitGridPlan(e) {
   // ---------------------------
   // CONSTRUCCIÓN DE TASKS
   // ---------------------------
+  const allowDisabledInputs = Boolean(plannerLoadedMold) || Boolean(isPriority);
   const tasks = [];
 
   grid.querySelectorAll('tbody tr').forEach(row => {
     const partName = row.getAttribute('data-part-name');
     if (!partName) return;
 
-    const qty = parseLocaleNumber(row.querySelector('.qty-input')?.value);
+    const qtyEl = row.querySelector('.qty-input');
+    // En modo edición/reprogramación, los inputs pueden estar deshabilitados (marcados en verde)
+    // pero aun así representan la planificación vigente; debemos poder moverla de fecha.
+    if (qtyEl && qtyEl.disabled && !allowDisabledInputs) return;
+
+    const qty = parseLocaleNumber(qtyEl?.value);
     if (isNaN(qty) || qty <= 0) return;
 
     row.querySelectorAll('.hours-input').forEach(inp => {
+      if (inp.disabled && !allowDisabledInputs) return;
       const base = parseLocaleNumber(inp.value);
       if (isNaN(base) || base <= 0) return;
 
@@ -1567,6 +2077,7 @@ async function submitGridPlan(e) {
   // ---------------------------
   const payload = {
     moldName,
+    moldId: plannerLoadedMold?.moldId != null ? Number(plannerLoadedMold.moldId) : null,
     startDate: startDate || null,
     tasks,
     gridSnapshot: buildPlannerGridSnapshotFromUI()
@@ -2057,13 +2568,37 @@ async function loadTiemposMeta(){
     // Por defecto hoy (Colombia), pero sigue siendo editable.
     setTiemposDateToColombiaToday();
 
+    // Operario: si el usuario es operario, fijamos el campo al operario logueado.
+    // Si es admin/planner, dejamos el datalist libre como antes.
     fillDatalist('tmOperarios', (meta.operators || []).map(o => o.name));
+    try {
+      const tmOperarioEl = document.getElementById('tmOperario');
+      const isOperator = String(currentUser?.role || '').toLowerCase() === 'operator';
+      if (tmOperarioEl) {
+        if (isOperator) {
+          tmOperarioEl.value = String(currentUser?.operatorName || '').trim();
+          tmOperarioEl.disabled = true;
+        } else {
+          tmOperarioEl.disabled = false;
+        }
+      }
+    } catch (_) {}
+
     fillDatalist('tmProcesos', (meta.processes || []).map(p => p.name));
     fillDatalist('tmOperaciones', (meta.operations || []).map(o => o.name));
 
-    // En Tiempos, Molde/Parte/Máquina dependen de lo planificado en Calendario.
-    bindTiemposPlannedListeners();
-    await refreshTiemposPlannedOptions();
+    // En Tiempos, Molde/Parte/Máquina salen de catálogos (BD), no de lo planificado.
+    try {
+      const molds = uniqueIdName(meta.molds || []);
+      const parts = uniqueIdName(meta.parts || []);
+      const machines = uniqueIdName(meta.machines || []);
+      populateSelectWithFilterObjects('tmMoldeSelect', 'tmMoldeFilter', molds, 'name');
+      populateSelectWithFilterObjects('tmParteSelect', 'tmParteFilter', parts, 'name');
+      populateSelectWithFilterObjects('tmMaquinaSelect', 'tmMaquinaFilter', machines, 'name');
+      setupFilterListenerObjects('tmMoldeFilter', 'tmMoldeSelect', 'name');
+      setupFilterListenerObjects('tmParteFilter', 'tmParteSelect', 'name');
+      setupFilterListenerObjects('tmMaquinaFilter', 'tmMaquinaSelect', 'name');
+    } catch (_) {}
   } catch (_) {}
 }
 
@@ -2075,7 +2610,10 @@ async function saveTiempoMolde() {
   const mes = mesSel ? (mesSel.value || '').toLowerCase() : '';
   const anio = anioSel ? parseInt(anioSel.value, 10) : NaN;
 
-  const operario = document.getElementById('tmOperario') ? document.getElementById('tmOperario').value : '';
+  const isOperator = String(currentUser?.role || '').toLowerCase() === 'operator';
+  const operario = isOperator
+    ? String(currentUser?.operatorName || '').trim()
+    : (document.getElementById('tmOperario') ? document.getElementById('tmOperario').value : '');
   const proceso = document.getElementById('tmProceso') ? document.getElementById('tmProceso').value : '';
 
   const moldeSel = document.getElementById('tmMoldeSelect');
@@ -2094,11 +2632,12 @@ async function saveTiempoMolde() {
   }
 
   const meta = tiemposMetaCache || {};
-  const operator = findByName(meta.operators, operario);
-  const operatorId = operator ? Number(operator.id) : NaN;
+  const operatorId = isOperator
+    ? Number(currentUser?.operatorId)
+    : Number(findByName(meta.operators, operario)?.id);
 
-  if (isNaN(operatorId)) {
-    return displayResponse('tmResponse', { error: 'Operario no existe en catálogo (usa el listado)' }, false);
+  if (!Number.isFinite(operatorId) || operatorId <= 0) {
+    return displayResponse('tmResponse', { error: 'Operario inválido' }, false);
   }
 
   const monthNo = monthNameToNumber(mes);
@@ -2134,22 +2673,329 @@ async function saveTiempoMolde() {
 // Registros (historial editable de work_logs)
 // ================================
 
+let workLogsHistoryCache = [];
+let workLogsFilters = {}; // key -> Set(normalized) | null
+let workLogsFilterUiBound = false;
+let workLogsActivePopover = null; // { key, anchorEl }
+
+const WORKLOG_FILTERS = [
+  { key: 'dia', label: 'Día' },
+  { key: 'mes', label: 'Mes' },
+  { key: 'anio', label: 'Año' },
+  { key: 'operario', label: 'Operario' },
+  { key: 'proceso', label: 'Proceso' },
+  { key: 'molde', label: 'Molde' },
+  { key: 'parte', label: 'Parte' },
+  { key: 'maquina', label: 'Máquina' },
+  { key: 'operacion', label: 'Operación' },
+  { key: 'motivo', label: 'Motivo' },
+];
+
+function normalizeFilterValue(v) {
+  const s = String(v ?? '').trim();
+  return s === '' ? '(vacío)' : s.toLowerCase();
+}
+
+function parseProcesoOperacion(note) {
+  const out = { proceso: '', operacion: '' };
+  const s = String(note || '');
+  const mProc = s.match(/Proceso:\s*([^|]+?)(\s*\||$)/i);
+  const mOper = s.match(/Operaci[oó]n:\s*(.+)$/i);
+  if (mProc && mProc[1]) out.proceso = String(mProc[1]).trim();
+  if (mOper && mOper[1]) out.operacion = String(mOper[1]).trim();
+  return out;
+}
+
+function getWorkLogDerivedForFilters(r) {
+  const workDateIso = r?.work_date || (r?.recorded_at ? fmtDateOnly(r.recorded_at) : '');
+  let dia = '', mes = '', anio = '';
+  try {
+    const d = workDateIso ? parseISODateOnlyLocal(workDateIso) : null;
+    if (d && !Number.isNaN(d.getTime())) {
+      dia = String(d.getDate());
+      const mIdx = d.getMonth();
+      mes = capitalize(monthNames[mIdx] || '');
+      anio = String(d.getFullYear());
+    }
+  } catch (_) {}
+  const po = parseProcesoOperacion(r?.note);
+  return {
+    dia,
+    mes,
+    anio,
+    operario: String(r?.operator_name || ''),
+    proceso: String(po.proceso || ''),
+    molde: String(r?.mold_name || ''),
+    parte: String(r?.part_name || ''),
+    maquina: String(r?.machine_name || ''),
+    operacion: String(po.operacion || ''),
+    motivo: String(r?.reason || ''),
+  };
+}
+
+function getWorkLogRowValueFromDom(tr, key) {
+  if (!tr) return '';
+  const getVal = (sel) => String(tr.querySelector(sel)?.value ?? '').trim();
+  switch (key) {
+    case 'dia': return getVal('input.wl-dia');
+    case 'mes': return getVal('select.wl-mes');
+    case 'anio': return getVal('input.wl-anio');
+    case 'operario': return getVal('input.wl-operario');
+    case 'proceso': return getVal('input.wl-proceso');
+    case 'molde': return getVal('input.wl-molde');
+    case 'parte': return getVal('input.wl-parte');
+    case 'maquina': return getVal('input.wl-maquina');
+    case 'operacion': return getVal('input.wl-operacion');
+    case 'motivo': return getVal('input.wl-reason');
+    default: return '';
+  }
+}
+
+function getDistinctFilterOptionsFromCache(key) {
+  const seen = new Map(); // normalized -> display
+  for (const r of workLogsHistoryCache) {
+    const d = getWorkLogDerivedForFilters(r);
+    const display = String(d[key] ?? '').trim();
+    const norm = normalizeFilterValue(display);
+    if (!seen.has(norm)) seen.set(norm, display === '' ? '(Vacío)' : display);
+  }
+  // Orden: (Vacío) primero, luego alfabético
+  const items = Array.from(seen.entries()).map(([norm, display]) => ({ norm, display }));
+  items.sort((a, b) => {
+    if (a.norm === '(vacío)' && b.norm !== '(vacío)') return -1;
+    if (b.norm === '(vacío)' && a.norm !== '(vacío)') return 1;
+    return a.display.localeCompare(b.display, 'es', { sensitivity: 'base' });
+  });
+  return items;
+}
+
+function updateWorkLogsFilterButtons() {
+  const bar = document.getElementById('workLogsFiltersBar');
+  if (!bar) return;
+  bar.querySelectorAll('button[data-wl-filter-key]').forEach(btn => {
+    const key = String(btn.getAttribute('data-wl-filter-key') || '');
+    const meta = WORKLOG_FILTERS.find(x => x.key === key);
+    if (!meta) return;
+    const options = getDistinctFilterOptionsFromCache(key);
+    const selected = workLogsFilters[key];
+    const isFiltered = selected && selected.size > 0 && selected.size < options.length;
+    btn.textContent = isFiltered ? `${meta.label} (${selected.size})` : meta.label;
+    btn.classList.toggle('btn-primary', isFiltered);
+    btn.classList.toggle('btn-secondary', !isFiltered);
+  });
+}
+
+function applyWorkLogsFiltersToDom() {
+  const tbody = document.querySelector('#workLogsTable tbody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr[data-id]'));
+  let shown = 0;
+  let totalHours = 0;
+  for (const tr of rows) {
+    let ok = true;
+    for (const f of WORKLOG_FILTERS) {
+      const selected = workLogsFilters[f.key];
+      if (!selected || selected.size === 0) continue;
+      const raw = getWorkLogRowValueFromDom(tr, f.key);
+      const norm = normalizeFilterValue(raw);
+      if (!selected.has(norm)) { ok = false; break; }
+    }
+    tr.style.display = ok ? '' : 'none';
+    if (ok) {
+      shown += 1;
+      const h = parseFloat(String(tr.querySelector('input.wl-hours')?.value ?? '').trim());
+      if (Number.isFinite(h)) totalHours += h;
+    }
+  }
+  updateWorkLogsFilterButtons();
+  const totalEl = document.getElementById('workLogsTotalHours');
+  if (totalEl) totalEl.textContent = Number(totalHours).toFixed(2);
+  displayResponse('workLogsResponse', { total: workLogsHistoryCache.length, visibles: shown, horas_reales_visibles: Number(totalHours).toFixed(2) }, true);
+}
+
+function ensureWorkLogsTotalsLiveUpdate() {
+  const tbody = document.querySelector('#workLogsTable tbody');
+  if (!tbody) return;
+  if (tbody.dataset.wlTotalsBound === '1') return;
+  tbody.dataset.wlTotalsBound = '1';
+  tbody.addEventListener('input', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (!target.classList.contains('wl-hours')) return;
+    // Recalcular (solo 200 filas típicamente; suficiente).
+    try { applyWorkLogsFiltersToDom(); } catch (_) {}
+  });
+}
+
+function hideWorkLogsFilterPopover() {
+  const pop = document.getElementById('workLogsFilterPopover');
+  if (pop) pop.style.display = 'none';
+  pop && (pop.innerHTML = '');
+  workLogsActivePopover = null;
+}
+
+function showWorkLogsFilterPopover(key, anchorEl) {
+  const pop = document.getElementById('workLogsFilterPopover');
+  if (!pop) return;
+  const options = getDistinctFilterOptionsFromCache(key);
+  const selected = workLogsFilters[key] ? new Set(workLogsFilters[key]) : null;
+
+  const meta = WORKLOG_FILTERS.find(x => x.key === key);
+  const title = meta ? meta.label : key;
+
+  // Posicionar relativo al botón (simple): insertamos el popover justo debajo de la barra.
+  pop.style.display = '';
+  pop.innerHTML = `
+    <div style="margin-top:10px; border:1px solid var(--border-color); background: var(--card-bg); border-radius:10px; padding:10px; max-width: 720px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <div style="font-weight:800;">Filtrar: ${escapeHtml(title)}</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-secondary" id="wlFilterSelectAllBtn">Todos</button>
+          <button class="btn btn-secondary" id="wlFilterSelectNoneBtn">Ninguno</button>
+          <button class="btn btn-danger" id="wlFilterCloseBtn">Cerrar</button>
+        </div>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <input type="text" id="wlFilterSearch" placeholder="Buscar..." style="min-width:220px;">
+        <button class="btn btn-primary" id="wlFilterApplyBtn">Aplicar</button>
+        <span class="text-muted" id="wlFilterCount" style="font-size:0.9rem;"></span>
+      </div>
+      <div id="wlFilterOptions" style="margin-top:10px; display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:6px; max-height: 260px; overflow:auto;"></div>
+    </div>
+  `;
+
+  const optionsEl = document.getElementById('wlFilterOptions');
+  const searchEl = document.getElementById('wlFilterSearch');
+  const countEl = document.getElementById('wlFilterCount');
+
+  function isChecked(norm) {
+    if (!selected) return true; // sin filtro => todos seleccionados
+    return selected.has(norm);
+  }
+
+  function renderOptions() {
+    const q = String(searchEl?.value || '').toLowerCase().trim();
+    const filtered = q
+      ? options.filter(o => o.display.toLowerCase().includes(q) || o.norm.includes(q))
+      : options;
+    if (optionsEl) {
+      optionsEl.innerHTML = filtered.map(o => `
+        <label style="display:flex; gap:8px; align-items:center; padding:6px 8px; border:1px solid var(--border-color); border-radius:8px;">
+          <input type="checkbox" class="wl-filter-opt" value="${escapeHtml(o.norm)}" ${isChecked(o.norm) ? 'checked' : ''}>
+          <span title="${escapeHtml(o.display)}" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(o.display)}</span>
+        </label>
+      `).join('');
+    }
+    const checkedCount = (() => {
+      if (!selected) return options.length;
+      return selected.size;
+    })();
+    if (countEl) countEl.textContent = `${checkedCount} de ${options.length}`;
+  }
+
+  function readSelectionFromDom() {
+    const boxes = Array.from(pop.querySelectorAll('input.wl-filter-opt'));
+    const next = new Set();
+    for (const b of boxes) {
+      if (b.checked) next.add(String(b.value));
+    }
+    return next;
+  }
+
+  function setAll(checked) {
+    pop.querySelectorAll('input.wl-filter-opt').forEach(cb => { cb.checked = checked; });
+    const next = readSelectionFromDom();
+    if (countEl) countEl.textContent = `${next.size} de ${options.length}`;
+  }
+
+  // Bind
+  const closeBtn = document.getElementById('wlFilterCloseBtn');
+  if (closeBtn) closeBtn.onclick = () => hideWorkLogsFilterPopover();
+  const allBtn = document.getElementById('wlFilterSelectAllBtn');
+  if (allBtn) allBtn.onclick = () => setAll(true);
+  const noneBtn = document.getElementById('wlFilterSelectNoneBtn');
+  if (noneBtn) noneBtn.onclick = () => setAll(false);
+  const applyBtn = document.getElementById('wlFilterApplyBtn');
+  if (applyBtn) applyBtn.onclick = () => {
+    const next = readSelectionFromDom();
+    // Si están todos seleccionados, se considera sin filtro.
+    if (next.size === options.length) {
+      workLogsFilters[key] = null;
+    } else {
+      workLogsFilters[key] = next;
+    }
+    hideWorkLogsFilterPopover();
+    applyWorkLogsFiltersToDom();
+  };
+  if (searchEl) searchEl.oninput = () => renderOptions();
+
+  renderOptions();
+  workLogsActivePopover = { key, anchorEl };
+}
+
+function ensureWorkLogsFiltersUi() {
+  if (workLogsFilterUiBound) return;
+  const bar = document.getElementById('workLogsFiltersBar');
+  const clearBtn = document.getElementById('workLogsClearFiltersBtn');
+  const pop = document.getElementById('workLogsFilterPopover');
+  if (!bar || !clearBtn || !pop) return;
+
+  bar.innerHTML = WORKLOG_FILTERS.map(f => {
+    return `<button class="btn btn-secondary" data-wl-filter-key="${escapeHtml(f.key)}">${escapeHtml(f.label)}</button>`;
+  }).join('');
+
+  bar.querySelectorAll('button[data-wl-filter-key]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const key = String(btn.getAttribute('data-wl-filter-key') || '');
+      if (!key) return;
+      // Toggle mismo filtro
+      if (workLogsActivePopover?.key === key) {
+        hideWorkLogsFilterPopover();
+        return;
+      }
+      showWorkLogsFilterPopover(key, btn);
+    });
+  });
+
+  clearBtn.onclick = () => {
+    workLogsFilters = {};
+    hideWorkLogsFilterPopover();
+    applyWorkLogsFiltersToDom();
+  };
+
+  // Cerrar popover si se hace click fuera del panel
+  document.addEventListener('click', (e) => {
+    const target = e.target;
+    const popEl = document.getElementById('workLogsFilterPopover');
+    const barEl = document.getElementById('workLogsFiltersBar');
+    if (!popEl || !barEl) return;
+    if (popEl.style.display === 'none') return;
+    if (popEl.contains(target) || barEl.contains(target) || target === clearBtn) return;
+    hideWorkLogsFilterPopover();
+  });
+
+  workLogsFilterUiBound = true;
+}
+
 async function loadWorkLogsHistory(reset = true) {
   const tbody = document.querySelector('#workLogsTable tbody');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">Cargando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="16" class="text-muted">Cargando...</td></tr>';
 
   try {
     const res = await fetch(`${API_URL}/work_logs?limit=200&offset=0`, { headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     if (!res.ok) {
-      tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">Error cargando registros</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="16" class="text-muted">Error cargando registros</td></tr>';
       return displayResponse('workLogsResponse', data, false);
     }
-    renderWorkLogsTable(Array.isArray(data) ? data : []);
-    displayResponse('workLogsResponse', { total: Array.isArray(data) ? data.length : 0 }, true);
+    workLogsHistoryCache = Array.isArray(data) ? data : [];
+    renderWorkLogsTable(workLogsHistoryCache);
+    try { ensureWorkLogsFiltersUi(); } catch (_) {}
+    try { ensureWorkLogsTotalsLiveUpdate(); } catch (_) {}
+    try { applyWorkLogsFiltersToDom(); } catch (_) {}
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">Error de conexión</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="16" class="text-muted">Error de conexión</td></tr>';
     displayResponse('workLogsResponse', { error: 'Error de conexión', details: String(e) }, false);
   }
 }
@@ -2217,6 +3063,63 @@ function daysDiffFromColombiaToday(dateStr) {
     const todayUtc = Date.UTC(ty, tm - 1, td);
     const baseUtc = Date.UTC(by, bm - 1, bd);
     return Math.floor((todayUtc - baseUtc) / (1000 * 60 * 60 * 24));
+  } catch {
+    return 9999;
+  }
+}
+
+function isWeekendISO(dateISO) {
+  try {
+    const s = String(dateISO || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+    const [y, m, d] = s.split('-').map(Number);
+    // Mediodía UTC evita corrimientos de día por zona horaria.
+    const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    const day = dt.getUTCDay();
+    return day === 0 || day === 6;
+  } catch {
+    return false;
+  }
+}
+
+function isWorkingDayISO(dateISO) {
+  const s = String(dateISO || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+
+  // Overrides explícitos (si existen) tienen prioridad sobre fin de semana/festivo.
+  if (Object.prototype.hasOwnProperty.call(calendarWorkingOverridesCache || {}, s)) {
+    return Boolean(calendarWorkingOverridesCache[s]);
+  }
+
+  const isHoliday = Object.prototype.hasOwnProperty.call(calendarHolidaysCache || {}, s);
+  if (isHoliday) return false;
+  if (isWeekendISO(s)) return false;
+  return true;
+}
+
+// Cuenta días hábiles INCLUSIVO desde la fecha del registro hasta hoy (hora Colombia).
+// Ej: registro Jue 5 y hoy Lun 9 => hábiles = (5,6,9) => 3.
+function businessDaysElapsedInclusiveFromColombiaToday(dateStr) {
+  try {
+    const baseStr = String(dateStr || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(baseStr)) return 9999;
+    const todayStr = getColombiaTodayISO();
+    if (!todayStr) return 9999;
+
+    const [by, bm, bd] = baseStr.split('-').map(Number);
+    const [ty, tm, td] = todayStr.split('-').map(Number);
+    const start = Date.UTC(by, bm - 1, bd, 12, 0, 0);
+    const end = Date.UTC(ty, tm - 1, td, 12, 0, 0);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return 9999;
+    if (start > end) return 0;
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    let count = 0;
+    for (let t = start; t <= end; t += DAY_MS) {
+      const iso = new Date(t).toISOString().slice(0, 10);
+      if (isWorkingDayISO(iso)) count += 1;
+    }
+    return count;
   } catch {
     return 9999;
   }
@@ -2290,7 +3193,7 @@ function renderWorkLogsTable(rows) {
   const canEditAll = role === 'admin' || role === 'planner';
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="16" style="color:#6c757d">(sin registros)</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="16" class="text-muted">(sin registros)</td></tr>';
     return;
   }
 
@@ -2333,7 +3236,8 @@ function renderWorkLogsTable(rows) {
     })();
     const isAlert = Number(r.is_alert) === 1 || String(r.is_alert).toLowerCase() === 'true';
 
-    const baseDateForEdit = r.work_date || (r.recorded_at ? fmtDateOnly(r.recorded_at) : null);
+    // Regla operarios: 2 dias calendario desde la fecha de registro (recorded_at).
+    const baseDateForEdit = r.recorded_at ? fmtDateOnly(r.recorded_at) : null;
     const diffDays = baseDateForEdit ? daysDiffFromColombiaToday(baseDateForEdit) : 9999;
     const tooOld = diffDays > 2;
     const canEdit = canEditAll || (isOperator && !tooOld);
@@ -2374,7 +3278,12 @@ function renderWorkLogsTable(rows) {
           ${canEdit ? `
             <button class="btn btn-primary btn-sm wl-edit" data-action="wl-edit" data-id="${escapeHtml(String(r.id))}">Editar</button>
             <button class="btn btn-primary btn-sm wl-save" style="display:none" data-action="wl-save" data-id="${escapeHtml(String(r.id))}">Guardar</button>
-          ` : `<span style="color:#6c757d">Bloqueado</span>`}
+          ` : (() => {
+              const why = isOperator
+                ? 'Operarios: solo puedes editar hasta 2 días desde el registro.'
+                : 'Solo el jefe/admin puede editar este registro.';
+              return `<button class="btn btn-secondary btn-sm wl-edit" disabled aria-disabled="true" title="${escapeHtml(why)}">Editar</button>`;
+            })()}
         </td>
       </tr>
     `;
@@ -2733,10 +3642,19 @@ async function deleteDatoRow(id) {
 }
 
 // Importar
+function setImportProgressVisible(visible, label) {
+  const box = document.getElementById('importProgress');
+  if (!box) return;
+  box.classList.toggle('hidden', !visible);
+  const lbl = document.getElementById('importProgressLabel');
+  if (lbl && label != null) lbl.textContent = String(label);
+}
+
 async function importDatosCSV() {
   const fileInput = document.getElementById('importFile'); const file = fileInput?.files?.[0];
   if (!file) return displayResponse('importResponse', { error: 'Selecciona un archivo' }, false);
   const btn = document.getElementById('importBtn'); if (btn) btn.disabled = true;
+  setImportProgressVisible(true, 'Importando…');
   const form = new FormData(); form.append('file', file);
   try {
     const res = await fetch(`${API_URL}/import/datos`, { method: 'POST', headers: { 'Authorization': `Bearer ${authToken}` }, body: form });
@@ -2753,6 +3671,7 @@ async function importDatosCSV() {
   } catch (e) {
     displayResponse('importResponse', { error: 'Error de conexión' }, false);
   } finally {
+    setImportProgressVisible(false);
     if (btn) btn.disabled = false;
   }
 }
@@ -2801,6 +3720,23 @@ function getBogotaTodayISO() {
 
 let lastDayDetailsContext = null;
 
+// Cache (mejor esfuerzo) de festivos y overrides de laborabilidad.
+// Se llena al cargar el calendario del mes, y se usa para reglas de UI (ej. edición por días hábiles).
+let calendarHolidaysCache = {}; // { 'YYYY-MM-DD': 'Nombre' }
+let calendarWorkingOverridesCache = {}; // { 'YYYY-MM-DD': true|false }
+
+async function fetchMoldProgressDetail(moldId) {
+  if (!authToken) return null;
+  const id = Number(moldId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const res = await fetch(`${API_URL}/molds/${encodeURIComponent(String(id))}/progress?includeParts=1`, {
+    headers: { 'Authorization': `Bearer ${authToken}` },
+    cache: 'no-store'
+  });
+  if (!res.ok) return null;
+  return await res.json().catch(() => null);
+}
+
 async function loadCalendar() {
   if (!authToken) return;
   const display = document.getElementById('calendar-month-year');
@@ -2814,6 +3750,8 @@ async function loadCalendar() {
     const data = await res.json();
     if (res.ok) {
       const events = data.events || {};
+      calendarHolidaysCache = (data && typeof data.holidays === 'object' && data.holidays) ? data.holidays : {};
+      calendarWorkingOverridesCache = (data && typeof data.overrides === 'object' && data.overrides) ? data.overrides : {};
       renderCalendar(currentYear, currentMonth, events, data.holidays || {}, data.overrides || {});
       try { renderInProgressMoldList(); } catch (_) {}
     }
@@ -2834,15 +3772,14 @@ function renderCalendar(year, month, events = {}, holidays = {}, overrides = {})
   for (let i = 0; i < startDayIndex; i++) { const d = document.createElement('div'); d.className = 'calendar-day other-month'; grid.appendChild(d); }
 
   for (let d = 1; d <= daysInMonth; d++) {
-    const date = new Date(year, month, d);
-    const dateStr = isoFromYMD(year, month, d);
+    const dateISO = isoFromYMD(year, month, d);
     const cell = document.createElement('div'); cell.className = 'calendar-day';
     cell.innerHTML = `<div class="day-number">${d}</div>`;
-    if (dateStr === todayStr) cell.classList.add('today');
+    if (dateISO === todayStr) cell.classList.add('today');
 
     const dow = new Date(Date.UTC(year, month, d)).getUTCDay();
     const isWeekend = (dow === 0 || dow === 6);
-    const holidayName = holidays[dateStr];
+    const holidayName = holidays[dateISO];
     const isHoliday = Boolean(holidayName);
     const isBaseNonWorking = isWeekend || isHoliday;
 
@@ -2852,8 +3789,8 @@ function renderCalendar(year, month, events = {}, holidays = {}, overrides = {})
     // Visual override indicators:
     // - Deshabilitado (override false): X roja
     // - Habilitado (override true) solo si era NO laborable por defecto (festivo/fin de semana): ✓ verde
-    if (Object.prototype.hasOwnProperty.call(overrides, dateStr)) {
-      const isWorkingOverride = overrides[dateStr];
+    if (Object.prototype.hasOwnProperty.call(overrides, dateISO)) {
+      const isWorkingOverride = overrides[dateISO];
       if (isWorkingOverride === false) {
         cell.innerHTML += `<div class="working-override-icon disabled" title="Día deshabilitado">✖</div>`;
       } else if (isWorkingOverride === true && isBaseNonWorking) {
@@ -2871,7 +3808,7 @@ function renderCalendar(year, month, events = {}, holidays = {}, overrides = {})
         cell.innerHTML += `<div class="priority-indicator" title="Prioridad">★</div>`;
       }
     }
-    cell.addEventListener('click', () => showDayDetails(date, events[d], holidays[dateStr]));
+    cell.addEventListener('click', () => showDayDetails(dateISO, events[d], holidays[dateISO]));
     grid.appendChild(cell);
   }
 }
@@ -2882,11 +3819,11 @@ function getMachineOptionsHtml(selectedName) {
   return names.map(n => `<option value="${escapeHtml(n)}" ${n === selectedName ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
 
-function renderDayDetailsView(date, events, holiday) {
+function renderDayDetailsView(dateISO, events, holiday) {
   const body = document.getElementById('modal-body');
   const titleEl = document.getElementById('modal-title');
-  const dateStr = localISOFromDate(date);
-  if (titleEl) titleEl.textContent = date.toLocaleDateString();
+  const dateStr = String(dateISO || '').trim();
+  if (titleEl) titleEl.textContent = dateStr || '';
 
   let html = '';
   if (holiday) html += `<p>${escapeHtml(holiday)}</p>`;
@@ -2909,6 +3846,7 @@ function renderDayDetailsView(date, events, holiday) {
         <ul>
           ${grp.tasks.map(t => `<li>${escapeHtml(t.machine)}: (${escapeHtml(t.part)}) - ${t.hours}h</li>`).join('')}
         </ul>
+        ${grp.moldId ? `<div data-mold-progress-for="${escapeHtml(String(grp.moldId))}" style="margin-top:10px;">Cargando progreso...</div>` : ''}
       `;
     }
   } else {
@@ -2929,6 +3867,34 @@ function renderDayDetailsView(date, events, holiday) {
       await openMoldEditorView(moldId, moldName);
     });
   });
+
+  // Progreso por partes (por molde)
+  (async () => {
+    const nodes = Array.from(document.querySelectorAll('#modal-body [data-mold-progress-for]'));
+    if (!nodes.length) return;
+
+    await Promise.allSettled(nodes.map(async (el) => {
+      const moldId = el.getAttribute('data-mold-progress-for');
+      if (!moldId) return;
+
+      try {
+        const progress = await fetchMoldProgressDetail(moldId);
+        if (!progress || !progress.breakdown) {
+          el.innerHTML = '<div style="color:var(--text-muted)">(Sin progreso disponible)</div>';
+          return;
+        }
+        const pct = progress?.totals?.percentComplete;
+        const planned = progress?.totals?.plannedTotalHours;
+        const actual = progress?.totals?.actualTotalHours;
+        el.innerHTML = `
+          <div style="margin-bottom:6px; color:var(--text-muted); font-size:0.9rem;">Progreso: <strong>${pct == null ? '—' : Number(pct).toFixed(2) + '%'}</strong> · Real ${escapeHtml(fmtHours(actual))}h / Plan ${escapeHtml(fmtHours(planned))}h</div>
+          ${renderMoldPartsProgressList(progress.breakdown)}
+        `;
+      } catch {
+        el.innerHTML = '<div style="color:var(--danger)">Error cargando progreso</div>';
+      }
+    }));
+  })();
 
   // Working toggle
   (async () => {
@@ -2981,6 +3947,31 @@ async function openMoldEditorView(moldId, moldName) {
     const startDate = data.startDate || '';
     const endDate = data.endDate || '';
 
+    // Progreso por partes (para bloquear completados)
+    let progress = null;
+    const completedCells = new Set(); // partId:machineId
+    try {
+      progress = await fetchMoldProgressDetail(moldId);
+      const parts = Array.isArray(progress?.breakdown?.parts) ? progress.breakdown.parts : [];
+      for (const p of parts) {
+        const machines = Array.isArray(p?.machines) ? p.machines : [];
+        for (const m of machines) {
+          if (m?.isComplete) completedCells.add(`${String(p.partId)}:${String(m.machineId)}`);
+        }
+      }
+    } catch (_) {
+      progress = null;
+    }
+
+    // Fecha sugerida para acciones masivas: el día abierto en el modal (si existe) o el inicio del molde
+    const defaultBulkDate = (() => {
+      try {
+        const iso = String(lastDayDetailsContext?.dateISO || '').trim();
+        if (iso) return iso;
+      } catch (_) {}
+      return startDate || getTodayISO();
+    })();
+
     let html = `
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;">
         <div>
@@ -2988,10 +3979,41 @@ async function openMoldEditorView(moldId, moldName) {
         </div>
         <button class="btn btn-secondary" id="moldEditorBackBtn">Volver al día</button>
       </div>
+      <div class="mold-progress-panel" style="margin-bottom:10px;">
+        <div style="font-weight:800; margin-bottom:6px;">Selección múltiple por filas</div>
+        <div class="text-muted" style="font-size:0.9rem;">Marca 2+ filas para mostrar acciones masivas (solo pendientes).</div>
+        <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button class="btn btn-secondary" id="peSelectAllRowsBtn">Seleccionar todo</button>
+          <button class="btn btn-secondary" id="peClearAllRowsBtn">Limpiar selección</button>
+          <div class="text-muted">Seleccionadas: <strong id="peBulkSelectedCount">0</strong></div>
+        </div>
+
+        <div id="peBulkPanel" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid var(--border-color);">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+            <div style="min-width: 220px;">
+              <label style="display:block; font-weight:600;">Fecha base</label>
+              <input type="date" id="peBulkMoveDate" value="${escapeHtml(String(defaultBulkDate || ''))}">
+              <div class="text-muted" style="font-size:0.85rem; margin-top:4px;">Para “Siguiente disponible”, se busca desde el día siguiente laborable.</div>
+            </div>
+
+            <div style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+              <button class="btn btn-secondary" id="peBulkMoveToDateBtn" title="Mueve las filas seleccionadas a esta fecha">Mover a fecha</button>
+              <button class="btn btn-secondary" id="peBulkMoveNextBtn" title="Busca el siguiente disponible y mueve las filas seleccionadas">Siguiente disponible</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      ${progress?.breakdown ? `
+        <div class="mold-progress-panel" style="margin-bottom:10px;">
+          <div style="font-weight:800;">Progreso por partes</div>
+          ${renderMoldPartsProgressList(progress.breakdown)}
+        </div>
+      ` : ''}
       <div class="table-container">
         <table>
           <thead>
             <tr>
+              <th></th>
               <th>Fecha</th>
               <th>Máquina</th>
               <th>Parte</th>
@@ -3005,21 +4027,26 @@ async function openMoldEditorView(moldId, moldName) {
             ${entries.map(e => {
               const curDate = String(e.date || '');
               const curMachine = String(e.machine || '');
+              const isDone = completedCells.has(`${String(e.partId)}:${String(e.machineId)}`);
               return `
                 <tr data-entry-id="${e.entryId ?? ''}">
+                  <td style="text-align:center;">
+                    <input type="checkbox" class="pe-entry-check" value="${escapeHtml(String(e.entryId ?? ''))}" ${isDone ? 'disabled' : ''}>
+                  </td>
                   <td>${escapeHtml(curDate)}</td>
                   <td>${escapeHtml(curMachine)}</td>
                   <td>${escapeHtml(String(e.part || ''))}</td>
                   <td>${escapeHtml(String(e.hours || 0))}</td>
-                  <td><input type="date" class="pe-new-date" value="${escapeHtml(curDate)}"></td>
+                  <td><input type="date" class="pe-new-date" value="${escapeHtml(curDate)}" ${isDone ? 'disabled' : ''}></td>
                   <td>
-                    <select class="pe-new-machine">
+                    <select class="pe-new-machine" ${isDone ? 'disabled' : ''}>
                       ${getMachineOptionsHtml(curMachine)}
                     </select>
                   </td>
                   <td style="display:flex; gap:8px; align-items:center;">
-                    <button class="btn btn-secondary pe-save-btn">Guardar</button>
-                    <button class="btn btn-secondary pe-next-btn" title="Busca el siguiente día laborable con cupo y mueve esta tarea">Siguiente disponible</button>
+                    ${isDone
+                      ? '<span style="color:var(--success); font-weight:800;">Terminado</span>'
+                      : '<button class="btn btn-secondary pe-save-btn">Guardar</button>\n                    <button class="btn btn-secondary pe-next-btn" title="Busca el siguiente día laborable con cupo y mueve esta tarea">Siguiente disponible</button>'}
                   </td>
                 </tr>
               `;
@@ -3035,7 +4062,7 @@ async function openMoldEditorView(moldId, moldName) {
     const backBtn = document.getElementById('moldEditorBackBtn');
     if (backBtn) backBtn.onclick = () => {
       if (lastDayDetailsContext) {
-        renderDayDetailsView(lastDayDetailsContext.date, lastDayDetailsContext.events, lastDayDetailsContext.holiday);
+        renderDayDetailsView(lastDayDetailsContext.dateISO, lastDayDetailsContext.events, lastDayDetailsContext.holiday);
       }
     };
 
@@ -3108,15 +4135,91 @@ async function openMoldEditorView(moldId, moldName) {
         }
       });
     });
+
+    // Acciones masivas por filas (entryId)
+    const bulkPanelEl = document.getElementById('peBulkPanel');
+    const selectedCountEl = document.getElementById('peBulkSelectedCount');
+    const selectAllRowsBtn = document.getElementById('peSelectAllRowsBtn');
+    const clearAllRowsBtn = document.getElementById('peClearAllRowsBtn');
+
+    function getSelectedEntryIds() {
+      return Array.from(body.querySelectorAll('input.pe-entry-check'))
+        .filter(cb => cb.checked && !cb.disabled)
+        .map(cb => Number.parseInt(String(cb.value || ''), 10))
+        .filter(n => Number.isFinite(n) && n > 0);
+    }
+
+    function refreshBulkUi() {
+      const selected = getSelectedEntryIds();
+      if (selectedCountEl) selectedCountEl.textContent = String(selected.length);
+      if (bulkPanelEl) bulkPanelEl.style.display = selected.length >= 2 ? '' : 'none';
+    }
+
+    if (selectAllRowsBtn) selectAllRowsBtn.onclick = () => {
+      body.querySelectorAll('input.pe-entry-check').forEach(cb => { if (!cb.disabled) cb.checked = true; });
+      refreshBulkUi();
+    };
+    if (clearAllRowsBtn) clearAllRowsBtn.onclick = () => {
+      body.querySelectorAll('input.pe-entry-check').forEach(cb => { cb.checked = false; });
+      refreshBulkUi();
+    };
+    body.querySelectorAll('input.pe-entry-check').forEach(cb => {
+      cb.addEventListener('change', refreshBulkUi);
+    });
+    refreshBulkUi();
+
+    async function runBulkMove(mode) {
+      const entryIds = getSelectedEntryIds();
+      if (entryIds.length < 2) {
+        displayResponse('moldEditorResponse', { error: 'Selecciona al menos 2 filas para mover en bloque.' }, false);
+        return;
+      }
+
+      const dateEl = document.getElementById('peBulkMoveDate');
+      const date = dateEl ? String(dateEl.value || '').trim() : '';
+      if (mode === 'date' && !date) {
+        displayResponse('moldEditorResponse', { error: 'Selecciona una fecha.' }, false);
+        return;
+      }
+
+      const ok = window.confirm(
+        mode === 'date'
+          ? `¿Mover ${entryIds.length} fila(s) a la fecha ${date}?\n\nSe omitirán filas terminadas y/o las que no se puedan mover por reglas.`
+          : `¿Mover ${entryIds.length} fila(s) al siguiente disponible?\n\nSe omitirán filas terminadas y/o las que no se puedan mover por reglas.`
+      );
+      if (!ok) return;
+
+      displayResponse('moldEditorResponse', { message: 'Reprogramando filas...' }, true);
+      try {
+        const resp = await fetch(`${API_URL}/tasks/plan/entries/bulk-move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+          body: JSON.stringify({ entryIds, mode, date: date || null, baseDate: date || null })
+        });
+        const out = await resp.json().catch(() => ({}));
+        displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
+        if (resp.ok) {
+          await loadCalendar();
+          await openMoldEditorView(moldId, moldName);
+        }
+      } catch (e) {
+        displayResponse('moldEditorResponse', { error: 'Error de conexión', details: String(e) }, false);
+      }
+    }
+
+    const bulkToDateBtn = document.getElementById('peBulkMoveToDateBtn');
+    const bulkNextBtn = document.getElementById('peBulkMoveNextBtn');
+    if (bulkToDateBtn) bulkToDateBtn.onclick = () => runBulkMove('date');
+    if (bulkNextBtn) bulkNextBtn.onclick = () => runBulkMove('next');
   } catch (e) {
     if (body) body.innerHTML = `<p>Error: ${escapeHtml(String(e))}</p>`;
   }
 }
 
-function showDayDetails(date, events, holiday) {
+function showDayDetails(dateISO, events, holiday) {
   const modal = document.getElementById('day-details-modal');
-  lastDayDetailsContext = { date, events, holiday };
-  renderDayDetailsView(date, events, holiday);
+  lastDayDetailsContext = { dateISO: String(dateISO || '').trim(), events, holiday };
+  renderDayDetailsView(dateISO, events, holiday);
   if (modal) modal.classList.remove('hidden');
 }
 function hideModal() { const modal = document.getElementById('day-details-modal'); if (modal) modal.classList.add('hidden'); }
@@ -4689,7 +5792,7 @@ function setupEventListeners() {
           if (snap) {
             loadedFromSnapshot = fillPlannerGridFromSnapshot(snap);
             const startDateEl = document.getElementById('gridStartDate');
-            if (startDateEl && snap?.startDate) startDateEl.value = String(snap.startDate);
+            if (startDateEl && snap?.startDate) startDateEl.value = normalizeDateInputValue(snap.startDate) || String(snap.startDate);
           }
         } catch (_) {}
 
@@ -4699,7 +5802,10 @@ function setupEventListeners() {
           selectPlannerMoldByName(moldName);
         }
         const startDateEl = document.getElementById('gridStartDate');
-        if (!loadedFromSnapshot && startDateEl && data?.startDate) startDateEl.value = String(data.startDate);
+        if (!loadedFromSnapshot && startDateEl) {
+          const preferred = normalizeDateInputValue(itemStartDate) || normalizeDateInputValue(data?.startDate);
+          if (preferred) startDateEl.value = preferred;
+        }
 
         setPlannerLoadedMold({ moldId: Number(moldId), moldName: data?.moldName || moldName, startDate: data?.startDate, endDate: data?.endDate });
         if (!loadedFromSnapshot) {
@@ -4708,6 +5814,15 @@ function setupEventListeners() {
         } else {
           displayResponse('gridResponse', { message: 'Plan cargado en parrilla (snapshot exacto).' }, true);
         }
+
+        // Bloquear partes/celdas ya completadas según registros (progreso)
+        try {
+          clearPlannerProgressLocks();
+          const progress = await fetchMoldProgressDetail(moldId);
+          if (progress?.breakdown) {
+            applyPlannerProgressLocksFromBreakdown(progress.breakdown);
+          }
+        } catch (_) {}
       } catch (e) {
         displayResponse('gridResponse', { error: 'Error de conexión cargando el molde', details: String(e) }, false);
       }

@@ -5,17 +5,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Planificador de Moldes</title>
-  <link rel="stylesheet" href="styles.css?v=20260109b">
+  <link rel="stylesheet" href="styles.css?v=20260209c">
   <link rel="icon" href="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png">
 </head>
 
 <body>
   <div class="container">
     <div class="login-container" id="loginContainer">
-      <div class="login-card">
-        <div class="login-icon">
-          <img class="brand-logo brand-logo--login" src="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png" alt="Optimoldes S.A.S.">
+      <div class="login-layout">
+        <div class="login-hero" aria-hidden="true">
+          <img class="brand-logo brand-logo--login-hero" src="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png" alt="">
         </div>
+
+        <div class="login-card">
         <h2>Planificador de Moldes</h2>
         <p class="login-subtitle">
           <span>Control Industrial de Moldes</span>
@@ -66,15 +68,16 @@
           <div class="response-box" id="bootstrapResponse"></div>
         </div>
       </div>
+      </div>
     </div>
 
     <div class="main-app hidden" id="mainApp">
       <div class="header">
+        <div class="header-left" aria-hidden="true">
+          <img class="brand-logo brand-logo--header" src="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png" alt="Optimoldes S.A.S.">
+        </div>
         <div class="header-title">
-          <h1>
-            <img class="brand-logo brand-logo--header" src="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png" alt="Optimoldes S.A.S.">
-            Planificador de Moldes
-          </h1>
+          <h1 class="header-title-text">Planificador de Moldes</h1>
         </div>
         <div class="header-right">
           <span class="status disconnected" id="status">● Desconectado</span>
@@ -90,6 +93,7 @@
         <div class="tabs">
           <button class="tab active" data-tab="plan">Cuadro Planificador</button>
           <button class="tab" data-tab="calendar">Calendario</button>
+          <button class="tab" data-tab="terminados">Moldes terminados</button>
           <button class="tab" data-tab="config">Configuración</button>
           <button class="tab" data-tab="datos">Datos</button>
           <button class="tab" data-tab="importar">Importar</button>
@@ -168,6 +172,7 @@
               <h3 style="margin: 0;">Moldes planificados</h3>
               <div style="display:flex; gap:8px; align-items:center;">
                 <button class="btn btn-secondary" id="refreshPlannedMoldsBtn">Refrescar</button>
+                <button class="btn btn-secondary" id="consecutivePlannedMoldBtn" style="display:none;" title="Pegar este molde detrás del molde anterior (si el anterior ya está completo)">Seguir consecutivamente</button>
                 <button class="btn btn-danger" id="exitPlannedMoldEditBtn" style="display:none;">Salir de edición</button>
               </div>
             </div>
@@ -282,6 +287,24 @@
           <h2>Registros (Tiempos)</h2>
           <p class="text-muted" style="font-size: 0.9rem;">Los operarios pueden corregir hasta 2 días atrás. Alertas &gt; 5% se marcan en rojo.</p>
 
+          <div class="mold-progress-panel" style="margin: 10px 0 12px 0;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+              <div>
+                <div style="font-weight:800;">Filtros</div>
+                <div class="text-muted" style="font-size:0.9rem;">Tipo Excel: selecciona valores por columna (hasta Motivo).</div>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <div style="padding:6px 10px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg);">
+                  <span class="text-muted" style="font-size:0.9rem;">Total horas reales:</span>
+                  <strong id="workLogsTotalHours" style="margin-left:6px;">0.00</strong>
+                </div>
+                <button class="btn btn-secondary" id="workLogsClearFiltersBtn">Limpiar filtros</button>
+              </div>
+            </div>
+            <div id="workLogsFiltersBar" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;"></div>
+            <div id="workLogsFilterPopover" style="display:none; position:relative;"></div>
+          </div>
+
           <datalist id="wlOperarios"></datalist>
           <datalist id="wlProcesos"></datalist>
           <datalist id="wlMoldes"></datalist>
@@ -350,32 +373,15 @@
             <input type="file" id="importFile" accept=".xlsx,.xls,.xlsm,.xlsb,.ods,.csv">
             <button class="btn btn-secondary" id="importBtn">Importar</button>
           </div>
-          <div class="response-box" id="importResponse"></div>
 
-          <details style="margin-top: 12px;">
-            <summary><strong>Diagnóstico de importación</strong></summary>
-            <div id="importDiagSummary" class="text-muted" style="margin: 8px 0;"></div>
-            <div class="table-container">
-              <table id="importDiagTable">
-                <thead>
-                  <tr>
-                    <th>Fila</th>
-                    <th>Operario</th>
-                    <th>Proceso</th>
-                    <th>Molde</th>
-                    <th>Parte</th>
-                    <th>Máquina</th>
-                    <th>Operación</th>
-                    <th>Horas</th>
-                    <th>Motivo</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+          <div id="importProgress" class="import-progress hidden" aria-live="polite">
+            <div class="import-progress-track" aria-hidden="true">
+              <div class="import-progress-bar"></div>
             </div>
-            <button class="btn btn-secondary" id="importDiagDownloadBtn" disabled>Descargar diagnóstico
-              completo</button>
-          </details>
+            <div id="importProgressLabel" class="text-muted" style="margin-top:6px;">Importando…</div>
+          </div>
+
+          <div class="response-box" id="importResponse"></div>
         </div>
 
         <!-- Config -->
@@ -541,7 +547,49 @@
             <div id="calendar-grid" class="calendar-grid"></div>
           </div>
 
-          <div id="inProgressMoldList" class="calendar-mold-progress-list" style="margin-top:12px"></div>
+          <div style="margin-top:12px;">
+            <h3 style="margin:0 0 8px 0;">Moldes en curso</h3>
+            <div id="inProgressMoldList" class="calendar-mold-progress-list"></div>
+          </div>
+        </div>
+
+        <!-- Moldes terminados (vista dedicada) -->
+        <div class="tab-content" id="tab-terminados">
+          <h2>Moldes terminados</h2>
+          <div class="form-grid-3-col">
+            <div class="form-group">
+              <label>Mes</label>
+              <select id="completedMoldsMonth">
+                <option value="">(Todos)</option>
+                <option value="1">Enero</option>
+                <option value="2">Febrero</option>
+                <option value="3">Marzo</option>
+                <option value="4">Abril</option>
+                <option value="5">Mayo</option>
+                <option value="6">Junio</option>
+                <option value="7">Julio</option>
+                <option value="8">Agosto</option>
+                <option value="9">Septiembre</option>
+                <option value="10">Octubre</option>
+                <option value="11">Noviembre</option>
+                <option value="12">Diciembre</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Año</label>
+              <input type="number" id="completedMoldsYear" min="2000" max="2100" placeholder="2026">
+            </div>
+            <div class="form-group">
+              <label>Buscar</label>
+              <input type="text" id="completedMoldsSearch" placeholder="Filtrar por nombre...">
+            </div>
+            <div class="form-group" style="display:flex; gap:8px; align-items:end;">
+              <button class="btn btn-secondary" id="completedMoldsRefreshBtn">Actualizar</button>
+              <button class="btn" id="completedMoldsClearBtn" title="Limpiar filtros">Limpiar</button>
+            </div>
+          </div>
+
+          <div id="completedMoldList" class="calendar-mold-progress-list" style="margin-top:12px"></div>
         </div>
 
         <div class="tab-content" id="tab-indicators">
@@ -646,7 +694,7 @@
       </div>
     </footer>
 
-      <script src="app.js?v=20260114b" defer></script>
+      <script src="app.js?v=20260209c" defer></script>
   </div>
 </body>
 

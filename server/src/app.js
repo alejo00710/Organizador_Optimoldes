@@ -35,7 +35,11 @@ app.use(
                 styleSrc: ["'self'", "'unsafe-inline'"],
                 imgSrc: ["'self'", 'data:', 'https:'],
                 // Permitir llamadas desde el origen del front (Live Server)
-                connectSrc: ["'self'", 'http://127.0.0.1:5500'],
+                connectSrc: [
+                    "'self'",
+                    'http://127.0.0.1:5500',
+                    'https://*.ngrok-free.app'
+                ],
                 fontSrc: ["'self'"],
                 objectSrc: ["'none'"],
                 mediaSrc: ["'self'"],
@@ -118,7 +122,10 @@ async function startServer() {
         console.log('  GET    /api/auth/operators');
         console.log('  POST   /api/tasks/plan/block');
         console.log('  POST   /api/tasks/plan/priority');
+        console.log('  GET    /api/tasks/plan/molds');
+        console.log('  GET    /api/tasks/plan/snapshot');
         console.log('  GET    /api/tasks/plan/mold/:moldId');
+        console.log('  DELETE /api/tasks/plan/mold/:moldId');
         console.log('  PATCH  /api/tasks/plan/entry/:entryId');
         console.log('  PATCH  /api/tasks/plan/entry/:entryId/next-available');
         console.log('  POST   /api/work_logs');
@@ -129,6 +136,8 @@ async function startServer() {
         console.log('  GET    /api/reports/planned-vs-actual');
         console.log('  GET    /api/reports/detailed-deviations');
         console.log('  GET    /api/machines');
+        console.log('  GET    /api/molds/in-progress');
+        console.log('  GET    /api/molds/:moldId/progress');
         console.log('  GET    /api/holidays');
         console.log('  GET    /api/datos/meta');
         console.log('  GET    /health');

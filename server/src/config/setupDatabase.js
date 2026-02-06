@@ -106,6 +106,24 @@ async function initializeDatabase() {
             console.warn('⚠️ No se pudo aplicar migración work_logs.reason:', e.message);
         }
 
+        // work_logs.planned_hours_snapshot (para mantener Horas plan aunque el calendario se re-programe)
+        try {
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'work_logs'
+                   AND column_name = 'planned_hours_snapshot'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE work_logs ADD COLUMN planned_hours_snapshot NUMERIC(5,2) NULL`);
+                console.log('✅ Migración aplicada: work_logs.planned_hours_snapshot');
+            }
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración work_logs.planned_hours_snapshot:', e.message);
+        }
+
         // operators.password_hash (para login por operario con contraseña propia)
         try {
             const col = await query(

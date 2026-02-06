@@ -1,6 +1,54 @@
 const { query } = require('../config/database');
 const { ROLES, OPERATOR_EDIT_DAYS_LIMIT } = require('../utils/constants');
 
+async function getPlannedHoursSnapshot({ moldId, partId, machineId, workDateISO }) {
+    try {
+        if (!moldId || !partId || !machineId || !workDateISO) return null;
+        const rows = await query(
+            `SELECT SUM(pe2.hours_planned) AS planned_hours
+             FROM plan_entries pe2
+             WHERE pe2.mold_id = ?
+               AND pe2.part_id = ?
+               AND pe2.machine_id = ?
+               AND pe2.date = COALESCE(
+                 (SELECT MIN(pe3.date)
+                    FROM plan_entries pe3
+                   WHERE pe3.mold_id = ?
+                     AND pe3.part_id = ?
+                     AND pe3.machine_id = ?
+                     AND pe3.date >= ?
+                 ),
+                 (SELECT MAX(pe4.date)
+                    FROM plan_entries pe4
+                   WHERE pe4.mold_id = ?
+                     AND pe4.part_id = ?
+                     AND pe4.machine_id = ?
+                     AND pe4.date < ?
+                 )
+               )`,
+            [
+                moldId,
+                partId,
+                machineId,
+                moldId,
+                partId,
+                machineId,
+                workDateISO,
+                moldId,
+                partId,
+                machineId,
+                workDateISO,
+            ]
+        );
+        const v = rows?.[0]?.planned_hours;
+        if (v == null) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    } catch {
+        return null;
+    }
+}
+
 function toISODateOnly(value) {
     if (!value) return null;
     if (typeof value === 'string') {
@@ -76,12 +124,19 @@ const createWorkLog = async (req, res, next) => {
                         return res.status(400).json({ error: 'work_date debe ser YYYY-MM-DD' });
                 }
 
+                const planned_hours_snapshot = await getPlannedHoursSnapshot({
+                        moldId,
+                        partId,
+                        machineId,
+                        workDateISO: dateStr,
+                });
+
                 // Insertar
-        const sql = `
-          INSERT INTO work_logs 
-            (mold_id, part_id, machine_id, operator_id, work_date, hours_worked, reason, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `;
+                const sql = `
+                    INSERT INTO work_logs 
+                        (mold_id, part_id, machine_id, operator_id, work_date, hours_worked, reason, note, planned_hours_snapshot)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `;
 
         const result = await query(sql, [
             moldId,
@@ -92,6 +147,7 @@ const createWorkLog = async (req, res, next) => {
             hours_worked,
             reason || null,
             note || null,
+            planned_hours_snapshot,
         ]);
 
         res.status(201).json({
@@ -169,15 +225,15 @@ const getWorkLogs = async (req, res, next) => {
                 mp.name as part_name,
                 ma.name as machine_name,
                 o.name as operator_name,
-                pe.planned_hours,
-                (wl.hours_worked - pe.planned_hours) AS diff_hours,
+                COALESCE(pe.planned_hours, wl.planned_hours_snapshot) AS planned_hours,
+                (wl.hours_worked - COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) AS diff_hours,
                 CASE
-                    WHEN pe.planned_hours IS NULL OR pe.planned_hours <= 0 THEN NULL
-                    ELSE ROUND(ABS(wl.hours_worked - pe.planned_hours) / pe.planned_hours * 100, 2)
+                    WHEN COALESCE(pe.planned_hours, wl.planned_hours_snapshot) IS NULL OR COALESCE(pe.planned_hours, wl.planned_hours_snapshot) <= 0 THEN NULL
+                    ELSE ROUND(ABS(wl.hours_worked - COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) / COALESCE(pe.planned_hours, wl.planned_hours_snapshot) * 100, 2)
                 END AS deviation_pct,
                 CASE
-                    WHEN pe.planned_hours IS NULL OR pe.planned_hours <= 0 THEN 0
-                    WHEN (ABS(wl.hours_worked - pe.planned_hours) / pe.planned_hours) > 0.05 THEN 1
+                    WHEN COALESCE(pe.planned_hours, wl.planned_hours_snapshot) IS NULL OR COALESCE(pe.planned_hours, wl.planned_hours_snapshot) <= 0 THEN 0
+                    WHEN (ABS(wl.hours_worked - COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) / COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) > 0.05 THEN 1
                     ELSE 0
                 END AS is_alert
             FROM work_logs wl
@@ -185,14 +241,33 @@ const getWorkLogs = async (req, res, next) => {
             JOIN mold_parts mp ON wl.part_id = mp.id
             JOIN machines ma ON wl.machine_id = ma.id
             JOIN operators o ON wl.operator_id = o.id
-            LEFT JOIN (
-                SELECT date, mold_id, part_id, machine_id, SUM(hours_planned) AS planned_hours
-                FROM plan_entries
-                GROUP BY date, mold_id, part_id, machine_id
-            ) pe ON pe.date = COALESCE(wl.work_date, DATE(wl.recorded_at))
-                    AND pe.mold_id = wl.mold_id
-                    AND pe.part_id = wl.part_id
-                    AND pe.machine_id = wl.machine_id
+            CROSS JOIN LATERAL (
+                SELECT COALESCE(wl.work_date, DATE(wl.recorded_at)) AS base_date
+            ) bd
+            LEFT JOIN LATERAL (
+                SELECT pe2.date AS planned_date, SUM(pe2.hours_planned) AS planned_hours
+                FROM plan_entries pe2
+                WHERE pe2.mold_id = wl.mold_id
+                  AND pe2.part_id = wl.part_id
+                  AND pe2.machine_id = wl.machine_id
+                  AND pe2.date = COALESCE(
+                    (SELECT MIN(pe3.date)
+                       FROM plan_entries pe3
+                      WHERE pe3.mold_id = wl.mold_id
+                        AND pe3.part_id = wl.part_id
+                        AND pe3.machine_id = wl.machine_id
+                        AND pe3.date >= bd.base_date
+                    ),
+                    (SELECT MAX(pe4.date)
+                       FROM plan_entries pe4
+                      WHERE pe4.mold_id = wl.mold_id
+                        AND pe4.part_id = wl.part_id
+                        AND pe4.machine_id = wl.machine_id
+                        AND pe4.date < bd.base_date
+                    )
+                  )
+                GROUP BY pe2.date
+            ) pe ON TRUE
             ${whereClause}
             ORDER BY wl.recorded_at DESC
             LIMIT ${limit} OFFSET ${offset}
@@ -300,7 +375,19 @@ const updateWorkLog = async (req, res, next) => {
         }
 
         // Actualizar (si no viene un campo, se conserva)
-        const updateSql = `
+                const finalWorkDateISO = dateStr !== undefined ? dateStr : log.work_date;
+                const finalMoldId = nextMoldId !== undefined ? nextMoldId : log.mold_id;
+                const finalPartId = nextPartId !== undefined ? nextPartId : log.part_id;
+                const finalMachineId = nextMachineId !== undefined ? nextMachineId : log.machine_id;
+
+                const planned_hours_snapshot = await getPlannedHoursSnapshot({
+                        moldId: finalMoldId,
+                        partId: finalPartId,
+                        machineId: finalMachineId,
+                        workDateISO: finalWorkDateISO,
+                });
+
+                const updateSql = `
             UPDATE work_logs
             SET
               mold_id = ?,
@@ -311,6 +398,7 @@ const updateWorkLog = async (req, res, next) => {
               hours_worked = ?,
               reason = ?,
               note = ?
+                            ,planned_hours_snapshot = ?
             WHERE id = ?
         `;
 
@@ -319,14 +407,15 @@ const updateWorkLog = async (req, res, next) => {
             : (nextOperatorId !== undefined ? nextOperatorId : log.operator_id);
 
         await query(updateSql, [
-            nextMoldId !== undefined ? nextMoldId : log.mold_id,
-            nextPartId !== undefined ? nextPartId : log.part_id,
-            nextMachineId !== undefined ? nextMachineId : log.machine_id,
+            finalMoldId,
+            finalPartId,
+            finalMachineId,
             finalOperatorId,
-            dateStr !== undefined ? dateStr : log.work_date,
+            finalWorkDateISO,
             hours_worked !== undefined ? Number(hours_worked) : log.hours_worked,
             reason !== undefined ? reason : log.reason,
             note !== undefined ? note : log.note,
+            planned_hours_snapshot,
             id,
         ]);
 
