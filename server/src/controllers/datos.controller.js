@@ -27,12 +27,118 @@ const toStr = (v) => {
   return s === '' ? null : s;
 };
 
+const findExistingDatoId = async ({
+  dia,
+  mes,
+  anio,
+  nombre_operario,
+  tipo_proceso,
+  molde,
+  parte,
+  maquina,
+  operacion,
+  horas,
+  excludeId = null,
+}) => {
+  const rows = await query(
+    `SELECT id
+     FROM datos
+     WHERE dia IS NOT DISTINCT FROM ?
+       AND LOWER(BTRIM(mes)) IS NOT DISTINCT FROM LOWER(BTRIM(?))
+       AND anio IS NOT DISTINCT FROM ?
+       AND LOWER(BTRIM(nombre_operario)) IS NOT DISTINCT FROM LOWER(BTRIM(?))
+       AND LOWER(BTRIM(tipo_proceso)) IS NOT DISTINCT FROM LOWER(BTRIM(?))
+       AND LOWER(BTRIM(molde)) IS NOT DISTINCT FROM LOWER(BTRIM(?))
+       AND LOWER(BTRIM(parte)) IS NOT DISTINCT FROM LOWER(BTRIM(?))
+       AND LOWER(BTRIM(maquina)) IS NOT DISTINCT FROM LOWER(BTRIM(?))
+       AND LOWER(BTRIM(operacion)) IS NOT DISTINCT FROM LOWER(BTRIM(?))
+       AND horas IS NOT DISTINCT FROM ?
+       AND (?::INTEGER IS NULL OR id <> ?::INTEGER)
+     ORDER BY id ASC
+     LIMIT 1`,
+    [
+      dia,
+      mes,
+      anio,
+      nombre_operario,
+      tipo_proceso,
+      molde,
+      parte,
+      maquina,
+      operacion,
+      horas,
+      excludeId,
+      excludeId,
+    ]
+  );
+  return rows.length ? rows[0].id : null;
+};
+
+const isDatosDuplicateViolation = (error) => {
+  if (!error) return false;
+  if (error.code !== '23505') return false;
+  const details = `${error.constraint || ''} ${error.message || ''}`.toLowerCase();
+  return details.includes('uq_datos_business_dedup');
+};
+
+const emptyDatoRow = () => ({
+  dia: null,
+  mes: null,
+  anio: null,
+  nombre_operario: null,
+  tipo_proceso: null,
+  molde: null,
+  parte: null,
+  maquina: null,
+  operacion: null,
+  operator_id: null,
+  process_id: null,
+  mold_id: null,
+  part_id: null,
+  machine_id: null,
+  operation_id: null,
+  horas: null,
+});
+
+const buildIndependentRowsFromPayload = ({
+  dia,
+  mes,
+  anio,
+  nombre_operario,
+  tipo_proceso,
+  molde,
+  parte,
+  maquina,
+  operacion,
+  horas,
+  operator_id,
+  process_id,
+  mold_id,
+  part_id,
+  machine_id,
+  operation_id,
+}) => {
+  const rows = [];
+
+  if (dia !== null) { const row = emptyDatoRow(); row.dia = dia; rows.push(row); }
+  if (mes !== null) { const row = emptyDatoRow(); row.mes = mes; rows.push(row); }
+  if (anio !== null) { const row = emptyDatoRow(); row.anio = anio; rows.push(row); }
+  if (nombre_operario !== null) { const row = emptyDatoRow(); row.nombre_operario = nombre_operario; row.operator_id = operator_id; rows.push(row); }
+  if (tipo_proceso !== null) { const row = emptyDatoRow(); row.tipo_proceso = tipo_proceso; row.process_id = process_id; rows.push(row); }
+  if (molde !== null) { const row = emptyDatoRow(); row.molde = molde; row.mold_id = mold_id; rows.push(row); }
+  if (parte !== null) { const row = emptyDatoRow(); row.parte = parte; row.part_id = part_id; rows.push(row); }
+  if (maquina !== null) { const row = emptyDatoRow(); row.maquina = maquina; row.machine_id = machine_id; rows.push(row); }
+  if (operacion !== null) { const row = emptyDatoRow(); row.operacion = operacion; row.operation_id = operation_id; rows.push(row); }
+  if (horas !== null) { const row = emptyDatoRow(); row.horas = horas; rows.push(row); }
+
+  return rows;
+};
+
 // GET /datos (historial) con paginación segura (interpolando limit y offset)
 const listDatos = async (req, res, next) => {
   try {
     const { operario, molde, parte, maquina, proceso } = req.query;
 
-    // Paginación: validar e interpolar como enteros
     let limit = parseInt(req.query.limit ?? '20', 10);
     let offset = parseInt(req.query.offset ?? '0', 10);
     if (!Number.isInteger(limit) || limit <= 0) limit = 20;
@@ -49,11 +155,9 @@ const listDatos = async (req, res, next) => {
 
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
-    // Total
     const countSql = `SELECT COUNT(*) AS total FROM datos ${whereSql}`;
     const [{ total }] = await query(countSql, params);
 
-    // Interpolar limit/offset (ya validados) directamente en el SQL
     const sql = `
       SELECT id, dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas,
              source, created_at
@@ -68,7 +172,7 @@ const listDatos = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-// POST /datos (creación manual - texto libre compatible)
+// POST /datos (creación manual - ahora crea una fila independiente por cada campo enviado)
 const createDato = async (req, res, next) => {
   try {
     const userId = req.user?.id || null;
@@ -93,7 +197,6 @@ const createDato = async (req, res, next) => {
     maquina = toStr(maquina);
     operacion = toStr(operacion);
 
-    // Resolver/crear catálogos (si vienen nombres)
     const operator_id = nombre_operario ? await ensureOperatorIdByName(nombre_operario) : null;
     const process_id = tipo_proceso ? await ensureProcessIdByName(tipo_proceso) : null;
     const mold_id = molde ? await ensureMoldIdByName(molde) : null;
@@ -107,6 +210,25 @@ const createDato = async (req, res, next) => {
       return res.status(400).json({ error: 'Debe suministrar al menos un campo para crear un registro.' });
     }
 
+    const rowsToCreate = buildIndependentRowsFromPayload({
+      dia,
+      mes,
+      anio,
+      nombre_operario,
+      tipo_proceso,
+      molde,
+      parte,
+      maquina,
+      operacion,
+      horas,
+      operator_id,
+      process_id,
+      mold_id,
+      part_id,
+      machine_id,
+      operation_id,
+    });
+
     const sql = `
       INSERT INTO datos (
         dia, mes, anio,
@@ -116,15 +238,79 @@ const createDato = async (req, res, next) => {
       )
       VALUES (?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?, 'manual', ?)
     `;
-    const params = [
-      dia, mes, anio,
-      nombre_operario, tipo_proceso, molde, parte, maquina, operacion,
-      operator_id, process_id, mold_id, part_id, machine_id, operation_id,
-      horas, userId
-    ];
-    const result = await query(sql, params);
-    res.status(201).json({ message: 'Dato creado', id: result.insertId });
-  } catch (e) { next(e); }
+
+    const createdIds = [];
+    const skippedExistingIds = [];
+
+    for (const rowToCreate of rowsToCreate) {
+      const existingId = await findExistingDatoId({
+        dia: rowToCreate.dia,
+        mes: rowToCreate.mes,
+        anio: rowToCreate.anio,
+        nombre_operario: rowToCreate.nombre_operario,
+        tipo_proceso: rowToCreate.tipo_proceso,
+        molde: rowToCreate.molde,
+        parte: rowToCreate.parte,
+        maquina: rowToCreate.maquina,
+        operacion: rowToCreate.operacion,
+        horas: rowToCreate.horas,
+      });
+
+      if (existingId) {
+        skippedExistingIds.push(existingId);
+        continue;
+      }
+
+      const params = [
+        rowToCreate.dia, rowToCreate.mes, rowToCreate.anio,
+        rowToCreate.nombre_operario, rowToCreate.tipo_proceso, rowToCreate.molde, rowToCreate.parte, rowToCreate.maquina, rowToCreate.operacion,
+        rowToCreate.operator_id, rowToCreate.process_id, rowToCreate.mold_id, rowToCreate.part_id, rowToCreate.machine_id, rowToCreate.operation_id,
+        rowToCreate.horas, userId
+      ];
+
+      try {
+        const result = await query(sql, params);
+        createdIds.push(result.insertId);
+      } catch (insertError) {
+        if (isDatosDuplicateViolation(insertError)) {
+          continue;
+        }
+        throw insertError;
+      }
+    }
+
+    if (createdIds.length === 0) {
+      if (rowsToCreate.length === 1 && skippedExistingIds.length) {
+        return res.status(409).json({
+          error: 'El dato ya existe. No se permiten registros duplicados.',
+          existing_id: skippedExistingIds[0],
+          skipped_existing_ids: skippedExistingIds,
+        });
+      }
+
+      return res.status(409).json({
+        error: 'Todos los datos enviados ya existen. No se crearon registros.',
+        skipped_existing_ids: skippedExistingIds,
+      });
+    }
+
+    if (createdIds.length === 1 && rowsToCreate.length === 1) {
+      return res.status(201).json({ message: 'Dato creado', id: createdIds[0] });
+    }
+
+    return res.status(201).json({
+      message: 'Datos creados de forma independiente',
+      created_count: createdIds.length,
+      skipped_count: rowsToCreate.length - createdIds.length,
+      created_ids: createdIds,
+      skipped_existing_ids: skippedExistingIds,
+    });
+  } catch (e) {
+    if (isDatosDuplicateViolation(e)) {
+      return res.status(409).json({ error: 'El dato ya existe. No se permiten registros duplicados.' });
+    }
+    next(e);
+  }
 };
 
 // PUT /datos/:id
@@ -136,6 +322,50 @@ const updateDato = async (req, res, next) => {
     const row = current[0];
 
     const has = (key) => Object.prototype.hasOwnProperty.call(req.body, key);
+
+    const originalByField = {
+      dia: row.dia,
+      mes: row.mes,
+      anio: row.anio,
+      nombre_operario: row.nombre_operario,
+      tipo_proceso: row.tipo_proceso,
+      molde: row.molde,
+      parte: row.parte,
+      maquina: row.maquina,
+      operacion: row.operacion,
+      horas: row.horas,
+    };
+
+    const attemptedNewFields = [];
+    const checkNewValueOnEmptyField = (fieldName, normalizedValue) => {
+      const currentValue = originalByField[fieldName];
+      const wasEmpty = currentValue === null || currentValue === undefined || String(currentValue).trim?.() === '';
+      const wantsValue = normalizedValue !== null;
+      if (wasEmpty && wantsValue) {
+        attemptedNewFields.push(fieldName);
+      }
+    };
+
+    if (has('dia')) checkNewValueOnEmptyField('dia', toInt(req.body.dia));
+    if (has('mes')) {
+      const m = toStr(req.body.mes);
+      checkNewValueOnEmptyField('mes', m ? normalizeMes(m) : null);
+    }
+    if (has('anio')) checkNewValueOnEmptyField('anio', toInt(req.body.anio));
+    if (has('nombre_operario')) checkNewValueOnEmptyField('nombre_operario', toStr(req.body.nombre_operario));
+    if (has('tipo_proceso')) checkNewValueOnEmptyField('tipo_proceso', toStr(req.body.tipo_proceso));
+    if (has('molde')) checkNewValueOnEmptyField('molde', toStr(req.body.molde));
+    if (has('parte')) checkNewValueOnEmptyField('parte', toStr(req.body.parte));
+    if (has('maquina')) checkNewValueOnEmptyField('maquina', toStr(req.body.maquina));
+    if (has('operacion')) checkNewValueOnEmptyField('operacion', toStr(req.body.operacion));
+    if (has('horas')) checkNewValueOnEmptyField('horas', toFloat(req.body.horas));
+
+    if (attemptedNewFields.length > 0) {
+      return res.status(400).json({
+        error: 'No se puede escribir en columnas vacías desde edición. Solo se permite editar el campo originalmente creado en la fila.',
+        blocked_fields: attemptedNewFields,
+      });
+    }
 
     const dia = has('dia') ? toInt(req.body.dia) : row.dia;
     const rawMes = has('mes') ? toStr(req.body.mes) : row.mes;
@@ -149,7 +379,6 @@ const updateDato = async (req, res, next) => {
     const maquina = has('maquina') ? toStr(req.body.maquina) : row.maquina;
     const operacion = has('operacion') ? toStr(req.body.operacion) : row.operacion;
 
-    // Resolver/crear catálogos si cambian nombres (o mantener si no cambian)
     const operator_id = has('nombre_operario')
       ? (nombre_operario ? await ensureOperatorIdByName(nombre_operario) : null)
       : row.operator_id;
@@ -171,6 +400,32 @@ const updateDato = async (req, res, next) => {
 
     const horas = has('horas') ? toFloat(req.body.horas) : row.horas;
 
+    const provided = [dia, mes, anio, nombre_operario, tipo_proceso, molde, parte, maquina, operacion, horas]
+      .filter(v => v !== null);
+    if (provided.length === 0) {
+      return res.status(400).json({ error: 'La fila no puede quedar totalmente vacía.' });
+    }
+
+    const existingId = await findExistingDatoId({
+      dia,
+      mes,
+      anio,
+      nombre_operario,
+      tipo_proceso,
+      molde,
+      parte,
+      maquina,
+      operacion,
+      horas,
+      excludeId: Number(id),
+    });
+    if (existingId) {
+      return res.status(409).json({
+        error: 'La actualización genera un duplicado. No se permiten registros duplicados.',
+        existing_id: existingId,
+      });
+    }
+
     const sql = `
       UPDATE datos
       SET dia = ?, mes = ?, anio = ?,
@@ -187,7 +442,12 @@ const updateDato = async (req, res, next) => {
     ];
     await query(sql, params);
     res.json({ message: 'Dato actualizado', id });
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (isDatosDuplicateViolation(e)) {
+      return res.status(409).json({ error: 'La actualización genera un duplicado. No se permiten registros duplicados.' });
+    }
+    next(e);
+  }
 };
 
 // DELETE /datos/:id
@@ -215,19 +475,18 @@ const getMeta = async (req, res, next) => {
     const yearsRows = await query(`SELECT DISTINCT anio AS v FROM datos WHERE anio IS NOT NULL ORDER BY anio DESC`);
 
     res.json({
-      operarios: operarios.map(r=>r.v),
-      procesos: procesos.map(r=>r.v),
-      moldes: moldes.map(r=>r.v),
-      partes: partes.map(r=>r.v),
-      maquinas: maquinas.map(r=>r.v),
-      operaciones: operaciones.map(r=>r.v),
-      years: yearsRows.map(r=>r.v)
+      operarios: operarios.map(r => r.v),
+      procesos: procesos.map(r => r.v),
+      moldes: moldes.map(r => r.v),
+      partes: partes.map(r => r.v),
+      maquinas: maquinas.map(r => r.v),
+      operaciones: operaciones.map(r => r.v),
+      years: yearsRows.map(r => r.v)
     });
   } catch (e) { next(e); }
 };
 
 // GET /datos/hours-options
-// Devuelve lista de horas (distinct) realmente importadas/registradas en datos.
 const getHoursOptions = async (req, res, next) => {
   try {
     const rows = await query(

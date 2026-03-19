@@ -54,15 +54,37 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use((req, res, next) => {
+
+    // Ignorar health check y favicon
+    if (req.originalUrl === '/health' || req.originalUrl === '/favicon.ico') {
+        return next();
+    }
+
+    console.log("=".repeat(60));
+    console.log("📥 REQUEST");
+    console.log("🕒", new Date().toISOString());
+    console.log("📌", req.method, req.originalUrl);
+    console.log("📦 Body:", req.body);
+    console.log("🔎 Query:", req.query);
+
+    const originalJson = res.json.bind(res);
+
+    res.json = (data) => {
+        console.log("📤 RESPONSE:");
+        console.log(data);
+        console.log("=".repeat(60));
+        return originalJson(data);
+    };
+
+    next();
+});
+
 // Servir archivos estáticos ANTES de las rutas API
 const publicDir = path.join(__dirname, '..', '..', 'public');
 app.use(express.static(publicDir));
 
-// Logging middleware (opcional pero útil)
-app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-    next();
-});
+
 
 // Rutas API
 app.use('/api/auth', authRoutes);

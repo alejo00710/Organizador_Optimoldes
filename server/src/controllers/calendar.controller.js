@@ -47,6 +47,7 @@ const getMonthView = async (req, res, next) => {
                 p.is_priority,
                 m.id AS machine_id,
                 m.name AS machine_name,
+                m.daily_capacity AS machine_capacity,
                 mo.id AS mold_id,
                 mo.name AS mold_name,
                 mp.id AS part_id,
@@ -145,6 +146,8 @@ const getMonthView = async (req, res, next) => {
                 eventsByDay[day] = {
                     tasks: [],
                     machineUsage: {},
+                    machineCapacity: {},
+                    hasOverlap: false,
                 };
             }
 
@@ -165,6 +168,27 @@ const getMonthView = async (req, res, next) => {
                 eventsByDay[day].machineUsage[row.machine_name] = 0;
             }
             eventsByDay[day].machineUsage[row.machine_name] += hours;
+
+            const overlapKey = `__molds_${String(row.machine_name)}`;
+            if (!eventsByDay[day][overlapKey]) {
+                eventsByDay[day][overlapKey] = new Set();
+            }
+            eventsByDay[day][overlapKey].add(Number(row.mold_id));
+            if (eventsByDay[day][overlapKey].size > 1) {
+                eventsByDay[day].hasOverlap = true;
+            }
+
+            if (!Object.prototype.hasOwnProperty.call(eventsByDay[day].machineCapacity, row.machine_name)) {
+                const cap = row.machine_capacity == null ? null : Number(row.machine_capacity);
+                eventsByDay[day].machineCapacity[row.machine_name] = Number.isFinite(cap) ? cap : null;
+            }
+        }
+
+        for (const key of Object.keys(eventsByDay)) {
+            const dayObj = eventsByDay[key];
+            for (const innerKey of Object.keys(dayObj || {})) {
+                if (innerKey.startsWith('__molds_')) delete dayObj[innerKey];
+            }
         }
 
         res.json({

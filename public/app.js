@@ -606,7 +606,11 @@ function showLoginScreen(message = '') {
   const loginResp = document.getElementById('loginResponse');
   if (loginResp) loginResp.textContent = '';
   const pwd = document.getElementById('password'); if (pwd) pwd.value = '';
-  const opSel = document.getElementById('operatorSelectGroup'); if (opSel) opSel.classList.add('hidden');
+
+  // Mantener visible el selector de operario cuando el usuario seleccionado es "operarios"
+  // (por ejemplo, después de cerrar sesión desde un operario).
+  try { updateOperatorSelection(); } catch (_) {}
+
   authToken = null; currentUser = null;
   localStorage.removeItem('authToken');
   updateConnectionStatus(false);
@@ -1470,6 +1474,56 @@ function renderMoldPartsProgressList(breakdown) {
   `;
 }
 
+function renderPlanningHistory(history, fallbackData = null) {
+  let items = Array.isArray(history) ? history.slice() : [];
+
+  if (!items.length) {
+    const start = fallbackData?.planWindow?.startDate ? String(fallbackData.planWindow.startDate) : '';
+    const end = fallbackData?.planWindow?.endDate ? String(fallbackData.planWindow.endDate) : '';
+    if (start || end) {
+      items = [{
+        label: 'Plan inicial',
+        eventDate: start || end || '',
+        from: { startDate: null, endDate: null },
+        to: { startDate: start || null, endDate: end || null },
+        note: 'Plan registrado (sin historial detallado previo).'
+      }];
+    }
+  }
+
+  if (!items.length) {
+    return '<div style="color:var(--text-muted)">(Sin historial de planificación)</div>';
+  }
+
+  const toRangeText = (r) => {
+    const s = r?.startDate ? String(r.startDate) : '—';
+    const e = r?.endDate ? String(r.endDate) : '—';
+    return `${s} → ${e}`;
+  };
+
+  return `
+    <div>
+      ${items.map(it => {
+        const label = String(it?.label || it?.eventType || 'Evento');
+        const d = String(it?.eventDate || '').trim();
+        const fromText = toRangeText(it?.from);
+        const toText = toRangeText(it?.to);
+        const changedRange = fromText !== toText;
+        return `
+          <div style="border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:8px; background:var(--card-bg);">
+            <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; align-items:baseline;">
+              <strong>${escapeHtml(label)}</strong>
+              <span style="color:var(--text-muted); font-size:0.85rem;">${escapeHtml(d || '—')}</span>
+            </div>
+            ${changedRange ? `<div style="margin-top:4px; font-size:0.9rem;"><span style="color:var(--text-muted);">Rango:</span> ${escapeHtml(fromText)} → ${escapeHtml(toText)}</div>` : ''}
+            ${it?.note ? `<div style="margin-top:4px; color:var(--text-muted); font-size:0.85rem;">${escapeHtml(String(it.note))}</div>` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 function buildMoldProgressContent(data, fallbackMoldName, opts) {
   const listKind = opts?.listKind ? String(opts.listKind) : '';
   const isCompletedList = listKind === 'completed';
@@ -1507,7 +1561,7 @@ function buildMoldProgressContent(data, fallbackMoldName, opts) {
       <div>
         <div style="font-weight:800;">Avance vs plan${isCompletedList ? ' (Terminado)' : ''}</div>
         <div style="color:var(--text-muted); font-size:0.9rem;">Molde: <strong>${escapeHtml(String(data?.moldName || fallbackMoldName || ''))}</strong></div>
-        ${planRange ? `<div style="color:var(--text-muted); font-size:0.85rem;">Plan: ${escapeHtml(planRange)}</div>` : ''}
+        ${(!isCompletedList && planRange) ? `<div style="color:var(--text-muted); font-size:0.85rem;">Plan: ${escapeHtml(planRange)}</div>` : ''}
       </div>
       <div style="color:var(--text-muted); font-size:0.9rem;">Hoy: ${escapeHtml(String(data?.today || ''))}</div>
     </div>
@@ -1655,7 +1709,18 @@ async function wireMoldDetailToggles(container) {
           detail.setAttribute('data-loaded', '1');
           return;
         }
-        detail.innerHTML = renderMoldPartsProgressList(progress.breakdown);
+        const historyHtml = renderPlanningHistory(progress?.planningHistory, progress);
+        const partsHtml = renderMoldPartsProgressList(progress.breakdown);
+        detail.innerHTML = `
+          <div style="margin-bottom:10px;">
+            <div style="font-weight:700; margin-bottom:6px;">Mini historial</div>
+            ${historyHtml}
+          </div>
+          <div>
+            <div style="font-weight:700; margin-bottom:6px;">Detalle por partes/máquinas</div>
+            ${partsHtml}
+          </div>
+        `;
         detail.setAttribute('data-loaded', '1');
       } catch (_) {
         detail.innerHTML = '<div style="color:var(--danger)">Error cargando detalle</div>';
@@ -2651,6 +2716,7 @@ async function saveTiempoMolde() {
     operatorId,
     work_date,
     hours_worked: round2(horas),
+    is_final_log: !!(document.getElementById('tmIsFinalLog')?.checked),
     reason: String(motivo || '').trim() || null,
     note: `Proceso: ${proceso} | Operación: ${operacion}`
   };
@@ -2662,6 +2728,8 @@ async function saveTiempoMolde() {
     if (res.ok) {
       const motivoEl = document.getElementById('tmMotivo');
       if (motivoEl) motivoEl.value = '';
+      const finalEl = document.getElementById('tmIsFinalLog');
+      if (finalEl) finalEl.checked = false;
       loadTiemposMeta();
     }
   } catch (e) {
@@ -3135,6 +3203,11 @@ function setWorkLogRowEditing(row, enabled, role) {
       el.disabled = true;
       return;
     }
+    // Operarios no pueden cambiar el cierre manual (solo admins/jefe)
+    if (el.classList.contains('wl-is-final') && isOperator) {
+      el.disabled = true;
+      return;
+    }
     // Evitar tocar inputs fuera de la fila
     el.disabled = !enabled;
   });
@@ -3193,7 +3266,7 @@ function renderWorkLogsTable(rows) {
   const canEditAll = role === 'admin' || role === 'planner';
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="16" class="text-muted">(sin registros)</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="17" class="text-muted">(sin registros)</td></tr>';
     return;
   }
 
@@ -3235,6 +3308,11 @@ function renderWorkLogsTable(rows) {
       return `${sign}${pct.toFixed(2)}%`;
     })();
     const isAlert = Number(r.is_alert) === 1 || String(r.is_alert).toLowerCase() === 'true';
+    const isFinalLog = r.is_final_log === true || Number(r.is_final_log) === 1 || String(r.is_final_log) === 'true';
+    const plannedNum2 = (r.planned_hours == null) ? NaN : Number(r.planned_hours);
+    const actualNum = r.hours_worked != null ? Number(r.hours_worked) : NaN;
+    const isOverrun = !isFinalLog && Number.isFinite(plannedNum2) && plannedNum2 > 0 && Number.isFinite(actualNum) && actualNum > (plannedNum2 + 0.01);
+    const canAdmin = String(currentUser?.role || '').toLowerCase() !== 'operator';
 
     // Regla operarios: 2 dias calendario desde la fecha de registro (recorded_at).
     const baseDateForEdit = r.recorded_at ? fmtDateOnly(r.recorded_at) : null;
@@ -3254,7 +3332,7 @@ function renderWorkLogsTable(rows) {
     }).join('');
 
     return `
-      <tr data-id="${escapeHtml(String(r.id))}" data-can-edit="${canEdit ? '1' : '0'}" ${rowClass}>
+      <tr data-id="${escapeHtml(String(r.id))}" data-can-edit="${canEdit ? '1' : '0'}" data-is-final="${isFinalLog ? '1' : '0'}" ${rowClass}>
         <td><input type="number" class="wl-dia" min="1" max="31" value="${escapeHtml(day)}" ${disabled}></td>
         <td>
           <select class="wl-mes" ${disabled}>
@@ -3268,7 +3346,11 @@ function renderWorkLogsTable(rows) {
         <td><input type="text" class="wl-parte" list="wlPartes" value="${escapeHtml(r.part_name || '')}" ${disabled}></td>
         <td><input type="text" class="wl-maquina" list="wlMaquinas" value="${escapeHtml(r.machine_name || '')}" ${disabled}></td>
         <td><input type="text" class="wl-operacion" list="wlOperaciones" value="${escapeHtml(po.operacion || '')}" ${disabled}></td>
-        <td><input type="number" class="wl-hours" list="hoursOptions" step="0.25" min="0" max="24" value="${r.hours_worked != null ? Number(r.hours_worked).toFixed(2) : ''}" ${disabled}></td>
+        <td><input type="number" class="wl-hours" list="hoursOptions" step="0.25" min="0" max="24" value="${r.hours_worked != null ? Number(r.hours_worked).toFixed(2) : ''}" ${disabled}>${isOverrun ? ' <span title="Exceso sobre lo planeado sin cierre manual" style="color:#e67e22;font-weight:700;">&#9888; Exceso</span>' : ''}</td>
+        <td style="text-align:center;">${isFinalLog
+          ? `<span title="Parte cerrada definitivamente" style="color:#27ae60;font-size:1.1rem;">&#128274;</span>`
+          : (canAdmin ? `<input type="checkbox" class="wl-is-final" title="Marcar cierre definitivo" ${disabled}>` : '')
+        }</td>
         <td><input type="text" class="wl-reason" value="${escapeHtml(r.reason || '')}" ${disabled}></td>
         <td class="wl-planned">${escapeHtml(planned)}</td>
         <td class="wl-deviation">${escapeHtml(deviation)}</td>
@@ -3358,6 +3440,7 @@ async function saveWorkLogRow(id) {
     hours_worked: Number(hours),
     reason: String(reason || '').trim() || null,
     note: `Proceso: ${proceso} | Operación: ${operacion}`,
+    is_final_log: !!(row.querySelector('input.wl-is-final')?.checked),
   };
 
   try {
@@ -3500,21 +3583,27 @@ async function loadDatos(reset = true) {
 function renderDatosTable(items) {
   const tbody = document.querySelector('#datosTable tbody'); if (!tbody) return;
   tbody.innerHTML = items.map(r => {
-    const disabled = r.source === 'import' ? 'disabled' : '';
     const showSave = r.source !== 'import';
     const createdAt = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+
+    const hasValue = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+    const fieldEditable = (v) => (showSave && hasValue(v)) ? '' : 'disabled';
+    const fieldTitle = (v) => (showSave && !hasValue(v))
+      ? 'title="No editable: esta columna estaba vacía en el registro original"'
+      : '';
+
     return `
       <tr data-id="${r.id}" data-source="${r.source || ''}">
-        <td><input type="number" min="1" max="31" value="${r.dia ?? ''}" ${disabled}></td>
-        <td><input type="text" value="${r.mes ? (capitalize(r.mes)) : ''}" ${disabled}></td>
-        <td><input type="number" min="2016" max="2100" value="${r.anio ?? ''}" ${disabled}></td>
-        <td><input type="text" value="${escapeHtml(r.nombre_operario ?? '')}" ${disabled}></td>
-        <td><input type="text" value="${escapeHtml(r.tipo_proceso ?? '')}" ${disabled}></td>
-        <td><input type="text" value="${escapeHtml(r.molde ?? '')}" ${disabled}></td>
-        <td><input type="text" value="${escapeHtml(r.parte ?? '')}" ${disabled}></td>
-        <td><input type="text" value="${escapeHtml(r.maquina ?? '')}" ${disabled}></td>
-        <td><input type="text" value="${escapeHtml(r.operacion ?? '')}" ${disabled}></td>
-        <td><input type="number" step="0.25" min="0" max="12" list="hoursOptions" value="${r.horas != null ? Number(r.horas).toFixed(2) : ''}" ${disabled}></td>
+        <td><input data-field="dia" type="number" min="1" max="31" value="${r.dia ?? ''}" ${fieldEditable(r.dia)} ${fieldTitle(r.dia)}></td>
+        <td><input data-field="mes" type="text" value="${r.mes ? (capitalize(r.mes)) : ''}" ${fieldEditable(r.mes)} ${fieldTitle(r.mes)}></td>
+        <td><input data-field="anio" type="number" min="2016" max="2100" value="${r.anio ?? ''}" ${fieldEditable(r.anio)} ${fieldTitle(r.anio)}></td>
+        <td><input data-field="nombre_operario" type="text" value="${escapeHtml(r.nombre_operario ?? '')}" ${fieldEditable(r.nombre_operario)} ${fieldTitle(r.nombre_operario)}></td>
+        <td><input data-field="tipo_proceso" type="text" value="${escapeHtml(r.tipo_proceso ?? '')}" ${fieldEditable(r.tipo_proceso)} ${fieldTitle(r.tipo_proceso)}></td>
+        <td><input data-field="molde" type="text" value="${escapeHtml(r.molde ?? '')}" ${fieldEditable(r.molde)} ${fieldTitle(r.molde)}></td>
+        <td><input data-field="parte" type="text" value="${escapeHtml(r.parte ?? '')}" ${fieldEditable(r.parte)} ${fieldTitle(r.parte)}></td>
+        <td><input data-field="maquina" type="text" value="${escapeHtml(r.maquina ?? '')}" ${fieldEditable(r.maquina)} ${fieldTitle(r.maquina)}></td>
+        <td><input data-field="operacion" type="text" value="${escapeHtml(r.operacion ?? '')}" ${fieldEditable(r.operacion)} ${fieldTitle(r.operacion)}></td>
+        <td><input data-field="horas" type="number" step="0.25" min="0" max="12" list="hoursOptions" value="${r.horas != null ? Number(r.horas).toFixed(2) : ''}" ${fieldEditable(r.horas)} ${fieldTitle(r.horas)}></td>
         <td>${r.source === 'import' ? 'Importado' : 'Manual'}</td>
         <td>${createdAt}</td>
         <td>
@@ -3599,16 +3688,33 @@ async function createDatoManual() {
 async function saveDatoRow(id) {
   const row = document.querySelector(`#datosTable tbody tr[data-id="${id}"]`);
   if (!row) return;
-  const inputs = row.querySelectorAll('input');
-  const [diaEl, mesEl, anioEl, operarioEl, procesoEl, moldeEl, parteEl, maquinaEl, operacionEl, horasEl] = inputs;
-  const payload = {
-    dia: diaEl.value !== '' ? parseInt(diaEl.value, 10) : '',
-    mes: mesEl.value !== '' ? mesEl.value.toLowerCase() : '',
-    anio: anioEl.value !== '' ? parseInt(anioEl.value, 10) : '',
-    tipo_proceso: procesoEl.value,
-    operacion: operacionEl.value,
-    horas: hoursToPayload(horasEl.value)
-  };
+  const payload = {};
+  const inputs = Array.from(row.querySelectorAll('input[data-field]')).filter(inp => !inp.disabled);
+
+  for (const input of inputs) {
+    const field = input.getAttribute('data-field');
+    if (!field) continue;
+    const raw = input.value;
+
+    if (field === 'dia' || field === 'anio') {
+      payload[field] = raw !== '' ? parseInt(raw, 10) : '';
+      continue;
+    }
+    if (field === 'mes') {
+      payload[field] = raw !== '' ? raw.toLowerCase() : '';
+      continue;
+    }
+    if (field === 'horas') {
+      payload[field] = hoursToPayload(raw);
+      continue;
+    }
+    payload[field] = raw;
+  }
+
+  if (Object.keys(payload).length === 0) {
+    return displayResponse('datosResponse', { error: 'No hay campos editables en esta fila.' }, false);
+  }
+
   try {
     const res = await fetch(`${API_URL}/datos/${id}`, {
       method: 'PUT',
@@ -3724,12 +3830,75 @@ let lastDayDetailsContext = null;
 // Se llena al cargar el calendario del mes, y se usa para reglas de UI (ej. edición por días hábiles).
 let calendarHolidaysCache = {}; // { 'YYYY-MM-DD': 'Nombre' }
 let calendarWorkingOverridesCache = {}; // { 'YYYY-MM-DD': true|false }
+let calendarCompletedMoldIdsCache = new Set();
 
-async function fetchMoldProgressDetail(moldId) {
+async function refreshCompletedMoldIdsCache() {
+  const qs = new URLSearchParams();
+  qs.set('limit', '500');
+  const res = await fetch(`${API_URL}/molds/completed?${qs.toString()}`, {
+    headers: { 'Authorization': `Bearer ${authToken}` },
+    cache: 'no-store'
+  });
+  if (!res.ok) {
+    calendarCompletedMoldIdsCache = new Set();
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  const molds = Array.isArray(data?.molds) ? data.molds : [];
+  calendarCompletedMoldIdsCache = new Set(
+    molds
+      .map(m => Number(m?.moldId))
+      .filter(id => Number.isFinite(id) && id > 0)
+  );
+}
+
+function filterCalendarEventsHideCompleted(events, hideCompleted) {
+  if (!hideCompleted) return events || {};
+  const out = {};
+  const source = (events && typeof events === 'object') ? events : {};
+
+  Object.keys(source).forEach((dayKey) => {
+    const day = source[dayKey] || {};
+    const tasks = Array.isArray(day.tasks) ? day.tasks : [];
+    const visibleTasks = tasks.filter(t => !calendarCompletedMoldIdsCache.has(Number(t?.moldId)));
+    if (!visibleTasks.length) return;
+
+    const machineUsage = {};
+    const machineCapacity = {};
+    const machineMolds = new Map();
+    for (const t of visibleTasks) {
+      const machineName = String(t?.machine || '');
+      const h = Number(t?.hours || 0);
+      machineUsage[machineName] = Number(machineUsage[machineName] || 0) + (Number.isFinite(h) ? h : 0);
+      if (!machineMolds.has(machineName)) machineMolds.set(machineName, new Set());
+      machineMolds.get(machineName).add(Number(t?.moldId));
+      if (day.machineCapacity && Object.prototype.hasOwnProperty.call(day.machineCapacity, machineName)) {
+        machineCapacity[machineName] = day.machineCapacity[machineName];
+      }
+    }
+
+    const hasOverlap = Array.from(machineMolds.values()).some(set => set.size > 1);
+    out[dayKey] = {
+      tasks: visibleTasks,
+      machineUsage,
+      machineCapacity,
+      hasOverlap,
+    };
+  });
+
+  return out;
+}
+
+async function fetchMoldProgressDetail(moldId, opts = {}) {
   if (!authToken) return null;
   const id = Number(moldId);
   if (!Number.isFinite(id) || id <= 0) return null;
-  const res = await fetch(`${API_URL}/molds/${encodeURIComponent(String(id))}/progress?includeParts=1`, {
+  const qs = new URLSearchParams();
+  qs.set('includeParts', '1');
+  if (opts?.asOf && /^\d{4}-\d{2}-\d{2}$/.test(String(opts.asOf))) qs.set('asOf', String(opts.asOf));
+  if (opts?.day && /^\d{4}-\d{2}-\d{2}$/.test(String(opts.day))) qs.set('day', String(opts.day));
+
+  const res = await fetch(`${API_URL}/molds/${encodeURIComponent(String(id))}/progress?${qs.toString()}`, {
     headers: { 'Authorization': `Bearer ${authToken}` },
     cache: 'no-store'
   });
@@ -3742,6 +3911,7 @@ async function loadCalendar() {
   const display = document.getElementById('calendar-month-year');
   const grid = document.getElementById('calendar-grid');
   const progressList = document.getElementById('inProgressMoldList');
+  const hideCompleted = !!document.getElementById('hideCompletedToggle')?.checked;
   if (display) display.textContent = `${capitalize(monthNames[currentMonth])} ${currentYear}`;
   if (grid) grid.innerHTML = 'Cargando...';
   if (progressList) progressList.innerHTML = '';
@@ -3749,11 +3919,16 @@ async function loadCalendar() {
     const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth + 1}`, { headers: { 'Authorization': `Bearer ${authToken}` }, cache: 'no-store' });
     const data = await res.json();
     if (res.ok) {
-      const events = data.events || {};
+      if (hideCompleted) {
+        try { await refreshCompletedMoldIdsCache(); } catch (_) { calendarCompletedMoldIdsCache = new Set(); }
+      }
+      const events = filterCalendarEventsHideCompleted(data.events || {}, hideCompleted);
       calendarHolidaysCache = (data && typeof data.holidays === 'object' && data.holidays) ? data.holidays : {};
       calendarWorkingOverridesCache = (data && typeof data.overrides === 'object' && data.overrides) ? data.overrides : {};
       renderCalendar(currentYear, currentMonth, events, data.holidays || {}, data.overrides || {});
-      try { renderInProgressMoldList(); } catch (_) {}
+      try {
+        renderInProgressMoldList();
+      } catch (_) {}
     }
     else if (grid) grid.innerHTML = '<p>Error cargar calendario</p>';
   } catch (e) {
@@ -3803,6 +3978,10 @@ function renderCalendar(year, month, events = {}, holidays = {}, overrides = {})
       cell.classList.add('has-events');
       cell.innerHTML += `<div class="events-indicator">${total.toFixed(1)}h</div>`;
 
+      if (events[d].hasOverlap) {
+        cell.innerHTML += `<div class="overlap-indicator" title="Convivencia activa">🔀</div>`;
+      }
+
       const hasPriority = Array.isArray(events[d].tasks) && events[d].tasks.some(t => t && t.isPriority);
       if (hasPriority) {
         cell.innerHTML += `<div class="priority-indicator" title="Prioridad">★</div>`;
@@ -3825,26 +4004,96 @@ function renderDayDetailsView(dateISO, events, holiday) {
   const dateStr = String(dateISO || '').trim();
   if (titleEl) titleEl.textContent = dateStr || '';
 
+  const normalizeRole = (v) => String(v || '').trim().toLowerCase();
+  const canQuickMove = (() => {
+    const role = normalizeRole(currentUser?.role);
+    return role === 'admin' || role === 'jefe';
+  })();
+
+  const renderMachineCapacityBadges = (dayEvents) => {
+    const usage = (dayEvents && typeof dayEvents.machineUsage === 'object' && dayEvents.machineUsage) ? dayEvents.machineUsage : {};
+    const capacity = (dayEvents && typeof dayEvents.machineCapacity === 'object' && dayEvents.machineCapacity) ? dayEvents.machineCapacity : {};
+    const machineNames = Array.from(new Set([
+      ...Object.keys(usage || {}),
+      ...Object.keys(capacity || {})
+    ])).sort((a, b) => String(a).localeCompare(String(b), 'es'));
+
+    if (!machineNames.length) return '';
+
+    const chips = machineNames.map((name) => {
+      const used = Number(usage?.[name] || 0);
+      const capRaw = capacity?.[name];
+      const cap = capRaw == null ? null : Number(capRaw);
+      const capValid = Number.isFinite(cap) && cap > 0;
+      const isFull = capValid && used >= (cap - 1e-9);
+
+      const bg = isFull ? 'rgba(220,53,69,0.12)' : 'rgba(25,135,84,0.10)';
+      const border = isFull ? 'rgba(220,53,69,0.45)' : 'rgba(25,135,84,0.35)';
+      const text = isFull ? '#842029' : '#0f5132';
+      const capLabel = capValid ? Number(cap).toFixed(2).replace(/\.00$/, '') : 'N/D';
+
+      return `
+        <span style="display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; border:1px solid ${border}; background:${bg}; color:${text}; font-size:0.85rem; font-weight:700;">
+          <span>${escapeHtml(String(name))}</span>
+          <span>${Number(used || 0).toFixed(2).replace(/\.00$/, '')}h / ${escapeHtml(capLabel)}h</span>
+        </span>
+      `;
+    }).join('');
+
+    return `
+      <div style="margin:8px 0 12px 0;">
+        <div style="font-weight:700; margin-bottom:6px;">Capacidad por máquina</div>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">${chips}</div>
+      </div>
+    `;
+  };
+
   let html = '';
   if (holiday) html += `<p>${escapeHtml(holiday)}</p>`;
+
+  html += renderMachineCapacityBadges(events);
 
   if (events && events.tasks && events.tasks.length) {
     // Agrupar por molde
     const byMold = new Map();
     for (const t of events.tasks) {
       const moldKey = String(t.moldId ?? t.mold ?? '');
-      if (!byMold.has(moldKey)) byMold.set(moldKey, { moldId: t.moldId, moldName: t.mold, tasks: [] });
+      if (!byMold.has(moldKey)) byMold.set(moldKey, { moldId: t.moldId, moldName: t.mold, isPriority: false, tasks: [] });
+      if (t && t.isPriority) byMold.get(moldKey).isPriority = true;
       byMold.get(moldKey).tasks.push(t);
     }
 
     for (const grp of byMold.values()) {
+      const moldIdAttr = grp.moldId != null ? ` data-mold-state-for="${escapeHtml(String(grp.moldId))}"` : '';
+      const priorityBadge = grp.isPriority
+        ? '<span style="color:#b76e00; font-weight:800;">★ Prioridad</span>'
+        : '';
       html += `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px;">
-          <h4 style="margin:0;">${escapeHtml(grp.moldName || 'Molde')}</h4>
+          <h4 style="margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span>${escapeHtml(grp.moldName || 'Molde')}</span>
+            ${priorityBadge}
+            <span${moldIdAttr} style="font-size:0.85rem; color:var(--text-muted);">(Estado: ...)</span>
+          </h4>
           ${grp.moldId ? `<button class="btn btn-secondary" data-edit-mold="${grp.moldId}" data-mold-name="${escapeHtml(grp.moldName || '')}">Editar este molde</button>` : ''}
         </div>
         <ul>
-          ${grp.tasks.map(t => `<li>${escapeHtml(t.machine)}: (${escapeHtml(t.part)}) - ${t.hours}h</li>`).join('')}
+          ${grp.tasks.map(t => {
+            const entryId = Number(t?.entryId);
+            const canRenderQuick = canQuickMove && Number.isFinite(entryId) && entryId > 0;
+            const quickButtons = canRenderQuick
+              ? `<span style="display:inline-flex; gap:6px; margin-left:8px;">
+                   <button class="btn btn-secondary" style="padding:2px 8px; min-height:auto;" data-quick-move="prev" data-entry-id="${entryId}" data-date="${escapeHtml(dateStr)}" data-machine="${escapeHtml(String(t.machine || ''))}" title="Mover al día laborable anterior">&larr;</button>
+                   <button class="btn btn-secondary" style="padding:2px 8px; min-height:auto;" data-quick-move="next" data-entry-id="${entryId}" data-date="${escapeHtml(dateStr)}" data-machine="${escapeHtml(String(t.machine || ''))}" title="Mover al siguiente disponible">&rarr;</button>
+                 </span>`
+              : '';
+
+            return `<li>
+              <span>${escapeHtml(t.machine)}: (${escapeHtml(t.part)}) - ${t.hours}h</span>
+              <span style="color:var(--text-muted); font-size:0.8rem; margin-left:6px;">#${Number.isFinite(entryId) ? entryId : '—'}</span>
+              ${quickButtons}
+            </li>`;
+          }).join('')}
         </ul>
         ${grp.moldId ? `<div data-mold-progress-for="${escapeHtml(String(grp.moldId))}" style="margin-top:10px;">Cargando progreso...</div>` : ''}
       `;
@@ -3855,9 +4104,71 @@ function renderDayDetailsView(dateISO, events, holiday) {
 
   html += `<div style="margin-top:12px;"><button class="btn btn-secondary" id="toggleWorkingBtn">Cargando estado...</button><small style="display:block; margin-top:6px;">Esto crea una excepción para este día.</small></div>`;
 
+  html += `
+    <div style="margin-top:8px;">
+      <label style="display:inline-flex; align-items:center; gap:8px; font-size:0.9rem; color:var(--text-muted);">
+        <input type="checkbox" id="dayAllowOverlap" />
+        Permitir compartir día (Ignorar exclusividad, usar solo capacidad)
+      </label>
+    </div>
+  `;
+
   html += `<div class="response-box" id="dayDetailsResponse"></div>`;
 
   if (body) body.innerHTML = html;
+
+  const addDaysISO = (iso, delta) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+    const [y, m, d] = String(iso).split('-').map(Number);
+    const date = new Date(y, (m || 1) - 1, d || 1);
+    date.setDate(date.getDate() + Number(delta || 0));
+    const yy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
+  };
+
+  const findPreviousWorkingDateISO = async (fromISO, minISO) => {
+    let cursor = String(fromISO || '');
+    const MAX_SCAN = 370;
+    for (let i = 0; i < MAX_SCAN; i++) {
+      cursor = addDaysISO(cursor, -1);
+      if (!cursor) return null;
+      if (minISO && cursor < minISO) return null;
+      if (await isDateLaborable(cursor)) return cursor;
+    }
+    return null;
+  };
+
+  const refreshDayModalData = async () => {
+    try {
+      const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth + 1}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+        cache: 'no-store'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        await loadCalendar();
+        return;
+      }
+
+      const hideCompleted = !!document.getElementById('hideCompletedToggle')?.checked;
+      if (hideCompleted) {
+        try { await refreshCompletedMoldIdsCache(); } catch (_) { calendarCompletedMoldIdsCache = new Set(); }
+      }
+      const filteredEvents = filterCalendarEventsHideCompleted(data.events || {}, hideCompleted);
+
+      calendarHolidaysCache = (data && typeof data.holidays === 'object' && data.holidays) ? data.holidays : {};
+      calendarWorkingOverridesCache = (data && typeof data.overrides === 'object' && data.overrides) ? data.overrides : {};
+
+      renderCalendar(currentYear, currentMonth, filteredEvents, data.holidays || {}, data.overrides || {});
+      renderDayDetailsView(dateStr, (filteredEvents || {})[String(Number(dateStr.slice(8, 10)))], (data.holidays || {})[dateStr]);
+      const modal = document.getElementById('day-details-modal');
+      if (modal) modal.classList.remove('hidden');
+    } catch (_) {
+      await loadCalendar();
+    }
+  };
 
   // Hook: editar molde
   document.querySelectorAll('#modal-body button[data-edit-mold]').forEach(btn => {
@@ -3865,6 +4176,54 @@ function renderDayDetailsView(dateISO, events, holiday) {
       const moldId = btn.getAttribute('data-edit-mold');
       const moldName = btn.getAttribute('data-mold-name') || '';
       await openMoldEditorView(moldId, moldName);
+    });
+  });
+
+  // Hook: movimiento rápido por entrada (solo roles permitidos)
+  document.querySelectorAll('#modal-body button[data-quick-move]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!canQuickMove) return;
+
+      const action = String(btn.getAttribute('data-quick-move') || '').trim();
+      const entryId = Number(btn.getAttribute('data-entry-id'));
+      if (!Number.isFinite(entryId) || entryId <= 0) return;
+
+      try {
+        const allowOverlap = !!document.getElementById('dayAllowOverlap')?.checked;
+        let resp;
+        if (action === 'next') {
+          resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(String(entryId))}/next-available`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+            body: JSON.stringify({ baseDate: dateStr, allowOverlap })
+          });
+        } else {
+          const todayISO = getBogotaTodayISO() || localISOFromDate(new Date());
+          const prevISO = await findPreviousWorkingDateISO(dateStr, todayISO);
+          if (!prevISO) {
+            displayResponse('dayDetailsResponse', 'No existe un día laborable anterior permitido para mover esta entrada.', false);
+            return;
+          }
+
+          const machineName = String(btn.getAttribute('data-machine') || '').trim();
+          resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(String(entryId))}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+            body: JSON.stringify({ date: prevISO, machineName, allowOverlap })
+          });
+        }
+
+        const out = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          displayResponse('dayDetailsResponse', out?.error || 'No se pudo mover la entrada.', false);
+          return;
+        }
+
+        displayResponse('dayDetailsResponse', out?.message || 'Entrada movida correctamente.', true);
+        await refreshDayModalData();
+      } catch (e) {
+        displayResponse('dayDetailsResponse', `Error de conexión: ${String(e?.message || e)}`, false);
+      }
     });
   });
 
@@ -3878,11 +4237,25 @@ function renderDayDetailsView(dateISO, events, holiday) {
       if (!moldId) return;
 
       try {
-        const progress = await fetchMoldProgressDetail(moldId);
+        const progress = await fetchMoldProgressDetail(moldId, { asOf: dateStr, day: dateStr });
+        const overallProgress = await fetchMoldProgressDetail(moldId, { asOf: dateStr });
         if (!progress || !progress.breakdown) {
           el.innerHTML = '<div style="color:var(--text-muted)">(Sin progreso disponible)</div>';
           return;
         }
+
+        // Estado del molde: SIEMPRE global (todas las partes del molde hasta asOf),
+        // no solo del día filtrado en el modal.
+        const plannedTotal = Number(overallProgress?.totals?.plannedTotalHours ?? 0);
+        const actualTotal = Number(overallProgress?.totals?.actualTotalHours ?? 0);
+        const isDone = plannedTotal > 0 && actualTotal >= (plannedTotal - 0.01);
+        const stateNode = document.querySelector(`#modal-body [data-mold-state-for="${String(moldId)}"]`);
+        if (stateNode) {
+          stateNode.textContent = isDone ? '(Estado: Terminado)' : '(Estado: Pendiente)';
+          stateNode.style.color = isDone ? 'var(--success)' : 'var(--warning)';
+          stateNode.style.fontWeight = '700';
+        }
+
         const pct = progress?.totals?.percentComplete;
         const planned = progress?.totals?.plannedTotalHours;
         const actual = progress?.totals?.actualTotalHours;
@@ -3979,30 +4352,6 @@ async function openMoldEditorView(moldId, moldName) {
         </div>
         <button class="btn btn-secondary" id="moldEditorBackBtn">Volver al día</button>
       </div>
-      <div class="mold-progress-panel" style="margin-bottom:10px;">
-        <div style="font-weight:800; margin-bottom:6px;">Selección múltiple por filas</div>
-        <div class="text-muted" style="font-size:0.9rem;">Marca 2+ filas para mostrar acciones masivas (solo pendientes).</div>
-        <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-          <button class="btn btn-secondary" id="peSelectAllRowsBtn">Seleccionar todo</button>
-          <button class="btn btn-secondary" id="peClearAllRowsBtn">Limpiar selección</button>
-          <div class="text-muted">Seleccionadas: <strong id="peBulkSelectedCount">0</strong></div>
-        </div>
-
-        <div id="peBulkPanel" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid var(--border-color);">
-          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
-            <div style="min-width: 220px;">
-              <label style="display:block; font-weight:600;">Fecha base</label>
-              <input type="date" id="peBulkMoveDate" value="${escapeHtml(String(defaultBulkDate || ''))}">
-              <div class="text-muted" style="font-size:0.85rem; margin-top:4px;">Para “Siguiente disponible”, se busca desde el día siguiente laborable.</div>
-            </div>
-
-            <div style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
-              <button class="btn btn-secondary" id="peBulkMoveToDateBtn" title="Mueve las filas seleccionadas a esta fecha">Mover a fecha</button>
-              <button class="btn btn-secondary" id="peBulkMoveNextBtn" title="Busca el siguiente disponible y mueve las filas seleccionadas">Siguiente disponible</button>
-            </div>
-          </div>
-        </div>
-      </div>
       ${progress?.breakdown ? `
         <div class="mold-progress-panel" style="margin-bottom:10px;">
           <div style="font-weight:800;">Progreso por partes</div>
@@ -4046,13 +4395,45 @@ async function openMoldEditorView(moldId, moldName) {
                   <td style="display:flex; gap:8px; align-items:center;">
                     ${isDone
                       ? '<span style="color:var(--success); font-weight:800;">Terminado</span>'
-                      : '<button class="btn btn-secondary pe-save-btn">Guardar</button>\n                    <button class="btn btn-secondary pe-next-btn" title="Busca el siguiente día laborable con cupo y mueve esta tarea">Siguiente disponible</button>'}
+                      : '<button class="btn btn-secondary pe-save-btn">Guardar</button>\n                    <button class="btn btn-secondary pe-next-btn" title="Busca el siguiente día laborable con cupo y mueve esta tarea">⏭ Saltar al siguiente hueco</button>'}
                   </td>
                 </tr>
               `;
             }).join('')}
           </tbody>
         </table>
+      </div>
+      <div class="mold-progress-panel" style="margin-top:10px; margin-bottom:10px;">
+        <div style="font-weight:800; margin-bottom:6px;">Selección múltiple por filas</div>
+        <div class="text-muted" style="font-size:0.9rem;">Marca 2+ filas para mostrar acciones masivas (solo pendientes).</div>
+        <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button class="btn btn-secondary" id="peSelectAllRowsBtn">Seleccionar todo</button>
+          <button class="btn btn-secondary" id="peClearAllRowsBtn">Limpiar selección</button>
+          <button class="btn btn-secondary" id="pePushAllNextBtn" title="Empuja todas las filas pendientes al siguiente hueco">⏩ Empujar todas las partes pendientes al siguiente hueco</button>
+          <div class="text-muted">Seleccionadas: <strong id="peBulkSelectedCount">0</strong></div>
+        </div>
+
+        <div style="margin-top:8px;">
+          <label style="display:inline-flex; align-items:center; gap:8px; font-size:0.9rem; color:var(--text-muted);">
+            <input type="checkbox" id="peAllowOverlap" />
+            Permitir compartir día (Ignorar exclusividad, usar solo capacidad)
+          </label>
+        </div>
+
+        <div id="peBulkPanel" style="display:none; margin-top:10px; padding-top:10px; border-top:1px solid var(--border-color);">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+            <div style="min-width: 220px;">
+              <label style="display:block; font-weight:600;">Fecha base</label>
+              <input type="date" id="peBulkMoveDate" value="${escapeHtml(String(defaultBulkDate || ''))}">
+              <div class="text-muted" style="font-size:0.85rem; margin-top:4px;">Para “Siguiente disponible”, se busca desde el día siguiente laborable.</div>
+            </div>
+
+            <div style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+              <button class="btn btn-secondary" id="peBulkMoveToDateBtn" title="Mueve las filas seleccionadas a esta fecha">Mover a fecha</button>
+              <button class="btn btn-secondary" id="peBulkMoveNextBtn" title="Busca el siguiente disponible y mueve las filas seleccionadas">Siguiente disponible</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="response-box" id="moldEditorResponse"></div>
     `;
@@ -4080,11 +4461,12 @@ async function openMoldEditorView(moldId, moldName) {
         if (!newDate || !newMachineName) return;
 
         try {
+          const allowOverlap = !!document.getElementById('peAllowOverlap')?.checked;
           const resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(entryId)}`,
             {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-              body: JSON.stringify({ date: newDate, machineName: newMachineName })
+              body: JSON.stringify({ date: newDate, machineName: newMachineName, allowOverlap })
             }
           );
           const out = await resp.json();
@@ -4115,11 +4497,12 @@ async function openMoldEditorView(moldId, moldName) {
         }
 
         try {
+          const allowOverlap = !!document.getElementById('peAllowOverlap')?.checked;
           const resp = await fetch(`${API_URL}/tasks/plan/entry/${encodeURIComponent(entryId)}/next-available`,
             {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-              body: JSON.stringify({ baseDate, machineName })
+              body: JSON.stringify({ baseDate, machineName, allowOverlap })
             }
           );
           const out = await resp.json();
@@ -4168,9 +4551,9 @@ async function openMoldEditorView(moldId, moldName) {
     });
     refreshBulkUi();
 
-    async function runBulkMove(mode) {
-      const entryIds = getSelectedEntryIds();
-      if (entryIds.length < 2) {
+    async function runBulkMove(mode, opts = {}) {
+      const entryIds = Array.isArray(opts.entryIds) ? opts.entryIds : getSelectedEntryIds();
+      if (entryIds.length < 2 && !opts.allowSingle) {
         displayResponse('moldEditorResponse', { error: 'Selecciona al menos 2 filas para mover en bloque.' }, false);
         return;
       }
@@ -4182,19 +4565,22 @@ async function openMoldEditorView(moldId, moldName) {
         return;
       }
 
-      const ok = window.confirm(
-        mode === 'date'
-          ? `¿Mover ${entryIds.length} fila(s) a la fecha ${date}?\n\nSe omitirán filas terminadas y/o las que no se puedan mover por reglas.`
-          : `¿Mover ${entryIds.length} fila(s) al siguiente disponible?\n\nSe omitirán filas terminadas y/o las que no se puedan mover por reglas.`
-      );
-      if (!ok) return;
+      if (!opts.skipConfirm) {
+        const ok = window.confirm(
+          mode === 'date'
+            ? `¿Mover ${entryIds.length} fila(s) a la fecha ${date}?\n\nSe omitirán filas terminadas y/o las que no se puedan mover por reglas.`
+            : `¿Mover ${entryIds.length} fila(s) al siguiente disponible?\n\nSe omitirán filas terminadas y/o las que no se puedan mover por reglas.`
+        );
+        if (!ok) return;
+      }
 
       displayResponse('moldEditorResponse', { message: 'Reprogramando filas...' }, true);
       try {
+        const allowOverlap = !!document.getElementById('peAllowOverlap')?.checked;
         const resp = await fetch(`${API_URL}/tasks/plan/entries/bulk-move`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-          body: JSON.stringify({ entryIds, mode, date: date || null, baseDate: date || null })
+          body: JSON.stringify({ entryIds, mode, date: date || null, baseDate: date || null, allowOverlap })
         });
         const out = await resp.json().catch(() => ({}));
         displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
@@ -4209,8 +4595,24 @@ async function openMoldEditorView(moldId, moldName) {
 
     const bulkToDateBtn = document.getElementById('peBulkMoveToDateBtn');
     const bulkNextBtn = document.getElementById('peBulkMoveNextBtn');
+    const pushAllNextBtn = document.getElementById('pePushAllNextBtn');
     if (bulkToDateBtn) bulkToDateBtn.onclick = () => runBulkMove('date');
     if (bulkNextBtn) bulkNextBtn.onclick = () => runBulkMove('next');
+    if (pushAllNextBtn) {
+      pushAllNextBtn.onclick = async () => {
+        const pendingIds = Array.from(body.querySelectorAll('input.pe-entry-check'))
+          .filter(cb => !cb.disabled)
+          .map(cb => Number.parseInt(String(cb.value || ''), 10))
+          .filter(n => Number.isFinite(n) && n > 0);
+
+        if (!pendingIds.length) {
+          displayResponse('moldEditorResponse', { error: 'No hay filas pendientes para empujar.' }, false);
+          return;
+        }
+
+        await runBulkMove('next', { entryIds: pendingIds, allowSingle: true, skipConfirm: true });
+      };
+    }
   } catch (e) {
     if (body) body.innerHTML = `<p>Error: ${escapeHtml(String(e))}</p>`;
   }
@@ -5872,6 +6274,8 @@ function setupEventListeners() {
   // Calendario
   const prevMonthBtn = document.getElementById('prev-month-btn'); if (prevMonthBtn) prevMonthBtn.addEventListener('click', () => changeMonth(-1));
   const nextMonthBtn = document.getElementById('next-month-btn'); if (nextMonthBtn) nextMonthBtn.addEventListener('click', () => changeMonth(1));
+  const hideCompletedToggle = document.getElementById('hideCompletedToggle');
+  if (hideCompletedToggle) hideCompletedToggle.addEventListener('change', () => { loadCalendar(); });
   const modalCloseBtn = document.getElementById('modal-close-btn'); if (modalCloseBtn) modalCloseBtn.addEventListener('click', hideModal);
 
   // Datos

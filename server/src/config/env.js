@@ -1,4 +1,8 @@
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+
+// Cargar .env del proyecto server sin depender del cwd.
+dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
 module.exports = {
     port: process.env.PORT || 3000,

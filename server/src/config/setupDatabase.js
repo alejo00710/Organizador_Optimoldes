@@ -124,6 +124,73 @@ async function initializeDatabase() {
             console.warn('⚠️ No se pudo aplicar migración work_logs.planned_hours_snapshot:', e.message);
         }
 
+        // work_logs.planning_id (vínculo de registro al ciclo de planificación activo)
+        try {
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'work_logs'
+                   AND column_name = 'planning_id'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE work_logs ADD COLUMN planning_id BIGINT NULL`);
+                await query(`ALTER TABLE work_logs ADD CONSTRAINT fk_work_logs_planning_id FOREIGN KEY (planning_id) REFERENCES planning_history(id) ON DELETE SET NULL`);
+                try {
+                    await query(`CREATE INDEX idx_work_logs_planning_id ON work_logs (planning_id)`);
+                } catch (_) {}
+                console.log('✅ Migración aplicada: work_logs.planning_id');
+            }
+
+            // Backfill seguro para históricos:
+            // 1) intenta plan vigente por fecha
+            // 2) si no existe, usa el último ciclo PLANNED del molde
+            await query(
+                `UPDATE work_logs wl
+                 SET planning_id = COALESCE(
+                     (
+                         SELECT p.id
+                         FROM planning_history p
+                         WHERE p.mold_id = wl.mold_id
+                           AND p.event_type = 'PLANNED'
+                           AND (p.to_start_date IS NULL OR p.to_start_date <= COALESCE(wl.work_date, wl.recorded_at::date))
+                         ORDER BY p.to_start_date DESC NULLS LAST, p.created_at DESC, p.id DESC
+                         LIMIT 1
+                     ),
+                     (
+                         SELECT p2.id
+                         FROM planning_history p2
+                         WHERE p2.mold_id = wl.mold_id
+                           AND p2.event_type = 'PLANNED'
+                         ORDER BY p2.to_start_date DESC NULLS LAST, p2.created_at DESC, p2.id DESC
+                         LIMIT 1
+                     )
+                 )
+                 WHERE wl.planning_id IS NULL`
+            );
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración work_logs.planning_id:', e.message);
+        }
+
+        // work_logs.is_final_log (cierre manual de parte)
+        try {
+            const colFinal = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'work_logs'
+                   AND column_name = 'is_final_log'`
+            );
+            const hasFinalCol = Number(colFinal?.[0]?.cnt || 0) > 0;
+            if (!hasFinalCol) {
+                await query(`ALTER TABLE work_logs ADD COLUMN is_final_log BOOLEAN NOT NULL DEFAULT false`);
+                console.log('✅ Migración aplicada: work_logs.is_final_log');
+            }
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración work_logs.is_final_log:', e.message);
+        }
+
         // operators.password_hash (para login por operario con contraseña propia)
         try {
             const col = await query(
@@ -180,6 +247,10 @@ async function initializeDatabase() {
         } catch (e) {
             console.warn('⚠️ No se pudo asegurar tabla planner_grid_snapshots:', e.message);
         }
+
+            // Nota: no ejecutar deduplicación masiva de datos en cada arranque.
+            // Esa operación puede generar conflictos de concurrencia cuando hay
+            // múltiples procesos iniciando en paralelo.
     } catch (error) {
         console.error(`❌ Error al ejecutar el script del schema:`, error.message);
         process.exit(1);

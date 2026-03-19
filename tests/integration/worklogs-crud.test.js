@@ -33,6 +33,26 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
             moldId: moldRes.insertId,
             partId: partRes.insertId,
         };
+
+        await query(
+            `INSERT INTO plan_entries (mold_id, part_id, machine_id, date, hours_planned, created_by)
+             VALUES (?, ?, ?, ?, ?, ?),
+                    (?, ?, ?, ?, ?, ?)`,
+            [
+                ids.moldId,
+                ids.partId,
+                ids.machineId,
+                '2026-01-14',
+                3,
+                ctx.userId,
+                ids.moldId,
+                ids.partId,
+                ids.machineId,
+                '2026-01-20',
+                5,
+                ctx.userId,
+            ]
+        );
     });
 
     afterAll(async () => {
@@ -41,6 +61,12 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
             await request(app)
                 .delete(`/api/work_logs/${workLogId}`)
                 .set('Authorization', `Bearer ${ctx.token}`);
+        }
+        if (ids?.moldId && ids?.partId && ids?.machineId) {
+            await query(
+                'DELETE FROM plan_entries WHERE mold_id = ? AND part_id = ? AND machine_id = ?',
+                [ids.moldId, ids.partId, ids.machineId]
+            );
         }
         if (ids?.operatorId) await query('DELETE FROM operators WHERE id = ?', [ids.operatorId]);
         if (ids?.machineId) await query('DELETE FROM machines WHERE id = ?', [ids.machineId]);
@@ -77,6 +103,11 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
             .expect(200);
 
         expect(Array.isArray(res.body)).toBe(true);
+
+        const created = res.body.find((row) => Number(row.id) === Number(workLogId));
+        expect(created).toBeTruthy();
+        expect(Number(created.planned_hours)).toBeCloseTo(8, 2);
+        expect(Number(created.diff_hours)).toBeCloseTo(-5.5, 2);
     });
 
     it('PUT /api/work_logs/:id actualiza horas', async () => {
