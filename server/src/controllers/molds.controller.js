@@ -726,6 +726,24 @@ const getMoldsInProgress = async (req, res, next) => {
                                                               WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
                                                               ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
                                                               LIMIT 1) AS planning_id,
+                                                                                                                         (SELECT ph.created_at
+                                                                                                                            FROM planning_history ph
+                                                                                                                            WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
+                                                                                                                            ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
+                                                                                                                            LIMIT 1) AS current_planning_created_at,
+                                                                                                                         (SELECT ph_next.created_at
+                                                                                                                            FROM planning_history ph_next
+                                                                                                                            WHERE ph_next.mold_id = plan_entries.mold_id
+                                                                                                                                AND ph_next.event_type = 'PLANNED'
+                                                                                                                                AND ph_next.created_at > (
+                                                                                                                                    SELECT ph_current.created_at
+                                                                                                                                    FROM planning_history ph_current
+                                                                                                                                    WHERE ph_current.mold_id = plan_entries.mold_id AND ph_current.event_type = 'PLANNED'
+                                                                                                                                    ORDER BY ph_current.to_start_date DESC NULLS LAST, ph_current.created_at DESC, ph_current.id DESC
+                                                                                                                                    LIMIT 1
+                                                                                                                                )
+                                                                                                                            ORDER BY ph_next.created_at ASC, ph_next.id ASC
+                                                                                                                            LIMIT 1) AS next_planning_created_at,
                                                              COALESCE(
                                                                  (SELECT ph.to_start_date
                                                                   FROM planning_history ph
@@ -742,9 +760,17 @@ const getMoldsInProgress = async (req, res, next) => {
                                                          GROUP BY mold_id
                                                      ),
                                                      plan_pm AS (
-                                                         SELECT mold_id, part_id, machine_id, SUM(hours_planned) AS planned
-                                                         FROM plan_entries
-                                                         GROUP BY mold_id, part_id, machine_id
+                                                                                                                 SELECT pe.mold_id, pe.part_id, pe.machine_id, SUM(pe.hours_planned) AS planned
+                                                                                                                 FROM plan_entries pe
+                                                                                                                 JOIN plan_meta pm ON pm.mold_id = pe.mold_id
+                                                                                                                 WHERE (
+                                                                                                                     pm.current_planning_created_at IS NULL
+                                                                                                                     OR (
+                                                                                                                         pe.created_at >= (pm.current_planning_created_at - interval '30 minutes')
+                                                                                                                         AND (pm.next_planning_created_at IS NULL OR pe.created_at < pm.next_planning_created_at)
+                                                                                                                     )
+                                                                                                                 )
+                                                                                                                 GROUP BY pe.mold_id, pe.part_id, pe.machine_id
                                                      ),
                                                      wl_totals AS (
                                                          SELECT
@@ -889,6 +915,24 @@ const getMoldsCompleted = async (req, res, next) => {
                                                               WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
                                                               ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
                                                               LIMIT 1) AS planning_id,
+                                                                                                                         (SELECT ph.created_at
+                                                                                                                            FROM planning_history ph
+                                                                                                                            WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
+                                                                                                                            ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
+                                                                                                                            LIMIT 1) AS current_planning_created_at,
+                                                                                                                         (SELECT ph_next.created_at
+                                                                                                                            FROM planning_history ph_next
+                                                                                                                            WHERE ph_next.mold_id = plan_entries.mold_id
+                                                                                                                                AND ph_next.event_type = 'PLANNED'
+                                                                                                                                AND ph_next.created_at > (
+                                                                                                                                    SELECT ph_current.created_at
+                                                                                                                                    FROM planning_history ph_current
+                                                                                                                                    WHERE ph_current.mold_id = plan_entries.mold_id AND ph_current.event_type = 'PLANNED'
+                                                                                                                                    ORDER BY ph_current.to_start_date DESC NULLS LAST, ph_current.created_at DESC, ph_current.id DESC
+                                                                                                                                    LIMIT 1
+                                                                                                                                )
+                                                                                                                            ORDER BY ph_next.created_at ASC, ph_next.id ASC
+                                                                                                                            LIMIT 1) AS next_planning_created_at,
                                                              COALESCE(
                                                                  (SELECT ph.to_start_date
                                                                   FROM planning_history ph
@@ -905,9 +949,17 @@ const getMoldsCompleted = async (req, res, next) => {
                                                          GROUP BY mold_id
                                                      ),
                                                      plan_pm AS (
-                                                         SELECT mold_id, part_id, machine_id, SUM(hours_planned) AS planned
-                                                         FROM plan_entries
-                                                         GROUP BY mold_id, part_id, machine_id
+                                                                                                                 SELECT pe.mold_id, pe.part_id, pe.machine_id, SUM(pe.hours_planned) AS planned
+                                                                                                                 FROM plan_entries pe
+                                                                                                                 JOIN plan_meta pm ON pm.mold_id = pe.mold_id
+                                                                                                                 WHERE (
+                                                                                                                     pm.current_planning_created_at IS NULL
+                                                                                                                     OR (
+                                                                                                                         pe.created_at >= (pm.current_planning_created_at - interval '30 minutes')
+                                                                                                                         AND (pm.next_planning_created_at IS NULL OR pe.created_at < pm.next_planning_created_at)
+                                                                                                                     )
+                                                                                                                 )
+                                                                                                                 GROUP BY pe.mold_id, pe.part_id, pe.machine_id
                                                      ),
                                                      wl_totals AS (
                                                          SELECT
