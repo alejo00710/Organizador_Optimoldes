@@ -1,17 +1,36 @@
 const { query } = require('../config/database');
 const { ROLES, OPERATOR_EDIT_DAYS_LIMIT } = require('../utils/constants');
 
-async function getPlannedHoursSnapshot({ moldId, partId, machineId }) {
+async function getPlannedHoursSnapshot({ moldId, partId, machineId, planningId = null }) {
     try {
                 if (!moldId || !partId || !machineId) return null;
-        const rows = await query(
-                        `SELECT SUM(pe2.hours_planned) AS planned_hours
-                         FROM plan_entries pe2
-                         WHERE pe2.mold_id = ?
-                             AND pe2.part_id = ?
-                             AND pe2.machine_id = ?`,
-                        [moldId, partId, machineId]
-        );
+        const pidRaw = planningId != null && String(planningId).trim() !== '' ? Number(planningId) : null;
+        const pid = Number.isFinite(pidRaw) ? pidRaw : null;
+
+        let rows;
+        if (pid == null) {
+            rows = await query(
+                            `SELECT SUM(pe2.hours_planned) AS planned_hours
+                             FROM plan_entries pe2
+                             WHERE pe2.mold_id = ?
+                                 AND pe2.part_id = ?
+                                 AND pe2.machine_id = ?`,
+                            [moldId, partId, machineId]
+            );
+        } else {
+            rows = await query(
+                            `SELECT SUM(pe2.hours_planned) AS planned_hours
+                             FROM plan_entries pe2
+                             WHERE pe2.mold_id = ?
+                                 AND pe2.part_id = ?
+                                 AND pe2.machine_id = ?
+                                 AND CASE
+                                     WHEN ?::int IS NULL THEN pe2.planning_id IS NULL
+                                     ELSE pe2.planning_id = ?::int
+                                 END`,
+                            [moldId, partId, machineId, pid, pid]
+            );
+        }
         const v = rows?.[0]?.planned_hours;
         if (v == null) return null;
         const n = Number(v);
@@ -21,7 +40,7 @@ async function getPlannedHoursSnapshot({ moldId, partId, machineId }) {
     }
 }
 
-async function resolvePlanningIdForWorkLog({ moldId, workDateISO }) {
+async function resolvePlanningIdForWorkLog({ moldId, workDateISO, keepExistingIfNoMatch = false }) {
     try {
         if (!moldId) return null;
         const refDate = workDateISO && /^\d{4}-\d{2}-\d{2}$/.test(String(workDateISO))
@@ -42,6 +61,8 @@ async function resolvePlanningIdForWorkLog({ moldId, workDateISO }) {
             const id = Number(rows[0].id);
             return Number.isFinite(id) ? id : null;
         }
+
+        if (keepExistingIfNoMatch) return null;
 
         // Fallback: si no hay plan con fecha <= work_date (ej. registro anticipado),
         // asociar al último ciclo PLANNED del molde para no perder trazabilidad.
@@ -137,15 +158,16 @@ const createWorkLog = async (req, res, next) => {
                         return res.status(400).json({ error: 'work_date debe ser YYYY-MM-DD' });
                 }
 
+                const planning_id = await resolvePlanningIdForWorkLog({
+                    moldId,
+                    workDateISO: dateStr,
+                });
+
                 const planned_hours_snapshot = await getPlannedHoursSnapshot({
                     moldId,
                     partId,
                     machineId,
-                });
-
-                const planning_id = await resolvePlanningIdForWorkLog({
-                    moldId,
-                    workDateISO: dateStr,
+                    planningId: planning_id,
                 });
 
                 // Insertar
@@ -241,19 +263,20 @@ const getWorkLogs = async (req, res, next) => {
                 const sql = `
             SELECT 
                 wl.*, 
+                to_char(wl.work_date, 'YYYY-MM-DD') AS work_date,
                 m.name as mold_name,
                 mp.name as part_name,
                 ma.name as machine_name,
                 o.name as operator_name,
-                COALESCE(pe.planned_hours, wl.planned_hours_snapshot) AS planned_hours,
-                (wl.hours_worked - COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) AS diff_hours,
+                COALESCE(wl.planned_hours_snapshot, pe.planned_hours) AS planned_hours,
+                (wl.hours_worked - COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) AS diff_hours,
                 CASE
-                    WHEN COALESCE(pe.planned_hours, wl.planned_hours_snapshot) IS NULL OR COALESCE(pe.planned_hours, wl.planned_hours_snapshot) <= 0 THEN NULL
-                    ELSE ROUND(ABS(wl.hours_worked - COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) / COALESCE(pe.planned_hours, wl.planned_hours_snapshot) * 100, 2)
+                    WHEN COALESCE(wl.planned_hours_snapshot, pe.planned_hours) IS NULL OR COALESCE(wl.planned_hours_snapshot, pe.planned_hours) <= 0 THEN NULL
+                    ELSE ROUND(ABS(wl.hours_worked - COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) / COALESCE(wl.planned_hours_snapshot, pe.planned_hours) * 100, 2)
                 END AS deviation_pct,
                 CASE
-                    WHEN COALESCE(pe.planned_hours, wl.planned_hours_snapshot) IS NULL OR COALESCE(pe.planned_hours, wl.planned_hours_snapshot) <= 0 THEN 0
-                    WHEN (ABS(wl.hours_worked - COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) / COALESCE(pe.planned_hours, wl.planned_hours_snapshot)) > 0.05 THEN 1
+                    WHEN COALESCE(wl.planned_hours_snapshot, pe.planned_hours) IS NULL OR COALESCE(wl.planned_hours_snapshot, pe.planned_hours) <= 0 THEN 0
+                    WHEN (ABS(wl.hours_worked - COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) / COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) > 0.05 THEN 1
                     ELSE 0
                 END AS is_alert
             FROM work_logs wl
@@ -267,6 +290,10 @@ const getWorkLogs = async (req, res, next) => {
                 WHERE pe2.mold_id = wl.mold_id
                   AND pe2.part_id = wl.part_id
                   AND pe2.machine_id = wl.machine_id
+                AND (
+                    pe2.planning_id = wl.planning_id
+                    OR (pe2.planning_id IS NULL AND wl.planning_id IS NULL)
+                )
             ) pe ON TRUE
             ${whereClause}
             ORDER BY wl.recorded_at DESC
@@ -381,16 +408,19 @@ const updateWorkLog = async (req, res, next) => {
                 const finalPartId = nextPartId !== undefined ? nextPartId : log.part_id;
                 const finalMachineId = nextMachineId !== undefined ? nextMachineId : log.machine_id;
 
+                                const resolvedPlanningId = await resolvePlanningIdForWorkLog({
+                                    moldId: finalMoldId,
+                                    workDateISO: finalWorkDateISO,
+                                    keepExistingIfNoMatch: true,
+                                });
+                                const nextPlanningId = resolvedPlanningId ?? log.planning_id;
+
                 const planned_hours_snapshot = await getPlannedHoursSnapshot({
                     moldId: finalMoldId,
                     partId: finalPartId,
                     machineId: finalMachineId,
+                    planningId: nextPlanningId,
                 });
-
-                                const nextPlanningId = await resolvePlanningIdForWorkLog({
-                                        moldId: finalMoldId,
-                                        workDateISO: finalWorkDateISO,
-                                });
 
                 const updateSql = `
             UPDATE work_logs

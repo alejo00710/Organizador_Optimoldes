@@ -94,25 +94,70 @@ function buildWorkLogScopeSql({ alias, moldId, planningId, startDate }) {
     };
 }
 
-function buildPlanEntriesScopeSql({ alias, startDate, nextStartDate, planningCreatedAt, nextPlanningCreatedAt }) {
+function buildPlanEntriesScopeSql({ alias, planningId = null, startDate, nextStartDate, planningCreatedAt, nextPlanningCreatedAt }) {
     const a = alias || 'p';
-    if (planningCreatedAt) {
-        // Los plan_entries suelen insertarse segundos antes de registrar planning_history.
-        // Toleramos una ventana corta hacia atrás para no perder el primer bloque del ciclo.
-        if (nextPlanningCreatedAt) {
+    const hasValidNextStart = !!(startDate && nextStartDate && String(nextStartDate) > String(startDate));
+    if (planningId) {
+        const fallbackParts = [];
+        const fallbackParams = [];
+
+        if (planningCreatedAt) {
+            fallbackParts.push(`${a}.created_at >= (?::timestamptz - interval '30 minutes')`);
+            fallbackParams.push(planningCreatedAt);
+            if (nextPlanningCreatedAt) {
+                fallbackParts.push(`${a}.created_at < ?::timestamptz`);
+                fallbackParams.push(nextPlanningCreatedAt);
+            }
+        }
+        if (startDate) {
+            fallbackParts.push(`${a}.date >= ?`);
+            fallbackParams.push(startDate);
+        }
+        if (hasValidNextStart) {
+            fallbackParts.push(`${a}.date < ?`);
+            fallbackParams.push(nextStartDate);
+        }
+
+        if (fallbackParts.length) {
             return {
-                clause: ` AND ${a}.created_at >= (?::timestamptz - interval '30 minutes') AND ${a}.created_at < ?::timestamptz `,
-                params: [planningCreatedAt, nextPlanningCreatedAt],
+                clause: ` AND (${a}.planning_id = ? OR (${a}.planning_id IS NULL AND ${fallbackParts.join(' AND ')})) `,
+                params: [planningId, ...fallbackParams],
             };
         }
+
         return {
-            clause: ` AND ${a}.created_at >= (?::timestamptz - interval '30 minutes') `,
-            params: [planningCreatedAt],
+            clause: ` AND ${a}.planning_id = ? `,
+            params: [planningId],
+        };
+    }
+
+    if (planningCreatedAt) {
+        // Los plan_entries suelen insertarse segundos antes de registrar planning_history.
+        // Combinamos ventana por created_at + límites por fecha del ciclo para no mezclar ciclos.
+        const parts = [`${a}.created_at >= (?::timestamptz - interval '30 minutes')`];
+        const params = [planningCreatedAt];
+
+        if (nextPlanningCreatedAt) {
+            parts.push(`${a}.created_at < ?::timestamptz`);
+            params.push(nextPlanningCreatedAt);
+        }
+        if (startDate) {
+            parts.push(`${a}.date >= ?`);
+            params.push(startDate);
+        }
+        if (hasValidNextStart) {
+            parts.push(`${a}.date < ?`);
+            params.push(nextStartDate);
+        }
+
+        return {
+            clause: ` AND ${parts.join(' AND ')} `,
+            params,
         };
     }
 
     if (!startDate) return { clause: '', params: [] };
-    if (nextStartDate) {
+    if (hasValidNextStart) {
         return {
             clause: ` AND ${a}.date >= ? AND ${a}.date < ? `,
             params: [startDate, nextStartDate],
@@ -132,7 +177,7 @@ async function getProgressPlanningMetaForMold(moldId, { requestedPlanningId = nu
         rows = await query(
             `SELECT
                  id,
-                 to_char(to_start_date, 'YYYY-MM-DD') AS "startDate",
+                 to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "startDate",
                  created_at AS "createdAt"
              FROM planning_history
              WHERE mold_id = ?
@@ -145,16 +190,33 @@ async function getProgressPlanningMetaForMold(moldId, { requestedPlanningId = nu
         rows = await query(
             `SELECT
                  id,
-                 to_char(to_start_date, 'YYYY-MM-DD') AS "startDate",
+                                 to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "startDate",
                  created_at AS "createdAt"
              FROM planning_history
              WHERE mold_id = ?
                AND event_type = 'PLANNED'
-               ${refDate ? "AND (to_start_date IS NULL OR to_start_date <= ?) AND (created_at AT TIME ZONE 'America/Bogota')::date <= ?" : ''}
-             ORDER BY to_start_date DESC NULLS LAST, created_at DESC, id DESC
+                             ${refDate ? "AND (COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) IS NULL OR COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) <= ?) AND (created_at AT TIME ZONE 'America/Bogota')::date <= ? AND EXISTS (SELECT 1 FROM plan_entries pe WHERE pe.mold_id = planning_history.mold_id AND pe.created_at >= (planning_history.created_at - interval '30 minutes') AND pe.date <= ?)" : ''}
+                         ORDER BY COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) DESC NULLS LAST, created_at DESC, id DESC
              LIMIT 1`,
-            refDate ? [moldId, refDate, refDate] : [moldId]
+            refDate ? [moldId, refDate, refDate, refDate] : [moldId]
         );
+
+        // Fallback: si con refDate no encontró ciclo (ej. plan nuevo con startDate futuro),
+        // resolver al último ciclo PLANNED del molde.
+        if ((!rows || !rows.length) && !requestedPlanningId) {
+            rows = await query(
+                `SELECT
+                     id,
+                     to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "startDate",
+                     created_at AS "createdAt"
+                 FROM planning_history
+                 WHERE mold_id = ?
+                   AND event_type = 'PLANNED'
+                 ORDER BY COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) DESC NULLS LAST, created_at DESC, id DESC
+                 LIMIT 1`,
+                [moldId]
+            );
+        }
     }
 
     if (!rows?.length) {
@@ -176,15 +238,16 @@ async function getProgressPlanningMetaForMold(moldId, { requestedPlanningId = nu
     if (planningCreatedAt) {
         const nextRows = await query(
             `SELECT
-                 to_char(to_start_date, 'YYYY-MM-DD') AS "nextStartDate",
+                 to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "nextStartDate",
                  created_at AS "nextCreatedAt"
              FROM planning_history
              WHERE mold_id = ?
                AND event_type = 'PLANNED'
+               AND id <> ?
                AND created_at > ?
              ORDER BY created_at ASC, id ASC
              LIMIT 1`,
-            [moldId, planningCreatedAt]
+            [moldId, planningId, planningCreatedAt]
         );
         nextStartDate = nextRows?.[0]?.nextStartDate || null;
         nextPlanningCreatedAt = nextRows?.[0]?.nextCreatedAt || null;
@@ -292,6 +355,7 @@ async function getMoldProgressBreakdown(moldId, { asOfISO = null, dayISO = null,
     });
     const planScope = buildPlanEntriesScopeSql({
         alias: 'p',
+        planningId: planningMeta.planningId,
         startDate: planningMeta.startDate,
         nextStartDate: planningMeta.nextStartDate,
         planningCreatedAt: planningMeta.planningCreatedAt,
@@ -333,9 +397,10 @@ async function getMoldProgressBreakdown(moldId, { asOfISO = null, dayISO = null,
          ) pp ON pp.part_id = wl.part_id AND pp.machine_id = wl.machine_id
          WHERE wl.mold_id = ?
                      ${wlScope.clause}
-           AND (?::date IS NULL OR COALESCE(wl.work_date, wl.recorded_at::date) <= ?::date)
          GROUP BY wl.part_id, wl.machine_id`,
-                                [moldId, ...planScope.params, moldId, ...wlScope.params, asOfISO, asOfISO]
+                                useDayFilter
+                                 ? [moldId, ...planScope.params, moldId, ...wlScope.params]
+                                    : [moldId, ...planScope.params, moldId, ...wlScope.params]
     );
 
     const actualMap = new Map();
@@ -529,6 +594,7 @@ const getMoldProgress = async (req, res, next) => {
 
         const planScope = buildPlanEntriesScopeSql({
             alias: 'p',
+            planningId: planningMeta.planningId,
             startDate: planningMeta.startDate,
             nextStartDate: planningMeta.nextStartDate,
             planningCreatedAt: planningMeta.planningCreatedAt,
@@ -697,6 +763,171 @@ const getMoldProgress = async (req, res, next) => {
     }
 };
 
+async function listPlannedCycles(asOfISO, { onlyLatestPerMold = false } = {}) {
+    const rows = await query(
+        `SELECT
+             ph.id AS "planningId",
+             ph.mold_id AS "moldId",
+             m.name AS "moldName",
+             to_char(COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date), 'YYYY-MM-DD') AS "startDate",
+             ph.created_at AS "planningCreatedAt",
+             LEAD(ph.created_at) OVER (PARTITION BY ph.mold_id ORDER BY ph.created_at ASC, ph.id ASC) AS "nextPlanningCreatedAt",
+             to_char(
+               LEAD(COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date)) OVER (PARTITION BY ph.mold_id ORDER BY ph.created_at ASC, ph.id ASC),
+               'YYYY-MM-DD'
+             ) AS "nextStartDate"
+         FROM planning_history ph
+         JOIN molds m ON m.id = ph.mold_id
+         WHERE ph.event_type = 'PLANNED'
+           AND m.is_active = TRUE
+                     AND (
+                                ?::date IS NULL
+                                OR COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date) <= ?::date
+                                OR EXISTS (
+                                        SELECT 1
+                                        FROM work_logs wl
+                                        WHERE wl.mold_id = ph.mold_id
+                                            AND wl.planning_id = ph.id
+                                            AND COALESCE(wl.work_date, wl.recorded_at::date) <= ?::date
+                                )
+                     )
+         ORDER BY ph.created_at ASC, ph.id ASC`,
+                [asOfISO || null, asOfISO || null, asOfISO || null]
+    );
+
+    const mapped = (rows || []).map(r => ({
+        planningId: Number(r.planningId),
+        moldId: Number(r.moldId),
+        moldName: r.moldName,
+        startDate: r.startDate || null,
+        nextStartDate: r.nextStartDate || null,
+        planningCreatedAt: r.planningCreatedAt || null,
+        nextPlanningCreatedAt: r.nextPlanningCreatedAt || null,
+    })).filter(r => Number.isFinite(r.moldId) && r.moldId > 0);
+
+    if (!onlyLatestPerMold) return mapped;
+
+    const latestByMold = new Map();
+    for (const r of mapped) {
+        latestByMold.set(r.moldId, {
+            planningId: Number(r.planningId),
+            moldId: r.moldId,
+            moldName: r.moldName,
+            startDate: r.startDate || null,
+            nextStartDate: null,
+            planningCreatedAt: r.planningCreatedAt || null,
+            nextPlanningCreatedAt: null,
+        });
+    }
+    return Array.from(latestByMold.values());
+}
+
+async function getCycleSummary(cycle, todayISO) {
+    const planScope = buildPlanEntriesScopeSql({
+        alias: 'p',
+        planningId: cycle.planningId,
+        startDate: cycle.startDate,
+        nextStartDate: cycle.nextStartDate,
+        planningCreatedAt: cycle.planningCreatedAt,
+        nextPlanningCreatedAt: cycle.nextPlanningCreatedAt,
+    });
+
+    const plannedRows = await query(
+        `SELECT
+             to_char(MIN(p.date), 'YYYY-MM-DD') AS "startDate",
+             to_char(MAX(p.date), 'YYYY-MM-DD') AS "endDate",
+             SUM(p.hours_planned) AS "plannedTotal",
+             SUM(CASE WHEN p.date <= ? THEN p.hours_planned ELSE 0 END) AS "plannedToDate"
+         FROM plan_entries p
+         WHERE p.mold_id = ?
+           ${planScope.clause}`,
+        [todayISO, cycle.moldId, ...planScope.params]
+    );
+    const planned = plannedRows?.[0] || {};
+
+    const wlScope = buildWorkLogScopeSql({
+        alias: 'wl',
+        moldId: cycle.moldId,
+        planningId: cycle.planningId,
+        startDate: cycle.startDate,
+    });
+
+    const actualRows = await query(
+        `WITH plan_pairs AS (
+             SELECT DISTINCT p.part_id, p.machine_id
+             FROM plan_entries p
+             WHERE p.mold_id = ?
+               ${planScope.clause}
+         )
+         SELECT
+             SUM(wl.hours_worked) AS "actualTotal",
+             SUM(CASE WHEN COALESCE(wl.work_date, wl.recorded_at::date) <= ? THEN wl.hours_worked ELSE 0 END) AS "actualToDate",
+             to_char(MAX(COALESCE(wl.work_date, wl.recorded_at::date)), 'YYYY-MM-DD') AS "lastWorkDate"
+         FROM work_logs wl
+         JOIN plan_pairs pp ON pp.part_id = wl.part_id AND pp.machine_id = wl.machine_id
+         WHERE wl.mold_id = ?
+           ${wlScope.clause}`,
+        [cycle.moldId, ...planScope.params, todayISO, cycle.moldId, ...wlScope.params]
+    );
+    const actual = actualRows?.[0] || {};
+
+    const completionRows = await query(
+        `WITH plan_pairs AS (
+             SELECT p.part_id, p.machine_id, SUM(p.hours_planned) AS planned_hours
+             FROM plan_entries p
+             WHERE p.mold_id = ?
+               ${planScope.clause}
+             GROUP BY p.part_id, p.machine_id
+         ),
+         final_pairs AS (
+             SELECT DISTINCT wl.part_id, wl.machine_id
+             FROM work_logs wl
+             WHERE wl.mold_id = ?
+               AND wl.is_final_log = TRUE
+               ${wlScope.clause}
+         )
+         SELECT
+             SUM(CASE WHEN pp.planned_hours > 0 THEN 1 ELSE 0 END) AS planned_pairs,
+             SUM(CASE WHEN pp.planned_hours > 0 AND fp.part_id IS NOT NULL THEN 1 ELSE 0 END) AS closed_pairs
+         FROM plan_pairs pp
+         LEFT JOIN final_pairs fp ON fp.part_id = pp.part_id AND fp.machine_id = pp.machine_id`,
+        [cycle.moldId, ...planScope.params, cycle.moldId, ...wlScope.params]
+    );
+
+    const plannedTotal = Number(planned?.plannedTotal || 0);
+    const plannedToDate = Number(planned?.plannedToDate || 0);
+    const actualTotal = Number(actual?.actualTotal || 0);
+    const actualToDate = Number(actual?.actualToDate || 0);
+    const totalCellsWithPlan = Number(completionRows?.[0]?.planned_pairs || 0);
+    const completedCells = Number(completionRows?.[0]?.closed_pairs || 0);
+
+    return {
+        moldId: cycle.moldId,
+        moldName: cycle.moldName,
+        planningId: cycle.planningId,
+        planning: {
+            planningId: cycle.planningId,
+            startDate: cycle.startDate || null,
+            nextStartDate: cycle.nextStartDate || null,
+        },
+        planWindow: {
+            startDate: planned?.startDate || null,
+            endDate: planned?.endDate || null,
+        },
+        lastWorkDate: actual?.lastWorkDate || null,
+        totals: {
+            plannedTotalHours: round2(plannedTotal),
+            plannedToDateHours: round2(plannedToDate),
+            actualTotalHours: round2(actualTotal),
+            actualToDateHours: round2(actualToDate),
+            varianceToDateHours: round2(actualToDate - plannedToDate),
+            percentComplete: plannedTotal > 0 ? round2((actualTotal / plannedTotal) * 100) : null,
+            totalPartsWithPlan: totalCellsWithPlan,
+            completedParts: completedCells,
+        },
+    };
+}
+
 // GET /api/molds/in-progress
 // Devuelve moldes con plan (>0) que aún no han completado sus horas planificadas
 const getMoldsInProgress = async (req, res, next) => {
@@ -716,169 +947,21 @@ const getMoldsInProgress = async (req, res, next) => {
         if (!Number.isInteger(limit) || limit <= 0) limit = 50;
         if (limit > 200) limit = 200;
 
-                                const rows = await query(
-                                                `WITH
-                                                     plan_meta AS (
-                                                         SELECT
-                                                             mold_id,
-                                                             (SELECT ph.id
-                                                              FROM planning_history ph
-                                                              WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
-                                                              ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
-                                                              LIMIT 1) AS planning_id,
-                                                                                                                         (SELECT ph.created_at
-                                                                                                                            FROM planning_history ph
-                                                                                                                            WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
-                                                                                                                            ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
-                                                                                                                            LIMIT 1) AS current_planning_created_at,
-                                                                                                                         (SELECT ph_next.created_at
-                                                                                                                            FROM planning_history ph_next
-                                                                                                                            WHERE ph_next.mold_id = plan_entries.mold_id
-                                                                                                                                AND ph_next.event_type = 'PLANNED'
-                                                                                                                                AND ph_next.created_at > (
-                                                                                                                                    SELECT ph_current.created_at
-                                                                                                                                    FROM planning_history ph_current
-                                                                                                                                    WHERE ph_current.mold_id = plan_entries.mold_id AND ph_current.event_type = 'PLANNED'
-                                                                                                                                    ORDER BY ph_current.to_start_date DESC NULLS LAST, ph_current.created_at DESC, ph_current.id DESC
-                                                                                                                                    LIMIT 1
-                                                                                                                                )
-                                                                                                                            ORDER BY ph_next.created_at ASC, ph_next.id ASC
-                                                                                                                            LIMIT 1) AS next_planning_created_at,
-                                                             COALESCE(
-                                                                 (SELECT ph.to_start_date
-                                                                  FROM planning_history ph
-                                                                  WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
-                                                                  ORDER BY ph.created_at DESC, ph.id DESC
-                                                                  LIMIT 1),
-                                                                 MIN(date)
-                                                             ) AS start_date_db,
-                                                             to_char(MIN(date), 'YYYY-MM-DD') AS "startDate",
-                                                             to_char(MAX(date), 'YYYY-MM-DD') AS "endDate",
-                                                             SUM(hours_planned) AS "plannedTotal",
-                                                             SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS "plannedToDate"
-                                                         FROM plan_entries
-                                                         GROUP BY mold_id
-                                                     ),
-                                                     plan_pm AS (
-                                                                                                                 SELECT pe.mold_id, pe.part_id, pe.machine_id, SUM(pe.hours_planned) AS planned
-                                                                                                                 FROM plan_entries pe
-                                                                                                                 JOIN plan_meta pm ON pm.mold_id = pe.mold_id
-                                                                                                                 WHERE (
-                                                                                                                     pm.current_planning_created_at IS NULL
-                                                                                                                     OR (
-                                                                                                                         pe.created_at >= (pm.current_planning_created_at - interval '30 minutes')
-                                                                                                                         AND (pm.next_planning_created_at IS NULL OR pe.created_at < pm.next_planning_created_at)
-                                                                                                                     )
-                                                                                                                 )
-                                                                                                                 GROUP BY pe.mold_id, pe.part_id, pe.machine_id
-                                                     ),
-                                                     wl_totals AS (
-                                                         SELECT
-                                                             wl.mold_id,
-                                                             SUM(wl.hours_worked) AS "actualTotal",
-                                                             SUM(CASE WHEN COALESCE(wl.work_date, wl.recorded_at::date) <= ? THEN wl.hours_worked ELSE 0 END) AS "actualToDate"
-                                                         FROM work_logs wl
-                                                         JOIN plan_pm pp ON pp.mold_id = wl.mold_id AND pp.part_id = wl.part_id AND pp.machine_id = wl.machine_id
-                                                         JOIN plan_meta pm ON pm.mold_id = wl.mold_id
-                                                         WHERE (
-                                                             (pm.planning_id IS NOT NULL AND wl.planning_id = pm.planning_id)
-                                                             OR (pm.planning_id IS NOT NULL AND wl.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                             OR (pm.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                         )
-                                                         GROUP BY wl.mold_id
-                                                     ),
-                                                     final_pm AS (
-                                                         SELECT DISTINCT wl.mold_id, wl.part_id, wl.machine_id
-                                                         FROM work_logs wl
-                                                         JOIN plan_pm pp ON pp.mold_id = wl.mold_id AND pp.part_id = wl.part_id AND pp.machine_id = wl.machine_id
-                                                         JOIN plan_meta pm ON pm.mold_id = wl.mold_id
-                                                         WHERE wl.is_final_log = TRUE
-                                                           AND (
-                                                             (pm.planning_id IS NOT NULL AND wl.planning_id = pm.planning_id)
-                                                             OR (pm.planning_id IS NOT NULL AND wl.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                             OR (pm.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                           )
-                                                     ),
-                                                     pm_pairs AS (
-                                                         SELECT
-                                                             p.mold_id,
-                                                             p.part_id,
-                                                             p.machine_id,
-                                                             p.planned,
-                                                             (fp.part_id IS NOT NULL) AS machine_complete
-                                                         FROM plan_pm p
-                                                         LEFT JOIN final_pm fp
-                                                             ON fp.mold_id = p.mold_id AND fp.part_id = p.part_id AND fp.machine_id = p.machine_id
-                                                         WHERE p.planned > 0
-                                                     ),
-                                                     part AS (
-                                                         SELECT mold_id, part_id, BOOL_AND(machine_complete) AS part_complete
-                                                         FROM pm_pairs
-                                                         GROUP BY mold_id, part_id
-                                                     ),
-                                                     pc AS (
-                                                         SELECT
-                                                             mold_id,
-                                                             COUNT(*)::int AS "totalPartsWithPlan",
-                                                             SUM(CASE WHEN part_complete THEN 1 ELSE 0 END)::int AS "completedParts"
-                                                         FROM part
-                                                         GROUP BY mold_id
-                                                     )
-                                                 SELECT
-                                                     mo.id AS "moldId",
-                                                     mo.name AS "moldName",
-                                                     pm."startDate" AS "startDate",
-                                                     pm."endDate" AS "endDate",
-                                                     pm."plannedTotal" AS "plannedTotal",
-                                                     pm."plannedToDate" AS "plannedToDate",
-                                                     wl."actualTotal" AS "actualTotal",
-                                                     wl."actualToDate" AS "actualToDate",
-                                                     pc."totalPartsWithPlan" AS "totalPartsWithPlan",
-                                                     pc."completedParts" AS "completedParts"
-                                                 FROM molds mo
-                                                 JOIN plan_meta pm ON pm.mold_id = mo.id
-                                                 LEFT JOIN wl_totals wl ON wl.mold_id = mo.id
-                                                 LEFT JOIN pc ON pc.mold_id = mo.id
-                                                 WHERE mo.is_active = TRUE
-                                                 ORDER BY (pm."endDate" IS NULL) ASC, pm."endDate" ASC, mo.name ASC`,
-                                                [todayISO, todayISO]
-                                );
+        const cycles = await listPlannedCycles(null, { onlyLatestPerMold: true });
+        const summaries = [];
+        for (const cycle of cycles) {
+            const summary = await getCycleSummary(cycle, todayISO);
+            const totalParts = Number(summary?.totals?.totalPartsWithPlan || 0);
+            const completedParts = Number(summary?.totals?.completedParts || 0);
+            if (!isFiniteNumber(totalParts) || totalParts <= 0) continue;
+            if (isFiniteNumber(completedParts) && completedParts >= totalParts) continue;
+            summaries.push({
+                ...summary,
+                today: todayISO,
+            });
+        }
 
-        const molds = (rows || [])
-            .map(r => {
-                const plannedTotal = Number(r.plannedTotal || 0);
-                const plannedToDate = Number(r.plannedToDate || 0);
-                const actualTotal = Number(r.actualTotal || 0);
-                const actualToDate = Number(r.actualToDate || 0);
-                const varianceToDate = actualToDate - plannedToDate;
-
-                const percentComplete = plannedTotal > 0 ? (actualTotal / plannedTotal) * 100 : null;
-
-                return {
-                    moldId: r.moldId,
-                    moldName: r.moldName,
-                    today: todayISO,
-                    planWindow: { startDate: r.startDate || null, endDate: r.endDate || null },
-                    totals: {
-                        plannedTotalHours: round2(plannedTotal),
-                        plannedToDateHours: round2(plannedToDate),
-                        actualTotalHours: round2(actualTotal),
-                        actualToDateHours: round2(actualToDate),
-                        varianceToDateHours: round2(varianceToDate),
-                        percentComplete: percentComplete == null ? null : round2(percentComplete),
-                        totalPartsWithPlan: Number(r.totalPartsWithPlan || 0),
-                        completedParts: Number(r.completedParts || 0),
-                    },
-                };
-            })
-            // "En curso": tiene pares planificados y al menos uno sigue sin cierre manual (is_final_log)
-            .filter(m => {
-                const totalParts = Number(m?.totals?.totalPartsWithPlan || 0);
-                const completedParts = Number(m?.totals?.completedParts || 0);
-                if (!isFiniteNumber(totalParts) || totalParts <= 0) return false;
-                return !isFiniteNumber(completedParts) || completedParts < totalParts;
-            })
-            .slice(0, limit);
+        const molds = summaries.slice(0, limit);
 
         res.json({ today: todayISO, count: molds.length, molds });
     } catch (error) {
@@ -905,171 +988,22 @@ const getMoldsCompleted = async (req, res, next) => {
         if (!Number.isInteger(limit) || limit <= 0) limit = 50;
         if (limit > 500) limit = 500;
 
-                                const rows = await query(
-                                                `WITH
-                                                     plan_meta AS (
-                                                         SELECT
-                                                             mold_id,
-                                                             (SELECT ph.id
-                                                              FROM planning_history ph
-                                                              WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
-                                                              ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
-                                                              LIMIT 1) AS planning_id,
-                                                                                                                         (SELECT ph.created_at
-                                                                                                                            FROM planning_history ph
-                                                                                                                            WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
-                                                                                                                            ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
-                                                                                                                            LIMIT 1) AS current_planning_created_at,
-                                                                                                                         (SELECT ph_next.created_at
-                                                                                                                            FROM planning_history ph_next
-                                                                                                                            WHERE ph_next.mold_id = plan_entries.mold_id
-                                                                                                                                AND ph_next.event_type = 'PLANNED'
-                                                                                                                                AND ph_next.created_at > (
-                                                                                                                                    SELECT ph_current.created_at
-                                                                                                                                    FROM planning_history ph_current
-                                                                                                                                    WHERE ph_current.mold_id = plan_entries.mold_id AND ph_current.event_type = 'PLANNED'
-                                                                                                                                    ORDER BY ph_current.to_start_date DESC NULLS LAST, ph_current.created_at DESC, ph_current.id DESC
-                                                                                                                                    LIMIT 1
-                                                                                                                                )
-                                                                                                                            ORDER BY ph_next.created_at ASC, ph_next.id ASC
-                                                                                                                            LIMIT 1) AS next_planning_created_at,
-                                                             COALESCE(
-                                                                 (SELECT ph.to_start_date
-                                                                  FROM planning_history ph
-                                                                  WHERE ph.mold_id = plan_entries.mold_id AND ph.event_type = 'PLANNED'
-                                                                  ORDER BY ph.created_at DESC, ph.id DESC
-                                                                  LIMIT 1),
-                                                                 MIN(date)
-                                                             ) AS start_date_db,
-                                                             to_char(MIN(date), 'YYYY-MM-DD') AS "startDate",
-                                                             to_char(MAX(date), 'YYYY-MM-DD') AS "endDate",
-                                                             SUM(hours_planned) AS "plannedTotal",
-                                                             SUM(CASE WHEN date <= ? THEN hours_planned ELSE 0 END) AS "plannedToDate"
-                                                         FROM plan_entries
-                                                         GROUP BY mold_id
-                                                     ),
-                                                     plan_pm AS (
-                                                                                                                 SELECT pe.mold_id, pe.part_id, pe.machine_id, SUM(pe.hours_planned) AS planned
-                                                                                                                 FROM plan_entries pe
-                                                                                                                 JOIN plan_meta pm ON pm.mold_id = pe.mold_id
-                                                                                                                 WHERE (
-                                                                                                                     pm.current_planning_created_at IS NULL
-                                                                                                                     OR (
-                                                                                                                         pe.created_at >= (pm.current_planning_created_at - interval '30 minutes')
-                                                                                                                         AND (pm.next_planning_created_at IS NULL OR pe.created_at < pm.next_planning_created_at)
-                                                                                                                     )
-                                                                                                                 )
-                                                                                                                 GROUP BY pe.mold_id, pe.part_id, pe.machine_id
-                                                     ),
-                                                     wl_totals AS (
-                                                         SELECT
-                                                             wl.mold_id,
-                                                             SUM(wl.hours_worked) AS "actualTotal",
-                                                             SUM(CASE WHEN COALESCE(wl.work_date, wl.recorded_at::date) <= ? THEN wl.hours_worked ELSE 0 END) AS "actualToDate",
-                                                             to_char(MAX(COALESCE(wl.work_date, wl.recorded_at::date)), 'YYYY-MM-DD') AS "lastWorkDate"
-                                                         FROM work_logs wl
-                                                         JOIN plan_pm pp ON pp.mold_id = wl.mold_id AND pp.part_id = wl.part_id AND pp.machine_id = wl.machine_id
-                                                         JOIN plan_meta pm ON pm.mold_id = wl.mold_id
-                                                         WHERE (
-                                                             (pm.planning_id IS NOT NULL AND wl.planning_id = pm.planning_id)
-                                                             OR (pm.planning_id IS NOT NULL AND wl.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                             OR (pm.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                         )
-                                                         GROUP BY wl.mold_id
-                                                     ),
-                                                     final_pm AS (
-                                                         SELECT DISTINCT wl.mold_id, wl.part_id, wl.machine_id
-                                                         FROM work_logs wl
-                                                         JOIN plan_pm pp ON pp.mold_id = wl.mold_id AND pp.part_id = wl.part_id AND pp.machine_id = wl.machine_id
-                                                         JOIN plan_meta pm ON pm.mold_id = wl.mold_id
-                                                         WHERE wl.is_final_log = TRUE
-                                                           AND (
-                                                             (pm.planning_id IS NOT NULL AND wl.planning_id = pm.planning_id)
-                                                             OR (pm.planning_id IS NOT NULL AND wl.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                             OR (pm.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-                                                           )
-                                                     ),
-                                                     pm_pairs AS (
-                                                         SELECT
-                                                             p.mold_id,
-                                                             p.part_id,
-                                                             p.machine_id,
-                                                             p.planned,
-                                                             (fp.part_id IS NOT NULL) AS machine_complete
-                                                         FROM plan_pm p
-                                                         LEFT JOIN final_pm fp
-                                                             ON fp.mold_id = p.mold_id AND fp.part_id = p.part_id AND fp.machine_id = p.machine_id
-                                                         WHERE p.planned > 0
-                                                     ),
-                                                     part AS (
-                                                         SELECT mold_id, part_id, BOOL_AND(machine_complete) AS part_complete
-                                                         FROM pm_pairs
-                                                         GROUP BY mold_id, part_id
-                                                     ),
-                                                     pc AS (
-                                                         SELECT
-                                                             mold_id,
-                                                             COUNT(*)::int AS "totalPartsWithPlan",
-                                                             SUM(CASE WHEN part_complete THEN 1 ELSE 0 END)::int AS "completedParts"
-                                                         FROM part
-                                                         GROUP BY mold_id
-                                                     )
-                                                 SELECT
-                                                     mo.id AS "moldId",
-                                                     mo.name AS "moldName",
-                                                     pm."startDate" AS "startDate",
-                                                     pm."endDate" AS "endDate",
-                                                     pm."plannedTotal" AS "plannedTotal",
-                                                     pm."plannedToDate" AS "plannedToDate",
-                                                     wl."actualTotal" AS "actualTotal",
-                                                     wl."actualToDate" AS "actualToDate",
-                                                     wl."lastWorkDate" AS "lastWorkDate",
-                                                     pc."totalPartsWithPlan" AS "totalPartsWithPlan",
-                                                     pc."completedParts" AS "completedParts"
-                                                 FROM molds mo
-                                                 JOIN plan_meta pm ON pm.mold_id = mo.id
-                                                 LEFT JOIN wl_totals wl ON wl.mold_id = mo.id
-                                                 LEFT JOIN pc ON pc.mold_id = mo.id
-                                                 WHERE mo.is_active = TRUE
-                                                 ORDER BY (wl."lastWorkDate" IS NULL) ASC, wl."lastWorkDate" DESC, mo.name ASC`,
-                                                [todayISO, todayISO]
-                                );
+        const cycles = await listPlannedCycles(null, { onlyLatestPerMold: false });
+        let molds = [];
+        for (const cycle of cycles) {
+            const summary = await getCycleSummary(cycle, todayISO);
+            const totalParts = Number(summary?.totals?.totalPartsWithPlan || 0);
+            const completedParts = Number(summary?.totals?.completedParts || 0);
+            if (!isFiniteNumber(totalParts) || totalParts <= 0) continue;
+            if (!(isFiniteNumber(completedParts) && completedParts >= totalParts)) continue;
+            molds.push({
+                ...summary,
+                today: todayISO,
+            });
+        }
 
-        let molds = (rows || [])
-            .map(r => {
-                const plannedTotal = Number(r.plannedTotal || 0);
-                const plannedToDate = Number(r.plannedToDate || 0);
-                const actualTotal = Number(r.actualTotal || 0);
-                const actualToDate = Number(r.actualToDate || 0);
-                const varianceToDate = actualToDate - plannedToDate;
-
-                const percentComplete = plannedTotal > 0 ? (actualTotal / plannedTotal) * 100 : null;
-
-                return {
-                    moldId: r.moldId,
-                    moldName: r.moldName,
-                    today: todayISO,
-                    planWindow: { startDate: r.startDate || null, endDate: r.endDate || null },
-                    lastWorkDate: r.lastWorkDate || null,
-                    totals: {
-                        plannedTotalHours: round2(plannedTotal),
-                        plannedToDateHours: round2(plannedToDate),
-                        actualTotalHours: round2(actualTotal),
-                        actualToDateHours: round2(actualToDate),
-                        varianceToDateHours: round2(varianceToDate),
-                        percentComplete: percentComplete == null ? null : round2(percentComplete),
-                        totalPartsWithPlan: Number(r.totalPartsWithPlan || 0),
-                        completedParts: Number(r.completedParts || 0),
-                    },
-                };
-            })
-            // "Terminados": todos los pares del plan tienen cierre manual (is_final_log)
-            .filter(m => {
-                const totalParts = Number(m?.totals?.totalPartsWithPlan || 0);
-                const completedParts = Number(m?.totals?.completedParts || 0);
-                if (!isFiniteNumber(totalParts) || totalParts <= 0) return false;
-                return isFiniteNumber(completedParts) && completedParts >= totalParts;
-            })
+        molds = molds
+            .sort((a, b) => String(b?.lastWorkDate || '').localeCompare(String(a?.lastWorkDate || '')))
             .slice(0, limit);
 
         // Filtro opcional por mes/año (historial por mes)

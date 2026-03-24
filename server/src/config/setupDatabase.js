@@ -173,6 +173,52 @@ async function initializeDatabase() {
             console.warn('⚠️ No se pudo aplicar migración work_logs.planning_id:', e.message);
         }
 
+        // plan_entries.planning_id (vínculo del plan diario al ciclo de planificación)
+        try {
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'plan_entries'
+                   AND column_name = 'planning_id'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE plan_entries ADD COLUMN planning_id BIGINT NULL`);
+                await query(`ALTER TABLE plan_entries ADD CONSTRAINT fk_plan_entries_planning_id FOREIGN KEY (planning_id) REFERENCES planning_history(id) ON DELETE SET NULL`);
+                try {
+                    await query(`CREATE INDEX idx_plan_entries_planning_id ON plan_entries (planning_id)`);
+                } catch (_) {}
+                console.log('✅ Migración aplicada: plan_entries.planning_id');
+            }
+
+            await query(
+                `UPDATE plan_entries pe
+                 SET planning_id = COALESCE(
+                     (
+                         SELECT ph.id
+                         FROM planning_history ph
+                         WHERE ph.mold_id = pe.mold_id
+                           AND ph.event_type = 'PLANNED'
+                           AND ph.created_at <= pe.created_at
+                         ORDER BY ph.created_at DESC, ph.id DESC
+                         LIMIT 1
+                     ),
+                     (
+                         SELECT ph2.id
+                         FROM planning_history ph2
+                         WHERE ph2.mold_id = pe.mold_id
+                           AND ph2.event_type = 'PLANNED'
+                         ORDER BY ph2.created_at ASC, ph2.id ASC
+                         LIMIT 1
+                     )
+                 )
+                 WHERE pe.planning_id IS NULL`
+            );
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración plan_entries.planning_id:', e.message);
+        }
+
         // work_logs.is_final_log (cierre manual de parte)
         try {
             const colFinal = await query(

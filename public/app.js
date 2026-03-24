@@ -1450,8 +1450,8 @@ function renderMoldPartsProgressList(breakdown) {
                 ${machines.map(m => {
                   const mPlan = Number(m?.plannedHours || 0);
                   const mReal = Number(m?.actualHours || 0);
-                  const mPct = clampPct(m?.percentComplete == null ? (m?.isComplete ? 100 : 0) : m.percentComplete);
                   const done = !!m?.isComplete;
+                  const mPct = done ? 100 : clampPct(m?.percentComplete == null ? 0 : m.percentComplete);
                   return `
                     <div class="pm-progress-item ${done ? 'done' : 'pending'}">
                       <div class="pm-head">
@@ -1643,7 +1643,8 @@ async function renderInProgressMoldList() {
       return;
     }
 
-    container.innerHTML = molds.map(m => `<div class="mold-progress-panel">${buildMoldProgressContent(m, m?.moldName)}</div>`).join('');
+    container.innerHTML = molds.map(m => buildMoldProgressPanelWithToggle(m, 'in-progress')).join('');
+    await wireMoldDetailToggles(container);
   } catch (_) {
     container.innerHTML = '<div style="color:var(--danger)">Error de conexión cargando moldes en curso</div>';
   }
@@ -1651,9 +1652,10 @@ async function renderInProgressMoldList() {
 
 function buildMoldProgressPanelWithToggle(m, listKind) {
   const moldId = m?.moldId;
-  const key = `${String(listKind || 'list')}:${String(moldId ?? '')}`;
+  const planningId = Number(m?.planning?.planningId || m?.planningId || 0) || null;
+  const key = `${String(listKind || 'list')}:${String(moldId ?? '')}:${String(planningId ?? '')}`;
   return `
-    <div class="mold-progress-panel" data-mold-panel="${escapeHtml(key)}" data-mold-id="${escapeHtml(String(moldId ?? ''))}">
+    <div class="mold-progress-panel" data-mold-panel="${escapeHtml(key)}" data-mold-id="${escapeHtml(String(moldId ?? ''))}" data-planning-id="${escapeHtml(String(planningId ?? ''))}">
       ${buildMoldProgressContent(m, m?.moldName, { listKind })}
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
         <button class="btn btn-secondary" data-toggle-mold-detail="${escapeHtml(key)}">Detalle (partes/máquinas)</button>
@@ -1685,6 +1687,8 @@ async function wireMoldDetailToggles(container) {
       const panel = container.querySelector(`[data-mold-panel="${safeCssEscape(key)}"]`);
       if (!panel) return;
       const moldId = panel.getAttribute('data-mold-id');
+      const planningIdRaw = panel.getAttribute('data-planning-id');
+      const planningId = planningIdRaw ? Number(planningIdRaw) : null;
       const detail = panel.querySelector(`[data-mold-detail="${safeCssEscape(key)}"]`);
       if (!detail) return;
 
@@ -1703,7 +1707,7 @@ async function wireMoldDetailToggles(container) {
       detail.style.display = 'block';
       detail.innerHTML = '<div style="color:var(--text-muted)">Cargando detalle...</div>';
       try {
-        const progress = await fetchMoldProgressDetail(moldId);
+        const progress = await fetchMoldProgressDetail(moldId, { planningId });
         if (!progress || !progress.breakdown) {
           detail.innerHTML = '<div style="color:var(--text-muted)">(Sin detalle disponible)</div>';
           detail.setAttribute('data-loaded', '1');
@@ -3832,6 +3836,14 @@ let calendarHolidaysCache = {}; // { 'YYYY-MM-DD': 'Nombre' }
 let calendarWorkingOverridesCache = {}; // { 'YYYY-MM-DD': true|false }
 let calendarCompletedMoldIdsCache = new Set();
 
+function makeMoldCycleKey(moldId, planningId) {
+  const mid = Number(moldId);
+  const pid = Number(planningId);
+  if (!Number.isFinite(mid) || mid <= 0) return '';
+  if (Number.isFinite(pid) && pid > 0) return `${mid}:${pid}`;
+  return `${mid}:`;
+}
+
 async function refreshCompletedMoldIdsCache() {
   const qs = new URLSearchParams();
   qs.set('limit', '500');
@@ -3847,8 +3859,14 @@ async function refreshCompletedMoldIdsCache() {
   const molds = Array.isArray(data?.molds) ? data.molds : [];
   calendarCompletedMoldIdsCache = new Set(
     molds
-      .map(m => Number(m?.moldId))
-      .filter(id => Number.isFinite(id) && id > 0)
+      .map(m => {
+        const mid = Number(m?.moldId);
+        const pid = Number(m?.planningId);
+        if (!Number.isFinite(mid) || mid <= 0) return null;
+        if (!Number.isFinite(pid) || pid <= 0) return String(mid);
+        return `${mid}:${pid}`;
+      })
+      .filter(Boolean)
   );
 }
 
@@ -3860,7 +3878,16 @@ function filterCalendarEventsHideCompleted(events, hideCompleted) {
   Object.keys(source).forEach((dayKey) => {
     const day = source[dayKey] || {};
     const tasks = Array.isArray(day.tasks) ? day.tasks : [];
-    const visibleTasks = tasks.filter(t => !calendarCompletedMoldIdsCache.has(Number(t?.moldId)));
+    const visibleTasks = tasks.filter(t => {
+      const mid = Number(t?.moldId);
+      const pid = Number(t?.planningId);
+      if (!Number.isFinite(mid) || mid <= 0) return true;
+      if (Number.isFinite(pid) && pid > 0) {
+        if (calendarCompletedMoldIdsCache.has(`${mid}:${pid}`)) return false;
+      }
+      if (calendarCompletedMoldIdsCache.has(String(mid))) return false;
+      return true;
+    });
     if (!visibleTasks.length) return;
 
     const machineUsage = {};
@@ -3897,6 +3924,9 @@ async function fetchMoldProgressDetail(moldId, opts = {}) {
   qs.set('includeParts', '1');
   if (opts?.asOf && /^\d{4}-\d{2}-\d{2}$/.test(String(opts.asOf))) qs.set('asOf', String(opts.asOf));
   if (opts?.day && /^\d{4}-\d{2}-\d{2}$/.test(String(opts.day))) qs.set('day', String(opts.day));
+  if (opts?.planningId != null && Number.isFinite(Number(opts.planningId)) && Number(opts.planningId) > 0) {
+    qs.set('planning_id', String(Number(opts.planningId)));
+  }
 
   const res = await fetch(`${API_URL}/molds/${encodeURIComponent(String(id))}/progress?${qs.toString()}`, {
     headers: { 'Authorization': `Bearer ${authToken}` },
@@ -4057,14 +4087,15 @@ function renderDayDetailsView(dateISO, events, holiday) {
     // Agrupar por molde
     const byMold = new Map();
     for (const t of events.tasks) {
-      const moldKey = String(t.moldId ?? t.mold ?? '');
-      if (!byMold.has(moldKey)) byMold.set(moldKey, { moldId: t.moldId, moldName: t.mold, isPriority: false, tasks: [] });
+      const moldKey = `${String(t.moldId ?? t.mold ?? '')}:${String(t.planningId ?? '')}`;
+      if (!byMold.has(moldKey)) byMold.set(moldKey, { moldId: t.moldId, planningId: t.planningId != null ? Number(t.planningId) : null, moldName: t.mold, isPriority: false, tasks: [] });
       if (t && t.isPriority) byMold.get(moldKey).isPriority = true;
       byMold.get(moldKey).tasks.push(t);
     }
 
     for (const grp of byMold.values()) {
-      const moldIdAttr = grp.moldId != null ? ` data-mold-state-for="${escapeHtml(String(grp.moldId))}"` : '';
+      const moldStateKey = grp.moldId != null ? `${String(grp.moldId)}:${String(grp.planningId ?? '')}` : '';
+      const moldIdAttr = moldStateKey ? ` data-mold-state-for="${escapeHtml(moldStateKey)}"` : '';
       const priorityBadge = grp.isPriority
         ? '<span style="color:#b76e00; font-weight:800;">★ Prioridad</span>'
         : '';
@@ -4095,7 +4126,7 @@ function renderDayDetailsView(dateISO, events, holiday) {
             </li>`;
           }).join('')}
         </ul>
-        ${grp.moldId ? `<div data-mold-progress-for="${escapeHtml(String(grp.moldId))}" style="margin-top:10px;">Cargando progreso...</div>` : ''}
+        ${grp.moldId ? `<div data-mold-progress-for="${escapeHtml(String(grp.moldId))}" data-mold-planning-for="${escapeHtml(String(grp.planningId ?? ''))}" style="margin-top:10px;">Cargando progreso...</div>` : ''}
       `;
     }
   } else {
@@ -4234,11 +4265,13 @@ function renderDayDetailsView(dateISO, events, holiday) {
 
     await Promise.allSettled(nodes.map(async (el) => {
       const moldId = el.getAttribute('data-mold-progress-for');
+      const planningRaw = el.getAttribute('data-mold-planning-for');
+      const planningId = planningRaw ? Number(planningRaw) : null;
       if (!moldId) return;
 
       try {
-        const progress = await fetchMoldProgressDetail(moldId, { asOf: dateStr, day: dateStr });
-        const overallProgress = await fetchMoldProgressDetail(moldId, { asOf: dateStr });
+        const progress = await fetchMoldProgressDetail(moldId, { asOf: dateStr, day: dateStr, planningId });
+        const overallProgress = await fetchMoldProgressDetail(moldId, { asOf: dateStr, planningId });
         if (!progress || !progress.breakdown) {
           el.innerHTML = '<div style="color:var(--text-muted)">(Sin progreso disponible)</div>';
           return;
@@ -4249,14 +4282,20 @@ function renderDayDetailsView(dateISO, events, holiday) {
         const plannedTotal = Number(overallProgress?.totals?.plannedTotalHours ?? 0);
         const actualTotal = Number(overallProgress?.totals?.actualTotalHours ?? 0);
         const isDone = plannedTotal > 0 && actualTotal >= (plannedTotal - 0.01);
-        const stateNode = document.querySelector(`#modal-body [data-mold-state-for="${String(moldId)}"]`);
+        const stateKey = `${String(moldId)}:${String(planningId ?? '')}`;
+        const stateNode = document.querySelector(`#modal-body [data-mold-state-for="${String(stateKey)}"]`);
         if (stateNode) {
           stateNode.textContent = isDone ? '(Estado: Terminado)' : '(Estado: Pendiente)';
           stateNode.style.color = isDone ? 'var(--success)' : 'var(--warning)';
           stateNode.style.fontWeight = '700';
         }
 
-        const pct = progress?.totals?.percentComplete;
+        const completedCells = Number(progress?.totals?.completedCells);
+        const totalCells = Number(progress?.totals?.totalCellsWithPlan);
+        const pctByCells = (Number.isFinite(completedCells) && Number.isFinite(totalCells) && totalCells > 0)
+          ? (completedCells / totalCells) * 100
+          : null;
+        const pct = pctByCells == null ? progress?.totals?.percentComplete : pctByCells;
         const planned = progress?.totals?.plannedTotalHours;
         const actual = progress?.totals?.actualTotalHours;
         el.innerHTML = `

@@ -43,6 +43,7 @@ const getMonthView = async (req, res, next) => {
             SELECT 
                 to_char(p.date, 'YYYY-MM-DD') AS date_str,
                 p.id AS entry_id,
+                p.planning_id,
                 p.hours_planned,
                 p.is_priority,
                 m.id AS machine_id,
@@ -155,6 +156,7 @@ const getMonthView = async (req, res, next) => {
             eventsByDay[day].tasks.push({
                 entryId: row.entry_id,
                 moldId: row.mold_id,
+                planningId: row.planning_id != null ? Number(row.planning_id) : null,
                 machineId: row.machine_id,
                 partId: row.part_id,
                 machine: row.machine_name,

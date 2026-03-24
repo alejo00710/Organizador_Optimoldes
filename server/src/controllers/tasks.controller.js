@@ -264,7 +264,7 @@ async function insertPlanningHistoryEvent({
   createdBy = null,
 }) {
   if (!mold_id || !eventType) return;
-  await query(
+  const rows = await query(
     `INSERT INTO planning_history (
        mold_id,
        event_type,
@@ -274,7 +274,8 @@ async function insertPlanningHistoryEvent({
        to_end_date,
        note,
        created_by
-     ) VALUES (?,?,?,?,?,?,?,?)`,
+     ) VALUES (?,?,?,?,?,?,?,?)
+     RETURNING id`,
     [
       mold_id,
       String(eventType).trim().toUpperCase(),
@@ -286,6 +287,8 @@ async function insertPlanningHistoryEvent({
       createdBy || null,
     ]
   );
+  const insertedId = Number(rows?.[0]?.id || 0);
+  return Number.isFinite(insertedId) && insertedId > 0 ? insertedId : null;
 }
 
 async function logMoldRangeChange({ mold_id, eventType, createdBy = null, note = null, beforeRange = null, afterRange = null }) {
@@ -305,13 +308,13 @@ async function logMoldRangeChange({ mold_id, eventType, createdBy = null, note =
 /* =========================================
    Primitivas de Scheduling
    ========================================= */
-async function insertEntry({ mold_id, part_id, machine_id, dateISO, hours, createdBy, isPriority = false }) {
+async function insertEntry({ mold_id, planning_id = null, part_id, machine_id, dateISO, hours, createdBy, isPriority = false }) {
   const hrs = round025(hours);
   if (createdBy == null) throw new Error('created_by requerido (usuario no normalizado)');
   await query(
-    `INSERT INTO plan_entries (mold_id, part_id, machine_id, date, hours_planned, is_priority, created_by)
-     VALUES (?,?,?,?,?,?,?)`,
-    [mold_id, part_id, machine_id, dateISO, hrs, isPriority ? 1 : 0, createdBy]
+    `INSERT INTO plan_entries (mold_id, planning_id, part_id, machine_id, date, hours_planned, is_priority, created_by)
+     VALUES (?,?,?,?,?,?,?,?)`,
+    [mold_id, planning_id, part_id, machine_id, dateISO, hrs, isPriority ? 1 : 0, createdBy]
   );
 }
 
@@ -351,6 +354,7 @@ async function getDayUsageExcludingEntry(machine_id, dateISO, excludeEntryId) {
 
 async function isMoldCompletedByCurrentPlan(mold_id) {
   const planningMeta = await getActivePlanningMetaForMold(mold_id);
+  const activePlanningId = planningMeta.planningId || null;
   const wlScope = buildWorkLogScopeSql({
     alias: 'wl',
     mold_id,
@@ -362,8 +366,12 @@ async function isMoldCompletedByCurrentPlan(mold_id) {
     `SELECT part_id, machine_id, SUM(hours_planned) AS planned_hours
      FROM plan_entries
      WHERE mold_id = ?
+       AND (
+         planning_id = ?
+         OR (?::bigint IS NULL AND planning_id IS NULL)
+       )
      GROUP BY part_id, machine_id`,
-    [mold_id]
+    [mold_id, activePlanningId, activePlanningId]
   );
 
   if (!plannedPairs.length) return false;
@@ -537,7 +545,7 @@ function normalizeTasksQueueByPart(tasksQueue) {
 }
 
 // Coloca un bloque sin mezclar; puede compartir SOLO el último día de un bloque anterior si hay capacidad
-async function placeBlockNoPreempt({ mold_id, machine_id, capPerDay, baseDateISO, tasksQueue, createdBy, holidaySet, overrideMap, allowShareLastDay = true, isPriority = false, completionCache = null, strictNoSkip = false, strictGlobalUniqueDay = false, allowOverlap = false }) {
+async function placeBlockNoPreempt({ mold_id, planning_id = null, machine_id, capPerDay, baseDateISO, tasksQueue, createdBy, holidaySet, overrideMap, allowShareLastDay = true, isPriority = false, completionCache = null, strictNoSkip = false, strictGlobalUniqueDay = false, allowOverlap = false }) {
   let cursor = parseLocalISO(baseDateISO);
   while (!isWorkingDayLocal(cursor, holidaySet, overrideMap)) cursor = addDays(cursor, 1);
 
@@ -609,7 +617,7 @@ async function placeBlockNoPreempt({ mold_id, machine_id, capPerDay, baseDateISO
       const item = queue[0];
       const alloc = round025(Math.min(capLeft, item.hours));
       if (alloc > 0) {
-        await insertEntry({ mold_id, part_id: item.part_id, machine_id, dateISO, hours: alloc, createdBy, isPriority });
+        await insertEntry({ mold_id, planning_id, part_id: item.part_id, machine_id, dateISO, hours: alloc, createdBy, isPriority });
         item.hours = round025(item.hours - alloc);
         capLeft = round025(capLeft - alloc);
         plannedToday = true;
@@ -756,14 +764,60 @@ exports.planBlock = async (req, res, next) => {
 
     const normalizedMoldName = toStr(moldName);
     const existingMoldId = await getMoldIdByName(normalizedMoldName);
+    console.info('[planBlock] endpoint=/api/tasks/plan/block mold=', normalizedMoldName, 'existingMoldId=', existingMoldId || null);
     if (existingMoldId && await moldHasActivePlan(existingMoldId)) {
-      return res.status(409).json({
-        error: `El molde "${normalizedMoldName}" ya tiene planificación pendiente/activa. Para cambiarla use Editar/Reprogramar, no crear una nueva.`
+      const planningMeta = await getActivePlanningMetaForMold(existingMoldId);
+      const wlScope = buildWorkLogScopeSql({
+        alias: 'wl',
+        mold_id: existingMoldId,
+        planningId: planningMeta.planningId,
+        startDate: planningMeta.startDate,
       });
+
+      const plannedPairs = await query(
+        `SELECT part_id, machine_id
+         FROM plan_entries
+         WHERE mold_id = ?
+           AND (?::bigint IS NULL OR planning_id = ?::bigint)
+         GROUP BY part_id, machine_id
+         HAVING SUM(hours_planned) > 0`,
+        [existingMoldId, planningMeta.planningId, planningMeta.planningId]
+      );
+
+      const finalLogPairs = await query(
+        `SELECT DISTINCT wl.part_id, wl.machine_id
+         FROM work_logs wl
+         WHERE wl.mold_id = ?
+           AND wl.is_final_log = TRUE
+           ${wlScope.clause}`,
+        [existingMoldId, ...wlScope.params]
+      );
+
+      const finalSet = new Set(finalLogPairs.map(r => `${String(r.part_id)}:${String(r.machine_id)}`));
+      const cycleIsComplete = plannedPairs.length > 0 && plannedPairs.every(p => finalSet.has(`${String(p.part_id)}:${String(p.machine_id)}`));
+      console.info('[planBlock] active-plan-check moldId=', existingMoldId, 'planningId=', planningMeta.planningId || null, 'plannedPairs=', plannedPairs.length, 'finalPairs=', finalLogPairs.length, 'cycleIsComplete=', cycleIsComplete);
+
+      if (!cycleIsComplete) {
+        console.warn('[planBlock] blocked-409 moldId=', existingMoldId, 'reason=active-cycle-incomplete');
+        return res.status(409).json({
+          error: `El molde "${normalizedMoldName}" ya tiene planificación pendiente/activa. Para cambiarla use Editar/Reprogramar, no crear una nueva.`
+        });
+      }
     }
 
     const mold_id = existingMoldId || await getOrCreateMoldId(normalizedMoldName);
     const beforeRange = await getMoldPlanRange(mold_id);
+    const planning_id = await insertPlanningHistoryEvent({
+      mold_id,
+      eventType: 'PLANNED',
+      fromRange: beforeRange,
+      toRange: {
+        startDate: localISO(startLocal),
+        endDate: null,
+      },
+      note: `Planificación normal desde ${localISO(startLocal)}`,
+      createdBy,
+    });
 
     // Validación estricta del payload (no ignorar filas inválidas)
     for (let i = 0; i < tasks.length; i++) {
@@ -867,6 +921,7 @@ exports.planBlock = async (req, res, next) => {
 
       const lastDay = await placeBlockNoPreempt({
         mold_id,
+        planning_id,
         machine_id,
         capPerDay: cap,
         baseDateISO: localISO(startLocal),
@@ -892,13 +947,22 @@ exports.planBlock = async (req, res, next) => {
       console.warn('[planner snapshot] no se pudo guardar (planBlock):', e?.message || e);
     }
 
-    await logMoldRangeChange({
-      mold_id,
-      eventType: 'PLANNED',
-      createdBy,
-      note: `Planificación normal desde ${localISO(startLocal)}`,
-      beforeRange,
-    });
+    const cycleStartDate = results.length
+      ? results.map(r => String(r.startDate || '')).filter(Boolean).sort((a, b) => a.localeCompare(b))[0]
+      : localISO(startLocal);
+    const cycleEndDate = results.length
+      ? results.map(r => String(r.endDate || '')).filter(Boolean).sort((a, b) => a.localeCompare(b)).slice(-1)[0]
+      : localISO(startLocal);
+
+    if (planning_id) {
+      await query(
+        `UPDATE planning_history
+         SET to_start_date = COALESCE(to_start_date, ?),
+             to_end_date = ?
+         WHERE id = ?`,
+        [cycleStartDate || null, cycleEndDate || null, planning_id]
+      );
+    }
 
     res.status(201).json({ message: 'Plan en bloque creado (no mezcla)', results });
   } catch (e) { next(e); }
@@ -915,44 +979,49 @@ exports.listPlannedMolds = async (req, res, next) => {
     const toISO = to && isoRe.test(to) ? to : null;
 
     const sql = `
-      WITH plan_all AS (
+      WITH active_planning AS (
+        SELECT DISTINCT ON (ph.mold_id)
+          ph.mold_id,
+          ph.id AS planning_id
+        FROM planning_history ph
+        WHERE ph.event_type = 'PLANNED'
+        ORDER BY ph.mold_id, ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
+      ),
+      plan_all AS (
         SELECT
           pe.mold_id,
           to_char(MIN(pe.date), 'YYYY-MM-DD') AS "startDate",
           to_char(MAX(pe.date), 'YYYY-MM-DD') AS "endDate",
           SUM(pe.hours_planned) AS "plannedTotal"
         FROM plan_entries pe
+        JOIN active_planning ap
+          ON ap.mold_id = pe.mold_id
+         AND ap.planning_id = pe.planning_id
         GROUP BY pe.mold_id
       ),
       plan_pairs AS (
         SELECT
-          mold_id,
-          part_id,
-          machine_id,
-          SUM(hours_planned) AS planned_hours
-        FROM plan_entries
-        GROUP BY mold_id, part_id, machine_id
+          pe.mold_id,
+          pe.part_id,
+          pe.machine_id,
+          SUM(pe.hours_planned) AS planned_hours
+        FROM plan_entries pe
+        JOIN active_planning ap
+          ON ap.mold_id = pe.mold_id
+         AND ap.planning_id = pe.planning_id
+        GROUP BY pe.mold_id, pe.part_id, pe.machine_id
       ),
       plan_meta AS (
         SELECT
-          pe.mold_id,
-          (SELECT ph.id
-             FROM planning_history ph
-            WHERE ph.mold_id = pe.mold_id
-              AND ph.event_type = 'PLANNED'
-            ORDER BY ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
-            LIMIT 1) AS planning_id,
+          pa.mold_id,
+          ap.planning_id,
           COALESCE(
-            (SELECT ph.to_start_date
-               FROM planning_history ph
-              WHERE ph.mold_id = pe.mold_id
-                AND ph.event_type = 'PLANNED'
-              ORDER BY ph.created_at DESC, ph.id DESC
-              LIMIT 1),
-            MIN(pe.date)
+            ph.to_start_date,
+            to_date(pa."startDate", 'YYYY-MM-DD')
           ) AS start_date_db
-        FROM plan_entries pe
-        GROUP BY pe.mold_id
+        FROM plan_all pa
+        JOIN active_planning ap ON ap.mold_id = pa.mold_id
+        LEFT JOIN planning_history ph ON ph.id = ap.planning_id
       ),
       final_pairs AS (
         SELECT
@@ -960,17 +1029,13 @@ exports.listPlannedMolds = async (req, res, next) => {
           pp.part_id,
           pp.machine_id
         FROM plan_pairs pp
-        LEFT JOIN plan_meta pm ON pm.mold_id = pp.mold_id
+        JOIN active_planning ap ON ap.mold_id = pp.mold_id
         JOIN work_logs wl
           ON wl.mold_id = pp.mold_id
+         AND wl.planning_id = ap.planning_id
          AND wl.part_id = pp.part_id
          AND wl.machine_id = pp.machine_id
          AND wl.is_final_log = TRUE
-         AND (
-           (pm.planning_id IS NOT NULL AND wl.planning_id = pm.planning_id)
-           OR (pm.planning_id IS NOT NULL AND wl.planning_id IS NULL AND COALESCE(wl.work_date, wl.recorded_at::date) >= pm.start_date_db)
-           OR (pm.planning_id IS NULL)
-         )
         GROUP BY pp.mold_id, pp.part_id, pp.machine_id
       ),
       completion AS (
@@ -988,6 +1053,9 @@ exports.listPlannedMolds = async (req, res, next) => {
       visible AS (
         SELECT pe.mold_id
         FROM plan_entries pe
+        JOIN active_planning ap
+          ON ap.mold_id = pe.mold_id
+         AND ap.planning_id = pe.planning_id
         WHERE pe.date >= ?
         ${toISO ? 'AND pe.date <= ?' : ''}
         GROUP BY pe.mold_id
@@ -1073,6 +1141,8 @@ exports.replaceMoldPlan = async (req, res, next) => {
       mold_id = await getOrCreateMoldId(normalizedName);
     }
     const beforeRange = await getMoldPlanRange(mold_id);
+    const activePlanningMetaForReplace = await getActivePlanningMetaForMold(mold_id, localISO(startLocal));
+    let activePlanningIdForReplace = activePlanningMetaForReplace.planningId || null;
 
     // En edición por ID, preservamos tareas ya completadas (por parte+máquina)
     // para no perder datos ni permitir reprogramar trabajo ya registrado.
@@ -1080,6 +1150,7 @@ exports.replaceMoldPlan = async (req, res, next) => {
     let plannedPairsForMold = null; // [{part_id, machine_id, planned_hours}]
     if (hasMoldId) {
       const planningMeta = await getActivePlanningMetaForMold(mold_id);
+      activePlanningIdForReplace = planningMeta.planningId || activePlanningIdForReplace;
       const wlScope = buildWorkLogScopeSql({
         alias: 'work_logs',
         mold_id,
@@ -1091,8 +1162,9 @@ exports.replaceMoldPlan = async (req, res, next) => {
         `SELECT part_id, machine_id, SUM(hours_planned) AS planned_hours
          FROM plan_entries
          WHERE mold_id = ?
+           AND (?::bigint IS NULL OR planning_id = ?::bigint)
          GROUP BY part_id, machine_id`,
-        [mold_id]
+        [mold_id, activePlanningIdForReplace, activePlanningIdForReplace]
       );
 
       // Parte COMPLETADA = tiene al menos un registro con is_final_log = true
@@ -1134,7 +1206,14 @@ exports.replaceMoldPlan = async (req, res, next) => {
       });
 
       for (const r of deletable) {
-        await query('DELETE FROM plan_entries WHERE mold_id = ? AND part_id = ? AND machine_id = ?', [mold_id, r.part_id, r.machine_id]);
+        await query(
+          `DELETE FROM plan_entries
+           WHERE mold_id = ?
+             AND part_id = ?
+             AND machine_id = ?
+             AND (?::bigint IS NULL OR planning_id = ?::bigint)`,
+          [mold_id, r.part_id, r.machine_id, activePlanningIdForReplace, activePlanningIdForReplace]
+        );
       }
     } else {
       // Regla industrial anterior (por compatibilidad)
@@ -1142,9 +1221,17 @@ exports.replaceMoldPlan = async (req, res, next) => {
       const deleteAll = (scope === 'all') || (!explicitFutureOnly);
 
       if (deleteAll) {
-        await query('DELETE FROM plan_entries WHERE mold_id = ?', [mold_id]);
+        if (activePlanningIdForReplace) {
+          await query('DELETE FROM plan_entries WHERE mold_id = ? AND planning_id = ?', [mold_id, activePlanningIdForReplace]);
+        } else {
+          await query('DELETE FROM plan_entries WHERE mold_id = ?', [mold_id]);
+        }
       } else {
-        await query('DELETE FROM plan_entries WHERE mold_id = ? AND date >= ?', [mold_id, baseISO]);
+        if (activePlanningIdForReplace) {
+          await query('DELETE FROM plan_entries WHERE mold_id = ? AND planning_id = ? AND date >= ?', [mold_id, activePlanningIdForReplace, baseISO]);
+        } else {
+          await query('DELETE FROM plan_entries WHERE mold_id = ? AND date >= ?', [mold_id, baseISO]);
+        }
       }
     }
 
@@ -1209,12 +1296,25 @@ exports.replaceMoldPlan = async (req, res, next) => {
 
     const results = [];
     const completionCache = new Map();
+    const activePlanningMeta = await getActivePlanningMetaForMold(mold_id, baseISO);
+    let activePlanningId = activePlanningMeta.planningId || activePlanningIdForReplace || null;
+    if (!activePlanningId) {
+      activePlanningId = await insertPlanningHistoryEvent({
+        mold_id,
+        eventType: 'PLANNED',
+        fromRange: beforeRange,
+        toRange: { startDate: baseISO, endDate: null },
+        note: `Planificación normal desde ${baseISO}`,
+        createdBy,
+      });
+    }
     for (const [machineName, items] of byMachine.entries()) {
       const { id: machine_id, daily_capacity } = await getOrCreateMachineByName(machineName);
       const cap = daily_capacity != null ? Number(daily_capacity) : 8;
 
       const lastDay = await placeBlockNoPreempt({
         mold_id,
+        planning_id: activePlanningId,
         machine_id,
         capPerDay: cap,
         baseDateISO: baseISO,
@@ -1467,23 +1567,87 @@ exports.planPriority = async (req, res, next) => {
     const baseISO = localISO(base);
 
     const hasMoldId = moldId != null && String(moldId).trim() !== '';
+    console.info('[planPriority] endpoint=/api/tasks/plan/priority hasMoldId=', hasMoldId, 'moldId=', hasMoldId ? String(moldId) : null, 'moldName=', moldName || null);
     let mold_id;
+    let targetPlanningId = null;
     if (hasMoldId) {
       const parsed = Number.parseInt(String(moldId), 10);
       if (!Number.isFinite(parsed) || parsed <= 0) return res.status(400).json({ error: 'moldId inválido' });
       const rows = await query('SELECT id FROM molds WHERE id = ? LIMIT 1', [parsed]);
       if (!rows.length) return res.status(404).json({ error: 'Molde no encontrado (moldId)' });
       mold_id = parsed;
+      const planningMeta = await getActivePlanningMetaForMold(mold_id, baseISO);
+      targetPlanningId = planningMeta.planningId || null;
+      if (!targetPlanningId) {
+        const beforeRangeForPlanned = await getMoldPlanRange(mold_id);
+        targetPlanningId = await insertPlanningHistoryEvent({
+          mold_id,
+          eventType: 'PLANNED',
+          fromRange: beforeRangeForPlanned,
+          toRange: {
+            startDate: baseISO,
+            endDate: null,
+          },
+          note: `Planificación prioridad desde ${baseISO}`,
+          createdBy,
+        });
+      }
     } else {
       const normalizedName = String(moldName || '').trim();
       if (!normalizedName) return res.status(400).json({ error: 'moldName es requerido' });
       const existingMoldId = await getMoldIdByName(normalizedName);
       if (existingMoldId && await moldHasActivePlan(existingMoldId)) {
-        return res.status(409).json({
-          error: `El molde "${normalizedName}" ya tiene planificación pendiente/activa. Para cambiarla use Editar/Reprogramar, no crear una nueva.`
+        const planningMeta = await getActivePlanningMetaForMold(existingMoldId);
+        const wlScope = buildWorkLogScopeSql({
+          alias: 'wl',
+          mold_id: existingMoldId,
+          planningId: planningMeta.planningId,
+          startDate: planningMeta.startDate,
         });
+
+        const plannedPairs = await query(
+          `SELECT part_id, machine_id
+           FROM plan_entries
+           WHERE mold_id = ?
+             AND (?::bigint IS NULL OR planning_id = ?::bigint)
+           GROUP BY part_id, machine_id
+           HAVING SUM(hours_planned) > 0`,
+          [existingMoldId, planningMeta.planningId, planningMeta.planningId]
+        );
+
+        const finalLogPairs = await query(
+          `SELECT DISTINCT wl.part_id, wl.machine_id
+           FROM work_logs wl
+           WHERE wl.mold_id = ?
+             AND wl.is_final_log = TRUE
+             ${wlScope.clause}`,
+          [existingMoldId, ...wlScope.params]
+        );
+
+        const finalSet = new Set(finalLogPairs.map(r => `${String(r.part_id)}:${String(r.machine_id)}`));
+        const cycleIsComplete = plannedPairs.length > 0 && plannedPairs.every(p => finalSet.has(`${String(p.part_id)}:${String(p.machine_id)}`));
+        console.info('[planPriority] active-plan-check moldId=', existingMoldId, 'planningId=', planningMeta.planningId || null, 'plannedPairs=', plannedPairs.length, 'finalPairs=', finalLogPairs.length, 'cycleIsComplete=', cycleIsComplete);
+
+        if (!cycleIsComplete) {
+          console.warn('[planPriority] blocked-409 moldId=', existingMoldId, 'reason=active-cycle-incomplete');
+          return res.status(409).json({
+            error: `El molde "${normalizedName}" ya tiene planificación pendiente/activa. Para cambiarla use Editar/Reprogramar, no crear una nueva.`
+          });
+        }
       }
       mold_id = existingMoldId || await getOrCreateMoldId(normalizedName);
+      const beforeRangeForPlanned = await getMoldPlanRange(mold_id);
+      targetPlanningId = await insertPlanningHistoryEvent({
+        mold_id,
+        eventType: 'PLANNED',
+        fromRange: beforeRangeForPlanned,
+        toRange: {
+          startDate: baseISO,
+          endDate: null,
+        },
+        note: `Planificación prioridad desde ${baseISO}`,
+        createdBy,
+      });
     }
 
     const affectedMoldsBefore = new Map();
@@ -1500,7 +1664,11 @@ exports.planPriority = async (req, res, next) => {
     // Esto evita que queden entradas "viejas" si el usuario mueve la fecha de inicio hacia adelante.
     const scope = String(replaceScope || '').trim().toLowerCase();
     if (scope === 'all' || hasMoldId) {
-      await query('DELETE FROM plan_entries WHERE mold_id = ?', [mold_id]);
+      if (targetPlanningId) {
+        await query('DELETE FROM plan_entries WHERE mold_id = ? AND planning_id = ?', [mold_id, targetPlanningId]);
+      } else {
+        await query('DELETE FROM plan_entries WHERE mold_id = ?', [mold_id]);
+      }
     }
 
     // Snapshot opcional (en prioridad, el startDate efectivo es baseISO)
@@ -1552,6 +1720,7 @@ exports.planPriority = async (req, res, next) => {
     const existingRows = await query(
       `SELECT
           mold_id,
+          planning_id,
           part_id,
           machine_id,
           hours_planned,
@@ -1575,6 +1744,7 @@ exports.planPriority = async (req, res, next) => {
       }
       const snap = snapshotByMold.get(moldKey);
       snap.entries.push({
+        planning_id: row.planning_id != null ? Number(row.planning_id) : null,
         part_id: Number(row.part_id),
         machine_id: Number(row.machine_id),
         hours: Number(row.hours_planned || 0),
@@ -1596,6 +1766,7 @@ exports.planPriority = async (req, res, next) => {
       const { id: machine_id, cap } = machineMap.get(machineName);
       const endPriority = await placeBlockNoPreempt({
         mold_id,
+        planning_id: targetPlanningId,
         machine_id,
         capPerDay: cap,
         baseDateISO: baseISO,
@@ -1678,6 +1849,7 @@ exports.planPriority = async (req, res, next) => {
         const newDateISO = shiftedByOriginalDate.get(e.dateISO);
         await insertEntry({
           mold_id: snap.mold_id,
+          planning_id: e.planning_id || null,
           part_id: e.part_id,
           machine_id: e.machine_id,
           dateISO: newDateISO,
@@ -1695,6 +1867,26 @@ exports.planPriority = async (req, res, next) => {
     for (const { id } of machineMap.values()) allMachineIds.add(id);
     for (const snap of existingMoldSnapshots) {
       for (const e of (snap.entries || [])) allMachineIds.add(Number(e.machine_id));
+    }
+
+    if (targetPlanningId) {
+      const cycleRange = await query(
+        `SELECT
+            to_char(MIN(date), 'YYYY-MM-DD') AS start_date,
+            to_char(MAX(date), 'YYYY-MM-DD') AS end_date
+         FROM plan_entries
+         WHERE mold_id = ? AND planning_id = ?`,
+        [mold_id, targetPlanningId]
+      );
+      const cycleStart = cycleRange?.[0]?.start_date || null;
+      const cycleEnd = cycleRange?.[0]?.end_date || null;
+      await query(
+        `UPDATE planning_history
+         SET to_start_date = COALESCE(to_start_date, ?),
+             to_end_date = ?
+         WHERE id = ?`,
+        [cycleStart, cycleEnd, targetPlanningId]
+      );
     }
 
     for (const moldKey of affectedMoldsBefore.keys()) {
@@ -1729,16 +1921,62 @@ exports.getMoldPlan = async (req, res, next) => {
     const moldRows = await query('SELECT id, name FROM molds WHERE id = ? LIMIT 1', [moldId]);
     if (!moldRows.length) return res.status(404).json({ error: 'Molde no encontrado' });
 
+    const planningMeta = await getActivePlanningMetaForMold(moldId);
+    const activePlanningId = planningMeta?.planningId != null
+      ? Number(planningMeta.planningId)
+      : null;
+    let planningIdToUse = Number.isFinite(activePlanningId) ? activePlanningId : null;
+
+    if (planningIdToUse) {
+      const hasRows = await query(
+        `SELECT 1
+         FROM plan_entries
+         WHERE mold_id = ? AND planning_id = ?
+         LIMIT 1`,
+        [moldId, planningIdToUse]
+      );
+
+      if (!hasRows.length) {
+        const fallbackRows = await query(
+          `SELECT id
+           FROM planning_history
+           WHERE mold_id = ?
+             AND event_type = 'PLANNED'
+             AND EXISTS (
+               SELECT 1
+               FROM plan_entries pe
+               WHERE pe.mold_id = ?
+                 AND pe.planning_id = planning_history.id
+             )
+           ORDER BY to_start_date DESC NULLS LAST, created_at DESC, id DESC
+           LIMIT 1`,
+          [moldId, moldId]
+        );
+        const fallbackId = fallbackRows.length ? Number(fallbackRows[0].id) : null;
+        planningIdToUse = Number.isFinite(fallbackId) ? fallbackId : planningIdToUse;
+      }
+    }
+
+    const rangeWhere = planningIdToUse != null
+      ? 'WHERE mold_id = ? AND (?::int IS NULL OR planning_id = ?::int)'
+      : 'WHERE mold_id = ?';
+    const rangeParams = planningIdToUse != null ? [moldId, planningIdToUse, planningIdToUse] : [moldId];
+
     const rangeRows = await query(
       `SELECT
           to_char(MIN(date), 'YYYY-MM-DD') AS "startDate",
           to_char(MAX(date), 'YYYY-MM-DD') AS "endDate"
        FROM plan_entries
-       WHERE mold_id = ?`,
-      [moldId]
+       ${rangeWhere}`,
+      rangeParams
     );
     const startDate = rangeRows[0]?.startDate || null;
     const endDate = rangeRows[0]?.endDate || null;
+
+    const entriesWhere = planningIdToUse != null
+      ? 'WHERE p.mold_id = ? AND (?::int IS NULL OR p.planning_id = ?::int)'
+      : 'WHERE p.mold_id = ?';
+    const entriesParams = planningIdToUse != null ? [moldId, planningIdToUse, planningIdToUse] : [moldId];
 
     const entries = await query(
       `SELECT
@@ -1752,14 +1990,15 @@ exports.getMoldPlan = async (req, res, next) => {
        FROM plan_entries p
        JOIN machines ma ON p.machine_id = ma.id
        JOIN mold_parts mp ON p.part_id = mp.id
-       WHERE p.mold_id = ?
+       ${entriesWhere}
        ORDER BY p.date ASC, ma.name ASC, p.id ASC`,
-      [moldId]
+      entriesParams
     );
 
     res.json({
       moldId,
       moldName: moldRows[0].name,
+      planningId: planningIdToUse,
       startDate,
       endDate,
       entries: entries.map(e => ({
@@ -1827,7 +2066,7 @@ exports.updatePlanEntry = async (req, res, next) => {
     if (!newMachineName) return res.status(400).json({ error: 'machineName requerido' });
 
     const entryRows = await query(
-      `SELECT id, mold_id, part_id, machine_id, is_priority, to_char(date,'YYYY-MM-DD') AS date_str, hours_planned
+      `SELECT id, mold_id, planning_id, part_id, machine_id, is_priority, to_char(date,'YYYY-MM-DD') AS date_str, hours_planned
        FROM plan_entries WHERE id = ? LIMIT 1`,
       [entryId]
     );
@@ -1837,20 +2076,20 @@ exports.updatePlanEntry = async (req, res, next) => {
 
     // Si ya está cerrada manualmente (is_final_log), no se permite mover.
     try {
-      const planningMeta = await getActivePlanningMetaForMold(entry.mold_id);
-      const wlScope = buildWorkLogScopeSql({
-        alias: 'work_logs',
-        mold_id: entry.mold_id,
-        planningId: planningMeta.planningId,
-        startDate: planningMeta.startDate,
-      });
+      const entryPlanningId = entry.planning_id != null ? Number(entry.planning_id) : null;
 
       const finalLogRows = await query(
         `SELECT 1 FROM work_logs
-         WHERE mold_id = ? AND part_id = ? AND machine_id = ? AND is_final_log = TRUE
-           ${wlScope.clause}
+         WHERE mold_id = ?
+           AND part_id = ?
+           AND machine_id = ?
+           AND is_final_log = TRUE
+           AND (
+             (?::bigint IS NULL AND planning_id IS NULL)
+             OR planning_id = ?::bigint
+           )
          LIMIT 1`,
-        [entry.mold_id, entry.part_id, entry.machine_id, ...wlScope.params]
+        [entry.mold_id, entry.part_id, entry.machine_id, entryPlanningId, entryPlanningId]
       );
       if (finalLogRows.length > 0) {
         return res.status(409).json({ error: 'Esta tarea fue cerrada manualmente (cierre final); no se puede mover. Solo el administrador puede reabrirla.' });
@@ -2168,6 +2407,8 @@ exports.moveMoldParts = async (req, res, next) => {
 
     recoveryPairs = pendingPairs.map(p => ({ part_id: Number(p.part_id), machine_id: Number(p.machine_id) }));
     deletedEntriesBackup = [];
+    const activePlanningMeta = await getActivePlanningMetaForMold(moldId);
+    const activePlanningId = activePlanningMeta.planningId || null;
 
     // Borrar planificación existente de esas parejas (igual que replace: no mantenemos historial de plan)
     for (const p of pendingPairs) {
@@ -2175,6 +2416,7 @@ exports.moveMoldParts = async (req, res, next) => {
         `SELECT
             part_id,
             machine_id,
+            planning_id,
             to_char(date, 'YYYY-MM-DD') AS date_str,
             hours_planned,
             is_priority,
@@ -2188,6 +2430,7 @@ exports.moveMoldParts = async (req, res, next) => {
         deletedEntriesBackup.push({
           part_id: Number(row.part_id),
           machine_id: Number(row.machine_id),
+          planningId: row.planning_id != null ? Number(row.planning_id) : null,
           dateISO: String(row.date_str || ''),
           hours: Number(row.hours_planned || 0),
           isPriority: Boolean(row.is_priority),
@@ -2221,6 +2464,7 @@ exports.moveMoldParts = async (req, res, next) => {
 
       const lastDay = await placeBlockNoPreempt({
         mold_id: moldId,
+        planning_id: activePlanningId,
         machine_id: Number(machine_id),
         capPerDay: cap,
         baseDateISO: baseISO,
@@ -2268,9 +2512,9 @@ exports.moveMoldParts = async (req, res, next) => {
         if (Array.isArray(deletedEntriesBackup) && deletedEntriesBackup.length) {
           for (const row of deletedEntriesBackup) {
             await query(
-              `INSERT INTO plan_entries (mold_id, part_id, machine_id, date, hours_planned, is_priority, created_by)
-               VALUES (?,?,?,?,?,?,?)`,
-              [moldIdForRecovery, row.part_id, row.machine_id, row.dateISO, row.hours, row.isPriority ? 1 : 0, row.createdBy || createdByForRecovery]
+              `INSERT INTO plan_entries (mold_id, planning_id, part_id, machine_id, date, hours_planned, is_priority, created_by)
+               VALUES (?,?,?,?,?,?,?,?)`,
+              [moldIdForRecovery, row.planningId || null, row.part_id, row.machine_id, row.dateISO, row.hours, row.isPriority ? 1 : 0, row.createdBy || createdByForRecovery]
             );
           }
         }
