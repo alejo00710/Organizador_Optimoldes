@@ -43,7 +43,20 @@ const getMonthView = async (req, res, next) => {
             SELECT 
                 to_char(p.date, 'YYYY-MM-DD') AS date_str,
                 p.id AS entry_id,
-                p.planning_id,
+                COALESCE(
+                    p.planning_id,
+                    (
+                        SELECT ph.id
+                        FROM planning_history ph
+                        WHERE ph.mold_id = p.mold_id
+                          AND ph.event_type = 'PLANNED'
+                          AND COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date) <= p.date
+                        ORDER BY COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date) DESC NULLS LAST,
+                                 ph.created_at DESC,
+                                 ph.id DESC
+                        LIMIT 1
+                    )
+                ) AS planning_id,
                 p.hours_planned,
                 p.is_priority,
                 m.id AS machine_id,

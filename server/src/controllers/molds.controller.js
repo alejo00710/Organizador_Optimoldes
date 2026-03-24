@@ -946,7 +946,7 @@ const getMoldsInProgress = async (req, res, next) => {
         if (!Number.isInteger(limit) || limit <= 0) limit = 50;
         if (limit > 200) limit = 200;
 
-        const cycles = await listPlannedCycles(null, { onlyLatestPerMold: true });
+        const cycles = await listPlannedCycles(todayISO, { onlyLatestPerMold: true });
         const summaries = [];
         for (const cycle of cycles) {
             const summary = await getCycleSummary(cycle, todayISO);
@@ -987,7 +987,7 @@ const getMoldsCompleted = async (req, res, next) => {
         if (!Number.isInteger(limit) || limit <= 0) limit = 50;
         if (limit > 500) limit = 500;
 
-        const cycles = await listPlannedCycles(null, { onlyLatestPerMold: false });
+        const cycles = await listPlannedCycles(todayISO, { onlyLatestPerMold: false });
         let molds = [];
         for (const cycle of cycles) {
             const summary = await getCycleSummary(cycle, todayISO);

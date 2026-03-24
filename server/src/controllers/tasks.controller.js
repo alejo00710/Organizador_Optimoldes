@@ -248,6 +248,51 @@ function buildWorkLogScopeSql({ alias, mold_id, planningId, startDate }) {
   };
 }
 
+function buildPlanEntriesCycleScopeSql({ alias, mold_id, planningId, startDate }) {
+  if (planningId) {
+    return {
+      clause: `
+       AND (
+         ${alias}.planning_id = ?
+         OR (${alias}.planning_id IS NULL AND ${alias}.date >= ?)
+       )`,
+      params: [planningId, startDate || '1900-01-01'],
+    };
+  }
+
+  return {
+    clause: `
+       AND ${alias}.date >= COALESCE(
+         (SELECT ph.to_start_date
+          FROM planning_history ph
+          WHERE ph.mold_id = ? AND ph.event_type = 'PLANNED'
+          ORDER BY ph.created_at DESC, ph.id DESC
+          LIMIT 1),
+         (SELECT MIN(date) FROM plan_entries WHERE mold_id = ?)
+       )`,
+    params: [mold_id, mold_id],
+  };
+}
+
+async function getPlannedPairsForCurrentCycle({ mold_id, planningMeta }) {
+  const planScope = buildPlanEntriesCycleScopeSql({
+    alias: 'p',
+    mold_id,
+    planningId: planningMeta?.planningId || null,
+    startDate: planningMeta?.startDate || null,
+  });
+
+  return query(
+    `SELECT p.part_id, p.machine_id, SUM(p.hours_planned) AS planned_hours
+     FROM plan_entries p
+     WHERE p.mold_id = ?
+       ${planScope.clause}
+     GROUP BY p.part_id, p.machine_id
+     HAVING SUM(p.hours_planned) > 0`,
+    [mold_id, ...planScope.params]
+  );
+}
+
 function planRangesEqual(a, b) {
   const left = a || {};
   const right = b || {};
@@ -354,7 +399,6 @@ async function getDayUsageExcludingEntry(machine_id, dateISO, excludeEntryId) {
 
 async function isMoldCompletedByCurrentPlan(mold_id) {
   const planningMeta = await getActivePlanningMetaForMold(mold_id);
-  const activePlanningId = planningMeta.planningId || null;
   const wlScope = buildWorkLogScopeSql({
     alias: 'wl',
     mold_id,
@@ -362,17 +406,7 @@ async function isMoldCompletedByCurrentPlan(mold_id) {
     startDate: planningMeta.startDate,
   });
 
-  const plannedPairs = await query(
-    `SELECT part_id, machine_id, SUM(hours_planned) AS planned_hours
-     FROM plan_entries
-     WHERE mold_id = ?
-       AND (
-         planning_id = ?
-         OR (?::bigint IS NULL AND planning_id IS NULL)
-       )
-     GROUP BY part_id, machine_id`,
-    [mold_id, activePlanningId, activePlanningId]
-  );
+  const plannedPairs = await getPlannedPairsForCurrentCycle({ mold_id, planningMeta });
 
   if (!plannedPairs.length) return false;
 
@@ -774,15 +808,10 @@ exports.planBlock = async (req, res, next) => {
         startDate: planningMeta.startDate,
       });
 
-      const plannedPairs = await query(
-        `SELECT part_id, machine_id
-         FROM plan_entries
-         WHERE mold_id = ?
-           AND (?::bigint IS NULL OR planning_id = ?::bigint)
-         GROUP BY part_id, machine_id
-         HAVING SUM(hours_planned) > 0`,
-        [existingMoldId, planningMeta.planningId, planningMeta.planningId]
-      );
+      const plannedPairs = await getPlannedPairsForCurrentCycle({
+        mold_id: existingMoldId,
+        planningMeta,
+      });
 
       const finalLogPairs = await query(
         `SELECT DISTINCT wl.part_id, wl.machine_id
@@ -968,14 +997,14 @@ exports.planBlock = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-// Listado de moldes con planificación (por defecto: desde hoy)
+// Listado de moldes con planificación activa/incompleta
 exports.listPlannedMolds = async (req, res, next) => {
   try {
     const from = (req.query?.from ? String(req.query.from) : '').trim();
     const to = (req.query?.to ? String(req.query.to) : '').trim();
 
     const isoRe = /^\d{4}-\d{2}-\d{2}$/;
-    const fromISO = from && isoRe.test(from) ? from : localISO(todayLocal());
+    const fromISO = from && isoRe.test(from) ? from : null;
     const toISO = to && isoRe.test(to) ? to : null;
 
     const sql = `
@@ -1030,7 +1059,19 @@ exports.listPlannedMolds = async (req, res, next) => {
          AND wl.part_id = pp.part_id
          AND wl.machine_id = pp.machine_id
          AND wl.is_final_log = TRUE
-         AND (wl.planning_id = ap.planning_id OR (wl.planning_id IS NULL AND ap.planning_id IS NULL))
+         AND (
+           wl.planning_id = ap.planning_id
+           OR (
+             wl.planning_id IS NULL
+             AND (
+               ap.planning_id IS NULL
+               OR (
+                 ap.start_date IS NOT NULL
+                 AND COALESCE(wl.work_date, wl.recorded_at::date) >= ap.start_date
+               )
+             )
+           )
+         )
         GROUP BY pp.mold_id, pp.part_id, pp.machine_id
       ),
       completion AS (
@@ -1054,7 +1095,7 @@ exports.listPlannedMolds = async (req, res, next) => {
           OR (ap.start_date IS NOT NULL AND pe.date >= ap.start_date)
           OR (ap.start_date IS NULL AND pe.planning_id IS NULL)
         )
-        AND pe.date >= ?
+        ${fromISO ? 'AND pe.date >= ?' : ''}
         ${toISO ? 'AND pe.date <= ?' : ''}
         UNION
         SELECT DISTINCT ap.mold_id
@@ -1068,7 +1109,19 @@ exports.listPlannedMolds = async (req, res, next) => {
         AND EXISTS (
           SELECT 1 FROM work_logs wl
           WHERE wl.mold_id = ap.mold_id
-            AND (wl.planning_id = ap.planning_id OR (wl.planning_id IS NULL AND ap.planning_id IS NULL))
+            AND (
+              wl.planning_id = ap.planning_id
+              OR (
+                wl.planning_id IS NULL
+                AND (
+                  ap.planning_id IS NULL
+                  OR (
+                    ap.start_date IS NOT NULL
+                    AND COALESCE(wl.work_date, wl.recorded_at::date) >= ap.start_date
+                  )
+                )
+              )
+            )
         )
       )
       SELECT
@@ -1086,7 +1139,10 @@ exports.listPlannedMolds = async (req, res, next) => {
       ORDER BY p."startDate" ASC, mo.name ASC
     `;
 
-    const rows = await query(sql, toISO ? [fromISO, toISO] : [fromISO]);
+    const params = [];
+    if (fromISO) params.push(fromISO);
+    if (toISO) params.push(toISO);
+    const rows = await query(sql, params);
     res.json({ from: fromISO, to: toISO, molds: (rows || []).map(r => ({
       moldId: Number(r.moldId),
       moldName: r.moldName,
@@ -1168,14 +1224,21 @@ exports.replaceMoldPlan = async (req, res, next) => {
         planningId: planningMeta.planningId,
         startDate: planningMeta.startDate,
       });
+      const planScope = buildPlanEntriesCycleScopeSql({
+        alias: 'p',
+        mold_id,
+        planningId: activePlanningIdForReplace,
+        startDate: planningMeta.startDate,
+      });
 
       plannedPairsForMold = await query(
-        `SELECT part_id, machine_id, SUM(hours_planned) AS planned_hours
-         FROM plan_entries
-         WHERE mold_id = ?
-           AND (?::bigint IS NULL OR planning_id = ?::bigint)
-         GROUP BY part_id, machine_id`,
-        [mold_id, activePlanningIdForReplace, activePlanningIdForReplace]
+        `SELECT p.part_id, p.machine_id, SUM(p.hours_planned) AS planned_hours
+         FROM plan_entries p
+         WHERE p.mold_id = ?
+           ${planScope.clause}
+         GROUP BY p.part_id, p.machine_id
+         HAVING SUM(p.hours_planned) > 0`,
+        [mold_id, ...planScope.params]
       );
 
       // Parte COMPLETADA = tiene al menos un registro con is_final_log = true
@@ -1616,15 +1679,10 @@ exports.planPriority = async (req, res, next) => {
           startDate: planningMeta.startDate,
         });
 
-        const plannedPairs = await query(
-          `SELECT part_id, machine_id
-           FROM plan_entries
-           WHERE mold_id = ?
-             AND (?::bigint IS NULL OR planning_id = ?::bigint)
-           GROUP BY part_id, machine_id
-           HAVING SUM(hours_planned) > 0`,
-          [existingMoldId, planningMeta.planningId, planningMeta.planningId]
-        );
+        const plannedPairs = await getPlannedPairsForCurrentCycle({
+          mold_id: existingMoldId,
+          planningMeta,
+        });
 
         const finalLogPairs = await query(
           `SELECT DISTINCT wl.part_id, wl.machine_id

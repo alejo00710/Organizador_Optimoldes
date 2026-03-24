@@ -1,35 +1,57 @@
 # Sistema de Planificación y Registro de Producción de Moldes
 
-Aplicación web (frontend estático + API) para planificar horas de fabricación por máquina/parte, registrar tiempos reales por operario y ver calendario/reportes/indicadores.
+Aplicación web para planificar producción por molde, parte y máquina; registrar horas reales; visualizar calendario operativo; y consultar avance, desviaciones e indicadores.
 
-## Arquitectura
+## Resumen rápido
 
-- Frontend: HTML/CSS/JS (Vanilla) en `public/`.
-- Backend: Node.js + Express en `server/`.
-- Base de datos: PostgreSQL (schema en `server/schema.sql`).
+- Frontend: HTML/CSS/JS Vanilla en `public/`
+- Backend: Node.js + Express en `server/src/`
+- Base de datos: PostgreSQL (schema en `server/schema.sql`)
+- API base: `/api`
+- Healthcheck: `/health`
 
-El backend sirve el frontend como estáticos y expone la API bajo `/api`.
+## Estado actual (marzo 2026)
+
+- El sistema trabaja por ciclos de planificación (`planning_history`, `planning_id`).
+- Reglas de creación de nueva planificación para el mismo molde:
+  - si el ciclo activo está incompleto, bloquea creación nueva;
+  - si el ciclo activo está completo, permite crear un nuevo ciclo.
+- Se soportan datos legacy con `planning_id` nulo en `plan_entries` y `work_logs` usando reglas por fecha de inicio del ciclo.
+- La vista de calendario es implementación propia (no usa librería visual externa tipo FullCalendar).
+
+## Estructura del repositorio
+
+```text
+public/                  Frontend estático
+  index.html
+  app.js
+  styles.css
+
+server/
+  src/
+    app.js               Boot de Express y registro de rutas
+    controllers/
+    routes/
+    services/
+    middleware/
+    config/
+  schema.sql
+  package.json
+
+tests/                   Pruebas integración (Jest)
+README.md
+Dockerfile
+docker-compose.yml
+```
 
 ## Requisitos
 
 - Node.js 18+
 - PostgreSQL 14+
 
-## Estructura del repo
+## Configuración (`server/.env`)
 
-```
-public/         Frontend (index.html, app.js, styles.css)
-server/         Backend (Express + PostgreSQL)
-  src/
-  schema.sql
-  package.json
-tests/
-README.md
-```
-
-## Configuración (server/.env)
-
-El backend lee variables con `dotenv` (ver `server/src/config/env.js`). Ejemplo recomendado:
+Ejemplo recomendado:
 
 ```env
 PORT=3000
@@ -39,7 +61,7 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=tu_password
-DB_NAME=production_scheduler
+DB_NAME=organizador_taller
 
 JWT_SECRET=cambia_este_secreto
 JWT_EXPIRES_IN=8h
@@ -47,14 +69,10 @@ JWT_EXPIRES_IN=8h
 
 Notas:
 
-- Si no defines variables, hay defaults (por ejemplo `DB_NAME=production_scheduler`).
-- En `NODE_ENV=development` el servidor intenta:
-  - Crear la base de datos si no existe.
-  - Ejecutar `server/schema.sql` (tablas `IF NOT EXISTS`) y algunas migraciones pequeñas.
+- El backend carga variables desde `server/.env`.
+- En `NODE_ENV=development`, al iniciar intenta verificar/crear esquema y aplicar migraciones seguras.
 
-## Instalación y arranque
-
-Desde la carpeta del backend:
+## Instalación y arranque local
 
 ```bash
 cd server
@@ -62,52 +80,47 @@ npm install
 npm run dev
 ```
 
-Abrir la app:
+Abrir en navegador:
 
 - UI: `http://localhost:3000`
-- Healthcheck: `http://localhost:3000/health`
+- Health: `http://localhost:3000/health`
+
+## Arranque con Docker
+
+```bash
+docker compose up --build
+```
+
+Por defecto levanta:
+
+- `backend` en `http://localhost:3000`
+- `postgres` en `localhost:5433`
 
 ## Autenticación y roles
 
-La API usa JWT (header `Authorization: Bearer <token>`).
+JWT por header `Authorization: Bearer <token>`.
 
 Roles:
 
 - `admin`
-- `planner` (en la UI aparece como “Jefe (Planner)”)
-- `operator`
+- `planner` (UI: Jefe)
+- `operator` (UI: Operario)
 
-### Bootstrap inicial (crear admin/jefe)
-
-Cuando la BD está vacía, el login muestra un bloque de “Configuración inicial”. Eso llama a:
+Bootstrap inicial (sin token):
 
 - `GET /api/auth/bootstrap/status`
-- `POST /api/auth/bootstrap` (sin token)
+- `POST /api/auth/bootstrap`
 
-Ese bootstrap solo permite crear `admin` y `jefe` si todavía no existen.
+## Funcionalidades principales
 
-### Login
+- Cuadro planificador (normal, prioridad, reemplazo, consecutivo).
+- Calendario mensual con carga/capacidad por máquina y superposición.
+- Registro de trabajo real (`work_logs`) con cierre manual por parte/máquina (`is_final_log`).
+- Vistas de moldes en curso y moldes terminados por ciclo.
+- Historial de movimientos/reprogramaciones.
+- Indicadores anuales y carga de días laborables por operario.
 
-- `POST /api/auth/login`
-- `GET /api/auth/operators?username=...` (para llenar el selector de operarios)
-
-La UI ofrece 3 opciones en el selector:
-
-- `admin`
-- `jefe` (role `planner`)
-- `operarios`: requiere seleccionar un operario y valida contraseña asociada al operario.
-
-## Funcionalidades principales (según el código)
-
-- Planificación por bloque y planificación con prioridad (reubica lo existente).
-- Calendario mensual unificado: eventos + festivos.
-- Festivos (tabla `holidays`) + reglas de negocio (servicio de días hábiles).
-- Registro de tiempos reales (work logs) con `work_date` y `reason`.
-- Reportes plan vs real.
-- Indicadores: resumen y carga/edición de días hábiles mensuales por operario.
-- Auditoría de sesiones (login/logout) en `user_sessions`.
-
-## API (mapa de endpoints)
+## Mapa de API (actual)
 
 Base URL: `http://localhost:3000/api`
 
@@ -117,83 +130,90 @@ Base URL: `http://localhost:3000/api`
 - `GET /auth/operators`
 - `GET /auth/bootstrap/status`
 - `POST /auth/bootstrap`
-- `GET /auth/verify` (requiere token)
-- `POST /auth/logout` (requiere token)
+- `GET /auth/verify` (token)
+- `POST /auth/logout` (token)
 - `GET /auth/sessions` (admin/planner)
 
-### Planificación (admin/planner)
+### Planificación (`/tasks`) (admin/planner)
 
 - `POST /tasks/plan/block`
+- `GET /tasks/plan/molds`
+- `GET /tasks/plan/snapshot`
+- `POST /tasks/plan/replace`
+- `POST /tasks/plan/consecutive`
 - `POST /tasks/plan/priority`
 - `GET /tasks/plan/mold/:moldId`
+- `DELETE /tasks/plan/mold/:moldId`
 - `PATCH /tasks/plan/entry/:entryId`
 - `PATCH /tasks/plan/entry/:entryId/next-available`
+- `POST /tasks/plan/mold/:moldId/move-parts`
+- `POST /tasks/plan/entries/bulk-move`
 
 ### Calendario
 
-- `GET /calendar/month-view` (requiere token)
+- `GET /calendar/month-view` (token)
 
-### Work logs
+### Work Logs
 
-- `POST /work_logs` (requiere token)
-- `GET /work_logs` (requiere token)
-- `PUT /work_logs/:id` (requiere token)
+- `POST /work_logs` (token)
+- `GET /work_logs` (token)
+- `PUT /work_logs/:id` (token)
 - `DELETE /work_logs/:id` (admin/planner)
 
 ### Moldes / Partes
 
-- `GET /molds` (requiere token)
+- `GET /molds` (token)
 - `POST /molds` (admin/planner)
-- `GET /molds/parts` (requiere token)
+- `GET /molds/parts` (token)
 - `POST /molds/parts` (admin/planner)
 - `GET /molds/in-progress` (admin/planner)
-- `GET /molds/:moldId/progress` (admin/planner)
+- `GET /molds/completed` (admin/planner)
+- `GET /molds/:moldId/progress` (admin/planner/operator)
 
 ### Recetas de molde
 
-- `GET /molds/:moldId/recipe` (requiere token)
-- `POST /molds/:moldId/recipe` (requiere token)
+- `GET /molds/:moldId/recipe` (token)
+- `POST /molds/:moldId/recipe` (token)
 
 ### Máquinas
 
-- `GET /machines` (requiere token)
-- `GET /machines/:id` (requiere token)
-- `POST /machines` (solo admin)
-- `PUT /machines/:id` (solo admin)
-- `DELETE /machines/:id` (solo admin)
+- `GET /machines` (token)
+- `GET /machines/:id` (token)
+- `POST /machines` (admin)
+- `PUT /machines/:id` (admin)
+- `DELETE /machines/:id` (admin)
 
-### Festivos (holidays)
+### Festivos
 
-- `GET /holidays` (requiere token)
-- `POST /holidays` (solo admin)
-- `DELETE /holidays/:date` (solo admin)
+- `GET /holidays` (token)
+- `POST /holidays` (admin)
+- `DELETE /holidays/:date` (admin)
 
 ### Días laborables (override)
 
-- `GET /working/check` (requiere token)
+- `GET /working/check` (token)
 - `POST /working/override` (admin/planner)
 
 ### Datos (histórico)
 
-- `GET /datos` (requiere token)
+- `GET /datos` (token)
 - `POST /datos` (admin/planner/operator)
 - `PUT /datos/:id` (admin/planner)
-- `DELETE /datos/:id` (solo admin)
-- `GET /datos/meta` (requiere token)
+- `DELETE /datos/:id` (admin)
+- `GET /datos/hours-options` (token)
+- `GET /datos/meta` (token)
 
 ### Importación
 
-- `POST /import/datos` (multipart/form-data, campo `file`, requiere token)
-- `GET /import/datos/:batchId/errors` (requiere token)
+- `POST /import/datos` (multipart/form-data, campo `file`, token)
+- `GET /import/datos/:batchId/errors` (token)
 
 ### Catálogos
 
-- `GET /catalogs/meta` (requiere token)
-- `POST /catalogs/sync` (requiere token)
+- `GET /catalogs/meta` (token)
+- `POST /catalogs/sync` (token)
 
-### Configuración (admin/planner)
-
-Todas estas rutas cuelgan de `/api` (no de `/api/config`):
+### Configuración (`/api/config/*`) (admin/planner)
 
 - `GET /config/machines`
 - `POST /config/machines`
@@ -206,118 +226,41 @@ Todas estas rutas cuelgan de `/api` (no de `/api/config`):
 - `GET /config/operators`
 - `PUT /config/operators/:id`
 
-### Indicadores (admin/planner)
+### Indicadores
 
-- `GET /indicators/summary`
-- `POST /indicators/working-days`
+- `GET /indicators/summary` (admin/planner)
+- `POST /indicators/working-days` (admin/planner)
 
-## Scripts (backend)
+## Scripts útiles (`server/package.json`)
 
-En `server/package.json`:
+- `npm run dev` inicia backend en modo desarrollo (nodemon)
+- `npm start` inicia backend en modo normal
+- `npm test` ejecuta Jest (con cobertura)
+- `npm run test:e2e` ejecuta Playwright
+- `npm run format` / `npm run check-format` aplica/verifica Prettier
+- `npm run reset:password` utilidad de reseteo de contraseña
 
-- `npm run dev` (nodemon)
-- `npm start` (node)
-- `npm test` (jest)
-- `npm run reset:password` (utilidad para reset)
-- `npm run format` / `npm run check-format`
+## Pruebas
 
----
+Ejemplos:
 
-## 👤 Usuarios de ejemplo
+```bash
+cd server
+npm test
+```
 
-- admin / admin (rol: admin)
-- Otros usuarios u operarios dependen del seed en `schema.sql` (el backend soporta login para `jefe` y `operarios` si existen en DB)
+Ejecutar una prueba de integración puntual:
 
----
+```bash
+npm test -- --runInBand ../tests/integration/planner-no-duplicate-mold.test.js
+```
 
-## 🧪 Endpoints (resumen)
+## Notas técnicas
 
-Autenticación
-- POST /api/auth/login
-- GET  /api/auth/operators
-- GET  /api/auth/verify
-
-Planificación
-- POST /api/tasks/plan/block
-- POST /api/tasks/plan/priority
-- GET  /api/tasks/plan/mold/:moldId
-- PATCH /api/tasks/plan/entry/:entryId
-- PATCH /api/tasks/plan/entry/:entryId/next-available
-
-Work logs
-- POST   /api/work_logs
-- GET    /api/work_logs
-- PUT    /api/work_logs/:id
-- DELETE /api/work_logs/:id
-
-Calendario
-- GET /api/calendar/month-view?year=YYYY&month=1..12
-
-Reportes
-- GET /api/reports/planned-vs-actual
-- GET /api/reports/detailed-deviations
-
-Datos maestros
-- GET/POST/PUT/DELETE /api/machines
-- GET/POST /api/molds
-- GET/POST /api/molds/parts
- - GET      /api/molds/in-progress          (admin/planner)
- - GET      /api/molds/:moldId/progress     (admin/planner)
-
-Festivos
-- GET    /api/holidays
-- POST   /api/holidays      (admin)
-- DELETE /api/holidays/:date (admin)
-
-Indicadores
-- GET  /api/indicators/summary?year=YYYY
-- POST /api/indicators/working-days
-
-Catálogos
-- GET /api/catalogs/meta
-
-Salud
-- GET /health
-
----
-
-## 🖥️ Uso rápido (planner)
-
-1) Login como `jefe` (si existe) o `admin`
-2) Configuración: valida que haya máquinas, moldes y partes
-3) Cuadro Planificador:
-   - Selecciona Molde y Fecha de Inicio
-   - Ajusta “Cantidad de Moldes/Partes”
-   - Ingresa horas base por máquina (horas para producir UNA parte)
-   - “Crear Planificación” → el sistema distribuye horas en días hábiles
-4) Calendario:
-   - Verás indicadores de horas por día
-   - Festivos y fines de semana resaltados (no se planifica)
-5) Indicadores:
-  - Abre la pestaña **📊 Indicadores**
-  - Selecciona el **Año**
-  - Marca los **Operarios a mostrar**
-    - La selección queda guardada; al volver a entrar se re-marca automáticamente
-  - Las **3 tablas** se cargan/actualizan en base a esa selección
-  - Tabla 2 (manual):
-    - Escoge Operario (de los seleccionados), Mes y Días
-    - “Guardar” → refresca automáticamente las tablas con el cambio
-
----
-
-## ⚙️ Detalles técnicos clave
-
-Días hábiles
-- Fines de semana: siempre excluidos
-- Festivos:
-  - Automáticos (Colombia) generados por `holidaysColombia.service.js`
-  - Festivos en DB se combinan y tienen prioridad en nombre
-  - Caché recargada al iniciar y tras POST/DELETE /holidays
-
-Scheduler
-- Capacidad diaria por máquina:
-  - 1 operario: 9h
-  - >1 operario: operarios × 8h
+- `planning_id` se usa como identificador principal de ciclo.
+- Para compatibilidad histórica, el sistema contempla registros legacy sin `planning_id` apoyándose en fecha de inicio del ciclo.
+- La sección "Moldes planificados" del cuadro planificador consume `GET /api/tasks/plan/molds` y muestra ciclos activos/incompletos.
+- El calendario del frontend está hecho en `public/app.js` (sin librería visual de terceros).
 - Salta fines de semana y festivos con `isBusinessDay` / `getNextBusinessDay`
 - Respeta capacidad ya ocupada (suma de `plan_entries` por día)
 
