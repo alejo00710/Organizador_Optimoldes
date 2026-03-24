@@ -982,7 +982,8 @@ exports.listPlannedMolds = async (req, res, next) => {
       WITH active_planning AS (
         SELECT DISTINCT ON (ph.mold_id)
           ph.mold_id,
-          ph.id AS planning_id
+          ph.id AS planning_id,
+          ph.to_start_date AS start_date
         FROM planning_history ph
         WHERE ph.event_type = 'PLANNED'
         ORDER BY ph.mold_id, ph.to_start_date DESC NULLS LAST, ph.created_at DESC, ph.id DESC
@@ -994,9 +995,12 @@ exports.listPlannedMolds = async (req, res, next) => {
           to_char(MAX(pe.date), 'YYYY-MM-DD') AS "endDate",
           SUM(pe.hours_planned) AS "plannedTotal"
         FROM plan_entries pe
-        JOIN active_planning ap
-          ON ap.mold_id = pe.mold_id
-         AND ap.planning_id = pe.planning_id
+        JOIN active_planning ap ON ap.mold_id = pe.mold_id
+        WHERE (
+          pe.planning_id = ap.planning_id
+          OR (ap.start_date IS NOT NULL AND pe.date >= ap.start_date)
+          OR (ap.start_date IS NULL AND pe.planning_id IS NULL)
+        )
         GROUP BY pe.mold_id
       ),
       plan_pairs AS (
@@ -1006,22 +1010,13 @@ exports.listPlannedMolds = async (req, res, next) => {
           pe.machine_id,
           SUM(pe.hours_planned) AS planned_hours
         FROM plan_entries pe
-        JOIN active_planning ap
-          ON ap.mold_id = pe.mold_id
-         AND ap.planning_id = pe.planning_id
+        JOIN active_planning ap ON ap.mold_id = pe.mold_id
+        WHERE (
+          pe.planning_id = ap.planning_id
+          OR (ap.start_date IS NOT NULL AND pe.date >= ap.start_date)
+          OR (ap.start_date IS NULL AND pe.planning_id IS NULL)
+        )
         GROUP BY pe.mold_id, pe.part_id, pe.machine_id
-      ),
-      plan_meta AS (
-        SELECT
-          pa.mold_id,
-          ap.planning_id,
-          COALESCE(
-            ph.to_start_date,
-            to_date(pa."startDate", 'YYYY-MM-DD')
-          ) AS start_date_db
-        FROM plan_all pa
-        JOIN active_planning ap ON ap.mold_id = pa.mold_id
-        LEFT JOIN planning_history ph ON ph.id = ap.planning_id
       ),
       final_pairs AS (
         SELECT
@@ -1032,10 +1027,10 @@ exports.listPlannedMolds = async (req, res, next) => {
         JOIN active_planning ap ON ap.mold_id = pp.mold_id
         JOIN work_logs wl
           ON wl.mold_id = pp.mold_id
-         AND wl.planning_id = ap.planning_id
          AND wl.part_id = pp.part_id
          AND wl.machine_id = pp.machine_id
          AND wl.is_final_log = TRUE
+         AND (wl.planning_id = ap.planning_id OR (wl.planning_id IS NULL AND ap.planning_id IS NULL))
         GROUP BY pp.mold_id, pp.part_id, pp.machine_id
       ),
       completion AS (
@@ -1051,14 +1046,30 @@ exports.listPlannedMolds = async (req, res, next) => {
         GROUP BY pp.mold_id
       ),
       visible AS (
-        SELECT pe.mold_id
+        SELECT DISTINCT pe.mold_id
         FROM plan_entries pe
-        JOIN active_planning ap
-          ON ap.mold_id = pe.mold_id
-         AND ap.planning_id = pe.planning_id
-        WHERE pe.date >= ?
+        JOIN active_planning ap ON ap.mold_id = pe.mold_id
+        WHERE (
+          pe.planning_id = ap.planning_id
+          OR (ap.start_date IS NOT NULL AND pe.date >= ap.start_date)
+          OR (ap.start_date IS NULL AND pe.planning_id IS NULL)
+        )
+        AND pe.date >= ?
         ${toISO ? 'AND pe.date <= ?' : ''}
-        GROUP BY pe.mold_id
+        UNION
+        SELECT DISTINCT ap.mold_id
+        FROM active_planning ap
+        JOIN plan_entries pe ON pe.mold_id = ap.mold_id
+        WHERE (
+          pe.planning_id = ap.planning_id
+          OR (ap.start_date IS NOT NULL AND pe.date >= ap.start_date)
+          OR (ap.start_date IS NULL AND pe.planning_id IS NULL)
+        )
+        AND EXISTS (
+          SELECT 1 FROM work_logs wl
+          WHERE wl.mold_id = ap.mold_id
+            AND (wl.planning_id = ap.planning_id OR (wl.planning_id IS NULL AND ap.planning_id IS NULL))
+        )
       )
       SELECT
         mo.id AS "moldId",

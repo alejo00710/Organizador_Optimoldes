@@ -787,7 +787,6 @@ async function listPlannedCycles(asOfISO, { onlyLatestPerMold = false } = {}) {
                                         SELECT 1
                                         FROM work_logs wl
                                         WHERE wl.mold_id = ph.mold_id
-                                            AND wl.planning_id = ph.id
                                             AND COALESCE(wl.work_date, wl.recorded_at::date) <= ?::date
                                 )
                      )

@@ -3885,6 +3885,10 @@ function filterCalendarEventsHideCompleted(events, hideCompleted) {
       if (Number.isFinite(pid) && pid > 0) {
         if (calendarCompletedMoldIdsCache.has(`${mid}:${pid}`)) return false;
       }
+      if (!Number.isFinite(pid) || pid <= 0) {
+        const hasAnyCompletedCycle = Array.from(calendarCompletedMoldIdsCache).some(k => k === String(mid) || k.startsWith(`${mid}:`));
+        if (hasAnyCompletedCycle) return false;
+      }
       if (calendarCompletedMoldIdsCache.has(String(mid))) return false;
       return true;
     });
@@ -4037,7 +4041,7 @@ function renderDayDetailsView(dateISO, events, holiday) {
   const normalizeRole = (v) => String(v || '').trim().toLowerCase();
   const canQuickMove = (() => {
     const role = normalizeRole(currentUser?.role);
-    return role === 'admin' || role === 'jefe';
+    return role === 'admin' || role === 'planner';
   })();
 
   const renderMachineCapacityBadges = (dayEvents) => {

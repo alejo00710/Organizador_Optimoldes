@@ -3,33 +3,54 @@ const { ROLES, OPERATOR_EDIT_DAYS_LIMIT } = require('../utils/constants');
 
 async function getPlannedHoursSnapshot({ moldId, partId, machineId, planningId = null }) {
     try {
-                if (!moldId || !partId || !machineId) return null;
+        if (!moldId || !partId || !machineId) return null;
         const pidRaw = planningId != null && String(planningId).trim() !== '' ? Number(planningId) : null;
         const pid = Number.isFinite(pidRaw) ? pidRaw : null;
 
         let rows;
-        if (pid == null) {
+        if (pid === null) {
             rows = await query(
-                            `SELECT SUM(pe2.hours_planned) AS planned_hours
-                             FROM plan_entries pe2
-                             WHERE pe2.mold_id = ?
-                                 AND pe2.part_id = ?
-                                 AND pe2.machine_id = ?`,
-                            [moldId, partId, machineId]
+                `SELECT SUM(pe2.hours_planned) AS planned_hours
+                 FROM plan_entries pe2
+                 WHERE pe2.mold_id = ?
+                     AND pe2.part_id = ?
+                     AND pe2.machine_id = ?`,
+                [moldId, partId, machineId]
             );
         } else {
             rows = await query(
-                            `SELECT SUM(pe2.hours_planned) AS planned_hours
-                             FROM plan_entries pe2
-                             WHERE pe2.mold_id = ?
-                                 AND pe2.part_id = ?
-                                 AND pe2.machine_id = ?
-                                 AND CASE
-                                     WHEN ?::int IS NULL THEN pe2.planning_id IS NULL
-                                     ELSE pe2.planning_id = ?::int
-                                 END`,
-                            [moldId, partId, machineId, pid, pid]
+                `SELECT SUM(pe2.hours_planned) AS planned_hours
+                 FROM plan_entries pe2
+                 WHERE pe2.mold_id = ?
+                     AND pe2.part_id = ?
+                     AND pe2.machine_id = ?
+                     AND pe2.planning_id = ?`,
+                [moldId, partId, machineId, pid]
             );
+
+            // Fallback defensivo: si no hay match estricto por planning_id,
+            // usar la ventana por fecha de inicio del ciclo para cubrir datos legacy/backfill.
+            if (rows?.[0]?.planned_hours == null) {
+                const planRows = await query(
+                    `SELECT to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS start_date
+                     FROM planning_history
+                     WHERE id = ?
+                     LIMIT 1`,
+                    [pid]
+                );
+                const startDate = planRows?.[0]?.start_date || null;
+                if (startDate) {
+                    rows = await query(
+                        `SELECT SUM(pe2.hours_planned) AS planned_hours
+                         FROM plan_entries pe2
+                         WHERE pe2.mold_id = ?
+                             AND pe2.part_id = ?
+                             AND pe2.machine_id = ?
+                             AND pe2.date >= ?`,
+                        [moldId, partId, machineId, startDate]
+                    );
+                }
+            }
         }
         const v = rows?.[0]?.planned_hours;
         if (v == null) return null;
@@ -284,16 +305,22 @@ const getWorkLogs = async (req, res, next) => {
             JOIN mold_parts mp ON wl.part_id = mp.id
             JOIN machines ma ON wl.machine_id = ma.id
             JOIN operators o ON wl.operator_id = o.id
+                        LEFT JOIN planning_history ph ON ph.id = wl.planning_id
             LEFT JOIN LATERAL (
                                 SELECT SUM(pe2.hours_planned) AS planned_hours
                 FROM plan_entries pe2
                 WHERE pe2.mold_id = wl.mold_id
                   AND pe2.part_id = wl.part_id
                   AND pe2.machine_id = wl.machine_id
-                AND (
-                    pe2.planning_id = wl.planning_id
-                    OR (pe2.planning_id IS NULL AND wl.planning_id IS NULL)
-                )
+                                    AND (
+                                        pe2.planning_id = wl.planning_id
+                                        OR (pe2.planning_id IS NULL AND wl.planning_id IS NULL)
+                                        OR (
+                                                wl.planning_id IS NOT NULL
+                                                AND COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date) IS NOT NULL
+                                                AND pe2.date >= COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date)
+                                        )
+                                    )
             ) pe ON TRUE
             ${whereClause}
             ORDER BY wl.recorded_at DESC
