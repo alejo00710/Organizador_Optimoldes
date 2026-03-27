@@ -46,6 +46,67 @@ async function initializeDatabase() {
         console.log('✅ Tablas verificadas y aseguradas.');
 
         // Migraciones pequeñas e idempotentes (solo desarrollo)
+        // planning_history.status (estado del ciclo)
+        try {
+            await query(
+                `DO $$
+                 BEGIN
+                   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'planning_status') THEN
+                     CREATE TYPE planning_status AS ENUM ('IN_PROGRESS', 'COMPLETED');
+                   END IF;
+                 END$$;`
+            );
+
+            const col = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'planning_history'
+                   AND column_name = 'status'`
+            );
+            const hasCol = Number(col?.[0]?.cnt || 0) > 0;
+            if (!hasCol) {
+                await query(`ALTER TABLE planning_history ADD COLUMN status planning_status NOT NULL DEFAULT 'IN_PROGRESS'`);
+                console.log('✅ Migración aplicada: planning_history.status');
+            }
+
+            await query(
+                `UPDATE planning_history ph
+                 SET status = CASE
+                     WHEN x.planned_pairs > 0 AND x.closed_pairs >= x.planned_pairs THEN 'COMPLETED'::planning_status
+                     ELSE 'IN_PROGRESS'::planning_status
+                 END
+                 FROM (
+                     WITH plan_pairs AS (
+                         SELECT pe.planning_id, pe.part_id, pe.machine_id, SUM(pe.hours_planned) AS planned_hours
+                         FROM plan_entries pe
+                         WHERE pe.planning_id IS NOT NULL
+                         GROUP BY pe.planning_id, pe.part_id, pe.machine_id
+                     ),
+                     final_pairs AS (
+                         SELECT DISTINCT wl.planning_id, wl.part_id, wl.machine_id
+                         FROM work_logs wl
+                         WHERE wl.planning_id IS NOT NULL
+                           AND wl.is_final_log = TRUE
+                     )
+                     SELECT
+                         pp.planning_id,
+                         SUM(CASE WHEN pp.planned_hours > 0 THEN 1 ELSE 0 END) AS planned_pairs,
+                         SUM(CASE WHEN pp.planned_hours > 0 AND fp.part_id IS NOT NULL THEN 1 ELSE 0 END) AS closed_pairs
+                     FROM plan_pairs pp
+                     LEFT JOIN final_pairs fp
+                       ON fp.planning_id = pp.planning_id
+                      AND fp.part_id = pp.part_id
+                      AND fp.machine_id = pp.machine_id
+                     GROUP BY pp.planning_id
+                 ) x
+                 WHERE ph.id = x.planning_id
+                   AND ph.event_type = 'PLANNED'`
+            );
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración planning_history.status:', e.message);
+        }
+
         try {
             const col = await query(
                 `SELECT COUNT(1) AS cnt
@@ -171,6 +232,17 @@ async function initializeDatabase() {
             );
         } catch (e) {
             console.warn('⚠️ No se pudo aplicar migración work_logs.planning_id:', e.message);
+        }
+
+        // Índice único parcial para evitar duplicación de cierres finales por celda del ciclo
+        try {
+            await query(
+                `CREATE UNIQUE INDEX IF NOT EXISTS idx_work_logs_final_unique_cell
+                 ON work_logs (planning_id, part_id, machine_id)
+                 WHERE is_final_log = TRUE`
+            );
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar índice único parcial de work_logs finales:', e.message);
         }
 
         // plan_entries.planning_id (vínculo del plan diario al ciclo de planificación)

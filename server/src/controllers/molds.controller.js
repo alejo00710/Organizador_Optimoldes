@@ -5,6 +5,12 @@ function round2(n) {
     return Math.round(x * 100) / 100;
 }
 
+function clampPercent100(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return null;
+    return round2(Math.max(0, Math.min(100, v)));
+}
+
 function getColombiaTodayISO() {
     try {
         const parts = new Intl.DateTimeFormat('en-CA', {
@@ -56,29 +62,6 @@ function parsePlanningIdQuery(req) {
     return Number.isFinite(id) && id > 0 ? id : NaN;
 }
 
-async function getActivePlanningMetaForMold(moldId, asOfISO = null) {
-    const refDate = (asOfISO && /^\d{4}-\d{2}-\d{2}$/.test(String(asOfISO))) ? String(asOfISO) : null;
-    const rows = await query(
-        `SELECT
-             id,
-             to_char(to_start_date, 'YYYY-MM-DD') AS "startDate"
-         FROM planning_history
-         WHERE mold_id = ?
-           AND event_type = 'PLANNED'
-           ${refDate ? 'AND (to_start_date IS NULL OR to_start_date <= ?)' : ''}
-         ORDER BY to_start_date DESC NULLS LAST, created_at DESC, id DESC
-         LIMIT 1`,
-        refDate ? [moldId, refDate] : [moldId]
-    );
-
-    if (!rows?.length) return { planningId: null, startDate: null };
-    const id = Number(rows[0].id);
-    return {
-        planningId: Number.isFinite(id) ? id : null,
-        startDate: rows[0].startDate || null,
-    };
-}
-
 function buildWorkLogScopeSql({ alias, moldId, planningId, startDate }) {
     if (planningId) {
         return {
@@ -94,91 +77,27 @@ function buildWorkLogScopeSql({ alias, moldId, planningId, startDate }) {
     };
 }
 
-function buildPlanEntriesScopeSql({ alias, planningId = null, startDate, nextStartDate, planningCreatedAt, nextPlanningCreatedAt }) {
+function buildPlanEntriesScopeSql({ alias, planningId = null }) {
     const a = alias || 'p';
-    const hasValidNextStart = !!(startDate && nextStartDate && String(nextStartDate) > String(startDate));
     if (planningId) {
-        const fallbackParts = [];
-        const fallbackParams = [];
-
-        if (planningCreatedAt) {
-            fallbackParts.push(`${a}.created_at >= (?::timestamptz - interval '30 minutes')`);
-            fallbackParams.push(planningCreatedAt);
-            if (nextPlanningCreatedAt) {
-                fallbackParts.push(`${a}.created_at < ?::timestamptz`);
-                fallbackParams.push(nextPlanningCreatedAt);
-            }
-        }
-        if (startDate) {
-            fallbackParts.push(`${a}.date >= ?`);
-            fallbackParams.push(startDate);
-        }
-        if (hasValidNextStart) {
-            fallbackParts.push(`${a}.date < ?`);
-            fallbackParams.push(nextStartDate);
-        }
-
-        if (fallbackParts.length) {
-            return {
-                clause: ` AND (${a}.planning_id = ? OR (${a}.planning_id IS NULL AND ${fallbackParts.join(' AND ')})) `,
-                params: [planningId, ...fallbackParams],
-            };
-        }
-
         return {
             clause: ` AND ${a}.planning_id = ? `,
             params: [planningId],
         };
     }
 
-    if (planningCreatedAt) {
-        // Los plan_entries suelen insertarse segundos antes de registrar planning_history.
-        // Combinamos ventana por created_at + límites por fecha del ciclo para no mezclar ciclos.
-        const parts = [`${a}.created_at >= (?::timestamptz - interval '30 minutes')`];
-        const params = [planningCreatedAt];
-
-        if (nextPlanningCreatedAt) {
-            parts.push(`${a}.created_at < ?::timestamptz`);
-            params.push(nextPlanningCreatedAt);
-        }
-        if (startDate) {
-            parts.push(`${a}.date >= ?`);
-            params.push(startDate);
-        }
-        if (hasValidNextStart) {
-            parts.push(`${a}.date < ?`);
-            params.push(nextStartDate);
-        }
-
-        return {
-            clause: ` AND ${parts.join(' AND ')} `,
-            params,
-        };
-    }
-
-    if (!startDate) return { clause: '', params: [] };
-    if (hasValidNextStart) {
-        return {
-            clause: ` AND ${a}.date >= ? AND ${a}.date < ? `,
-            params: [startDate, nextStartDate],
-        };
-    }
-    return {
-        clause: ` AND ${a}.date >= ? `,
-        params: [startDate],
-    };
+    return { clause: ' AND 1=0 ', params: [] };
 }
 
 async function getProgressPlanningMetaForMold(moldId, { requestedPlanningId = null, asOfISO = null } = {}) {
-    const refDate = (asOfISO && /^\d{4}-\d{2}-\d{2}$/.test(String(asOfISO))) ? String(asOfISO) : null;
+    const refDate = isValidISODateString(asOfISO) ? asOfISO : null;
 
     let rows;
     if (requestedPlanningId) {
         rows = await query(
             `SELECT
                  id,
-                 to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "startDate",
-                 created_at AS "createdAt"
+                 to_char(to_start_date, 'YYYY-MM-DD') AS "startDate"
              FROM planning_history
              WHERE mold_id = ?
                AND id = ?
@@ -190,29 +109,43 @@ async function getProgressPlanningMetaForMold(moldId, { requestedPlanningId = nu
         rows = await query(
             `SELECT
                  id,
-                                 to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "startDate",
-                 created_at AS "createdAt"
+                 to_char(to_start_date, 'YYYY-MM-DD') AS "startDate"
              FROM planning_history
              WHERE mold_id = ?
                AND event_type = 'PLANNED'
-                             ${refDate ? "AND (COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) IS NULL OR COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) <= ?) AND (created_at AT TIME ZONE 'America/Bogota')::date <= ? AND EXISTS (SELECT 1 FROM plan_entries pe WHERE pe.mold_id = planning_history.mold_id AND pe.created_at >= (planning_history.created_at - interval '30 minutes') AND pe.date <= ?)" : ''}
-                         ORDER BY COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) DESC NULLS LAST, created_at DESC, id DESC
+               AND status = 'IN_PROGRESS'
+             ORDER BY id DESC
              LIMIT 1`,
-            refDate ? [moldId, refDate, refDate, refDate] : [moldId]
-        );
+            [moldId]
+        ).catch(() => []);
 
-        // Fallback: si con refDate no encontró ciclo (ej. plan nuevo con startDate futuro),
-        // resolver al último ciclo PLANNED del molde.
-        if ((!rows || !rows.length) && !requestedPlanningId) {
+        // Si no hay ciclo activo, usar el último planning válido por fecha.
+        if ((!rows || !rows.length) && refDate) {
             rows = await query(
                 `SELECT
                      id,
-                     to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "startDate",
-                     created_at AS "createdAt"
+                     to_char(to_start_date, 'YYYY-MM-DD') AS "startDate"
                  FROM planning_history
                  WHERE mold_id = ?
                    AND event_type = 'PLANNED'
-                 ORDER BY COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date) DESC NULLS LAST, created_at DESC, id DESC
+                   AND (to_start_date IS NULL OR to_start_date <= ?)
+                   AND (to_end_date IS NULL OR to_end_date >= ?)
+                 ORDER BY to_start_date DESC NULLS LAST, id DESC
+                 LIMIT 1`,
+                [moldId, refDate, refDate]
+            );
+        }
+
+        // Fallback final: último ciclo histórico del molde.
+        if (!rows || !rows.length) {
+            rows = await query(
+                `SELECT
+                     id,
+                     to_char(to_start_date, 'YYYY-MM-DD') AS "startDate"
+                 FROM planning_history
+                 WHERE mold_id = ?
+                   AND event_type = 'PLANNED'
+                 ORDER BY id DESC
                  LIMIT 1`,
                 [moldId]
             );
@@ -231,34 +164,13 @@ async function getProgressPlanningMetaForMold(moldId, { requestedPlanningId = nu
 
     const planningId = Number(rows[0].id);
     const startDate = rows[0].startDate || null;
-    const planningCreatedAt = rows[0].createdAt || null;
-
-    let nextStartDate = null;
-    let nextPlanningCreatedAt = null;
-    if (planningCreatedAt) {
-        const nextRows = await query(
-            `SELECT
-                 to_char(COALESCE(substring(note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, to_start_date), 'YYYY-MM-DD') AS "nextStartDate",
-                 created_at AS "nextCreatedAt"
-             FROM planning_history
-             WHERE mold_id = ?
-               AND event_type = 'PLANNED'
-               AND id <> ?
-               AND created_at > ?
-             ORDER BY created_at ASC, id ASC
-             LIMIT 1`,
-            [moldId, planningId, planningCreatedAt]
-        );
-        nextStartDate = nextRows?.[0]?.nextStartDate || null;
-        nextPlanningCreatedAt = nextRows?.[0]?.nextCreatedAt || null;
-    }
 
     return {
         planningId: Number.isFinite(planningId) ? planningId : null,
         startDate,
-        nextStartDate,
-        planningCreatedAt,
-        nextPlanningCreatedAt,
+        nextStartDate: null,
+        planningCreatedAt: null,
+        nextPlanningCreatedAt: null,
     };
 }
 
@@ -280,7 +192,8 @@ function mapHistoryEventLabel(eventType) {
     return code || 'Evento';
 }
 
-async function getPlanningHistory(moldId, { currentRange = null, completionDate = null, includeCompletion = false } = {}) {
+async function getPlanningHistory(moldId, planningId, { currentRange = null, completionDate = null, includeCompletion = false } = {}) {
+        const cycleId = Number(planningId || 0);
     const rows = await query(
         `SELECT
              id,
@@ -293,9 +206,25 @@ async function getPlanningHistory(moldId, { currentRange = null, completionDate 
              to_char(created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS "eventDate",
              to_char(created_at AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD HH24:MI:SS') AS "eventAt"
          FROM planning_history
-         WHERE mold_id = ?
+                 WHERE mold_id = ?
+                     AND id >= ?
+                     AND created_at >= (
+                             SELECT ph0.created_at
+                             FROM planning_history ph0
+                             WHERE ph0.id = ?
+                                 AND ph0.mold_id = ?
+                                 AND ph0.event_type = 'PLANNED'
+                             LIMIT 1
+                     )
+                     AND created_at < COALESCE((
+                             SELECT MIN(ph1.created_at)
+                             FROM planning_history ph1
+                             WHERE ph1.mold_id = ?
+                                 AND ph1.event_type = 'PLANNED'
+                                 AND ph1.id > ?
+                     ), 'infinity'::timestamptz)
          ORDER BY created_at ASC, id ASC`,
-        [moldId]
+                [moldId, cycleId, cycleId, moldId, moldId, cycleId]
     );
 
     const timeline = (rows || []).map(r => ({
@@ -457,7 +386,7 @@ async function getMoldProgressBreakdown(moldId, { asOfISO = null, dayISO = null,
             machineName: String(r.machineName || ''),
             plannedHours: round2(plannedHours),
             actualHours: round2(actualHours),
-            percentComplete: machinePct == null ? null : round2(machinePct),
+            percentComplete: machinePct == null ? null : clampPercent100(machinePct),
             isComplete: !!machineIsComplete,
             isOverrun: !!isOverrun,
         });
@@ -470,7 +399,7 @@ async function getMoldProgressBreakdown(moldId, { asOfISO = null, dayISO = null,
             partName: p.partName,
             plannedHoursTotal: round2(p.plannedHoursTotal),
             actualHoursTotal: round2(p.actualHoursTotal),
-            percentComplete: pct == null ? null : round2(pct),
+            percentComplete: pct == null ? null : clampPercent100(pct),
             machines: p.machines,
         };
     });
@@ -483,7 +412,7 @@ async function getMoldProgressBreakdown(moldId, { asOfISO = null, dayISO = null,
         totals: {
             plannedTotalHours: round2(plannedTotalHours),
             actualTotalHours: round2(actualTotalHours),
-            percentComplete: plannedTotalHours > 0 ? round2((actualTotalHours / plannedTotalHours) * 100) : null,
+            percentComplete: plannedTotalHours > 0 ? clampPercent100((actualTotalHours / plannedTotalHours) * 100) : null,
             totalPartsWithPlan,
             totalCellsWithPlan,
             completedCells,
@@ -498,6 +427,172 @@ function getAsOfISO(req) {
     if (asOfRaw == null) return null;
     const asOf = String(asOfRaw).trim();
     return isValidISODateString(asOf) ? asOf : null;
+}
+
+async function getLatestPlanningIdForMold(moldId) {
+    const rows = await query(
+        `SELECT id
+         FROM planning_history
+         WHERE mold_id = ?
+           AND event_type = 'PLANNED'
+         ORDER BY id DESC
+         LIMIT 1`,
+        [moldId]
+    );
+    const planningId = Number(rows?.[0]?.id || 0);
+    return Number.isFinite(planningId) && planningId > 0 ? planningId : null;
+}
+
+async function getPlanningStatus(planningId) {
+    const pid = Number(planningId || 0);
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+
+    try {
+        const statusRows = await query(
+            `SELECT status
+             FROM planning_history
+             WHERE id = ?
+               AND event_type = 'PLANNED'
+             LIMIT 1`,
+            [pid]
+        );
+        const statusRaw = String(statusRows?.[0]?.status || '').toUpperCase();
+        if (statusRaw === 'COMPLETED') return 'completed';
+        if (statusRaw === 'IN_PROGRESS') return 'in_progress';
+    } catch (_) {}
+
+    const rows = await query(
+        `WITH plan_pairs AS (
+             SELECT pe.part_id, pe.machine_id, SUM(pe.hours_planned) AS planned_hours
+             FROM plan_entries pe
+             WHERE pe.planning_id = ?
+             GROUP BY pe.part_id, pe.machine_id
+         ),
+         final_pairs AS (
+             SELECT DISTINCT wl.part_id, wl.machine_id
+             FROM work_logs wl
+             WHERE wl.planning_id = ?
+               AND wl.is_final_log = TRUE
+         )
+         SELECT
+             SUM(CASE WHEN pp.planned_hours > 0 THEN 1 ELSE 0 END) AS planned_pairs,
+             SUM(CASE WHEN pp.planned_hours > 0 AND fp.part_id IS NOT NULL THEN 1 ELSE 0 END) AS closed_pairs
+         FROM plan_pairs pp
+         LEFT JOIN final_pairs fp ON fp.part_id = pp.part_id AND fp.machine_id = pp.machine_id`,
+        [pid, pid]
+    );
+
+    const plannedPairs = Number(rows?.[0]?.planned_pairs || 0);
+    const closedPairs = Number(rows?.[0]?.closed_pairs || 0);
+    if (plannedPairs <= 0) {
+        const legacyRows = await query(
+            `SELECT COUNT(1) AS cnt
+             FROM work_logs
+             WHERE planning_id = ?
+               AND is_final_log = TRUE`,
+            [pid]
+        );
+        const legacyFinals = Number(legacyRows?.[0]?.cnt || 0);
+        if (legacyFinals > 0) return 'completed';
+        return null;
+    }
+    return closedPairs >= plannedPairs ? 'completed' : 'in_progress';
+}
+
+async function listMoldPlanningCycles() {
+    return query(
+        `SELECT
+             m.id AS "moldId",
+             m.name AS "moldName",
+             ph.id AS "planningId"
+         FROM molds m
+         JOIN planning_history ph
+           ON ph.mold_id = m.id
+          AND ph.event_type = 'PLANNED'
+         WHERE m.is_active = TRUE
+         AND ph.id = (
+             SELECT MAX(ph2.id)
+             FROM planning_history ph2
+             WHERE ph2.mold_id = m.id
+               AND ph2.event_type = 'PLANNED'
+         )
+         ORDER BY m.name ASC`
+    );
+}
+
+async function listAllPlanningCycles() {
+    return query(
+        `SELECT
+             m.id AS "moldId",
+             m.name AS "moldName",
+             ph.id AS "planningId"
+         FROM molds m
+         JOIN planning_history ph
+           ON ph.mold_id = m.id
+          AND ph.event_type = 'PLANNED'
+         WHERE m.is_active = TRUE
+         ORDER BY ph.id DESC`
+    );
+}
+
+async function getCompletedMoldSummary({ moldId, moldName, planningId, todayISO }) {
+    const totalsRows = await query(
+        `SELECT
+             SUM(wl.hours_worked) AS "actualTotal",
+             SUM(CASE WHEN COALESCE(wl.work_date, wl.recorded_at::date) <= ? THEN wl.hours_worked ELSE 0 END) AS "actualToDate",
+             to_char(MAX(COALESCE(wl.work_date, wl.recorded_at::date)), 'YYYY-MM-DD') AS "lastWorkDate",
+             SUM(CASE WHEN wl.is_final_log = TRUE THEN COALESCE(wl.planned_hours_snapshot, 0) ELSE 0 END) AS "plannedByFinalSnapshots",
+             COUNT(CASE WHEN wl.is_final_log = TRUE THEN 1 END) AS "closedCells"
+         FROM work_logs wl
+         WHERE wl.mold_id = ?
+           AND wl.planning_id = ?`,
+        [todayISO, moldId, planningId]
+    );
+    const totals = totalsRows?.[0] || {};
+
+    const planningRows = await query(
+        `SELECT
+             to_char(to_start_date, 'YYYY-MM-DD') AS "startDate",
+             to_char(to_end_date, 'YYYY-MM-DD') AS "endDate"
+         FROM planning_history
+         WHERE id = ?
+         LIMIT 1`,
+        [planningId]
+    );
+    const planning = planningRows?.[0] || {};
+
+    const plannedTotal = Number(totals?.plannedByFinalSnapshots || 0);
+    const actualTotal = Number(totals?.actualTotal || 0);
+    const actualToDate = Number(totals?.actualToDate || 0);
+    const closedCells = Number(totals?.closedCells || 0);
+
+    return {
+        moldId,
+        moldName,
+        planningId,
+        status: 'completed',
+        planning: {
+            planningId,
+            status: 'completed',
+            startDate: planning?.startDate || null,
+            endDate: planning?.endDate || null,
+        },
+        planWindow: {
+            startDate: planning?.startDate || null,
+            endDate: planning?.endDate || null,
+        },
+        lastWorkDate: totals?.lastWorkDate || null,
+        totals: {
+            plannedTotalHours: round2(plannedTotal),
+            plannedToDateHours: round2(plannedTotal),
+            actualTotalHours: round2(actualTotal),
+            actualToDateHours: round2(actualToDate),
+            varianceToDateHours: round2(actualToDate - plannedTotal),
+            percentComplete: plannedTotal > 0 ? clampPercent100((actualTotal / plannedTotal) * 100) : 100,
+            totalPartsWithPlan: closedCells,
+            completedParts: closedCells,
+        },
+    };
 }
 
 // --- Controladores para MOLDES ---
@@ -590,6 +685,9 @@ const getMoldProgress = async (req, res, next) => {
 
         if (requestedPlanningId && !planningMeta.planningId) {
             return res.status(404).json({ error: 'planning_id no encontrado para este molde' });
+        }
+        if (!planningMeta.planningId) {
+            return res.status(404).json({ error: 'No existe planificación para este molde' });
         }
 
         const planScope = buildPlanEntriesScopeSql({
@@ -733,10 +831,10 @@ const getMoldProgress = async (req, res, next) => {
                 actualTotalHours: round2(actualTotal),
                 actualToDateHours: round2(actualToDate),
                 varianceToDateHours: round2(varianceToDate),
-                percentComplete: plannedTotal > 0 ? round2((actualTotal / plannedTotal) * 100) : null,
+                percentComplete: plannedTotal > 0 ? clampPercent100((actualTotal / plannedTotal) * 100) : null,
             },
             daily,
-            planningHistory: await getPlanningHistory(moldId, {
+            planningHistory: await getPlanningHistory(moldId, planningMeta.planningId, {
                 currentRange,
                 completionDate: lastWorkDate,
                 includeCompletion: isCompleted,
@@ -763,74 +861,7 @@ const getMoldProgress = async (req, res, next) => {
     }
 };
 
-async function listPlannedCycles(asOfISO, { onlyLatestPerMold = false } = {}) {
-    const rows = await query(
-        `SELECT
-             ph.id AS "planningId",
-             ph.mold_id AS "moldId",
-             m.name AS "moldName",
-             to_char(COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date), 'YYYY-MM-DD') AS "startDate",
-             ph.created_at AS "planningCreatedAt",
-             LEAD(ph.created_at) OVER (PARTITION BY ph.mold_id ORDER BY ph.created_at ASC, ph.id ASC) AS "nextPlanningCreatedAt",
-             to_char(
-               LEAD(COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date)) OVER (PARTITION BY ph.mold_id ORDER BY ph.created_at ASC, ph.id ASC),
-               'YYYY-MM-DD'
-             ) AS "nextStartDate"
-         FROM planning_history ph
-         JOIN molds m ON m.id = ph.mold_id
-         WHERE ph.event_type = 'PLANNED'
-           AND m.is_active = TRUE
-                     AND (
-                                ?::date IS NULL
-                                OR COALESCE(substring(ph.note FROM '(\\d{4}-\\d{2}-\\d{2})')::date, ph.to_start_date) <= ?::date
-                                OR EXISTS (
-                                        SELECT 1
-                                        FROM work_logs wl
-                                        WHERE wl.mold_id = ph.mold_id
-                                            AND COALESCE(wl.work_date, wl.recorded_at::date) <= ?::date
-                                )
-                     )
-         ORDER BY ph.created_at ASC, ph.id ASC`,
-                [asOfISO || null, asOfISO || null, asOfISO || null]
-    );
-
-    const mapped = (rows || []).map(r => ({
-        planningId: Number(r.planningId),
-        moldId: Number(r.moldId),
-        moldName: r.moldName,
-        startDate: r.startDate || null,
-        nextStartDate: r.nextStartDate || null,
-        planningCreatedAt: r.planningCreatedAt || null,
-        nextPlanningCreatedAt: r.nextPlanningCreatedAt || null,
-    })).filter(r => Number.isFinite(r.moldId) && r.moldId > 0);
-
-    if (!onlyLatestPerMold) return mapped;
-
-    const latestByMold = new Map();
-    for (const r of mapped) {
-        latestByMold.set(r.moldId, {
-            planningId: Number(r.planningId),
-            moldId: r.moldId,
-            moldName: r.moldName,
-            startDate: r.startDate || null,
-            nextStartDate: null,
-            planningCreatedAt: r.planningCreatedAt || null,
-            nextPlanningCreatedAt: null,
-        });
-    }
-    return Array.from(latestByMold.values());
-}
-
-async function getCycleSummary(cycle, todayISO) {
-    const planScope = buildPlanEntriesScopeSql({
-        alias: 'p',
-        planningId: cycle.planningId,
-        startDate: cycle.startDate,
-        nextStartDate: cycle.nextStartDate,
-        planningCreatedAt: cycle.planningCreatedAt,
-        nextPlanningCreatedAt: cycle.nextPlanningCreatedAt,
-    });
-
+async function getMoldCycleSummary({ moldId, moldName, planningId, todayISO, status }) {
     const plannedRows = await query(
         `SELECT
              to_char(MIN(p.date), 'YYYY-MM-DD') AS "startDate",
@@ -839,24 +870,17 @@ async function getCycleSummary(cycle, todayISO) {
              SUM(CASE WHEN p.date <= ? THEN p.hours_planned ELSE 0 END) AS "plannedToDate"
          FROM plan_entries p
          WHERE p.mold_id = ?
-           ${planScope.clause}`,
-        [todayISO, cycle.moldId, ...planScope.params]
+           AND p.planning_id = ?`,
+        [todayISO, moldId, planningId]
     );
     const planned = plannedRows?.[0] || {};
-
-    const wlScope = buildWorkLogScopeSql({
-        alias: 'wl',
-        moldId: cycle.moldId,
-        planningId: cycle.planningId,
-        startDate: cycle.startDate,
-    });
 
     const actualRows = await query(
         `WITH plan_pairs AS (
              SELECT DISTINCT p.part_id, p.machine_id
              FROM plan_entries p
              WHERE p.mold_id = ?
-               ${planScope.clause}
+               AND p.planning_id = ?
          )
          SELECT
              SUM(wl.hours_worked) AS "actualTotal",
@@ -865,8 +889,8 @@ async function getCycleSummary(cycle, todayISO) {
          FROM work_logs wl
          JOIN plan_pairs pp ON pp.part_id = wl.part_id AND pp.machine_id = wl.machine_id
          WHERE wl.mold_id = ?
-           ${wlScope.clause}`,
-        [cycle.moldId, ...planScope.params, todayISO, cycle.moldId, ...wlScope.params]
+           AND wl.planning_id = ?`,
+        [moldId, planningId, todayISO, moldId, planningId]
     );
     const actual = actualRows?.[0] || {};
 
@@ -875,22 +899,22 @@ async function getCycleSummary(cycle, todayISO) {
              SELECT p.part_id, p.machine_id, SUM(p.hours_planned) AS planned_hours
              FROM plan_entries p
              WHERE p.mold_id = ?
-               ${planScope.clause}
+               AND p.planning_id = ?
              GROUP BY p.part_id, p.machine_id
          ),
          final_pairs AS (
              SELECT DISTINCT wl.part_id, wl.machine_id
              FROM work_logs wl
              WHERE wl.mold_id = ?
+               AND wl.planning_id = ?
                AND wl.is_final_log = TRUE
-               ${wlScope.clause}
          )
          SELECT
              SUM(CASE WHEN pp.planned_hours > 0 THEN 1 ELSE 0 END) AS planned_pairs,
              SUM(CASE WHEN pp.planned_hours > 0 AND fp.part_id IS NOT NULL THEN 1 ELSE 0 END) AS closed_pairs
          FROM plan_pairs pp
          LEFT JOIN final_pairs fp ON fp.part_id = pp.part_id AND fp.machine_id = pp.machine_id`,
-        [cycle.moldId, ...planScope.params, cycle.moldId, ...wlScope.params]
+        [moldId, planningId, moldId, planningId]
     );
 
     const plannedTotal = Number(planned?.plannedTotal || 0);
@@ -901,13 +925,15 @@ async function getCycleSummary(cycle, todayISO) {
     const completedCells = Number(completionRows?.[0]?.closed_pairs || 0);
 
     return {
-        moldId: cycle.moldId,
-        moldName: cycle.moldName,
-        planningId: cycle.planningId,
+        moldId,
+        moldName,
+        planningId,
+        status,
         planning: {
-            planningId: cycle.planningId,
-            startDate: cycle.startDate || null,
-            nextStartDate: cycle.nextStartDate || null,
+            planningId,
+            status,
+            startDate: planned?.startDate || null,
+            endDate: planned?.endDate || null,
         },
         planWindow: {
             startDate: planned?.startDate || null,
@@ -920,7 +946,7 @@ async function getCycleSummary(cycle, todayISO) {
             actualTotalHours: round2(actualTotal),
             actualToDateHours: round2(actualToDate),
             varianceToDateHours: round2(actualToDate - plannedToDate),
-            percentComplete: plannedTotal > 0 ? round2((actualTotal / plannedTotal) * 100) : null,
+            percentComplete: plannedTotal > 0 ? clampPercent100((actualTotal / plannedTotal) * 100) : null,
             totalPartsWithPlan: totalCellsWithPlan,
             completedParts: completedCells,
         },
@@ -946,14 +972,25 @@ const getMoldsInProgress = async (req, res, next) => {
         if (!Number.isInteger(limit) || limit <= 0) limit = 50;
         if (limit > 200) limit = 200;
 
-        const cycles = await listPlannedCycles(todayISO, { onlyLatestPerMold: true });
+        const latestCycles = await listMoldPlanningCycles();
         const summaries = [];
-        for (const cycle of cycles) {
-            const summary = await getCycleSummary(cycle, todayISO);
+        for (const cycle of latestCycles) {
+            const moldId = Number(cycle.moldId);
+            const planningId = Number(cycle.planningId || 0);
+            if (!planningId) continue;
+
+            const status = await getPlanningStatus(planningId);
+            if (status !== 'in_progress') continue;
+
+            const summary = await getMoldCycleSummary({
+                moldId,
+                moldName: cycle.moldName,
+                planningId,
+                todayISO,
+                status,
+            });
             const totalParts = Number(summary?.totals?.totalPartsWithPlan || 0);
-            const completedParts = Number(summary?.totals?.completedParts || 0);
             if (!isFiniteNumber(totalParts) || totalParts <= 0) continue;
-            if (isFiniteNumber(completedParts) && completedParts >= totalParts) continue;
             summaries.push({
                 ...summary,
                 today: todayISO,
@@ -987,14 +1024,17 @@ const getMoldsCompleted = async (req, res, next) => {
         if (!Number.isInteger(limit) || limit <= 0) limit = 50;
         if (limit > 500) limit = 500;
 
-        const cycles = await listPlannedCycles(todayISO, { onlyLatestPerMold: false });
+        const allCycles = await listAllPlanningCycles();
         let molds = [];
-        for (const cycle of cycles) {
-            const summary = await getCycleSummary(cycle, todayISO);
-            const totalParts = Number(summary?.totals?.totalPartsWithPlan || 0);
-            const completedParts = Number(summary?.totals?.completedParts || 0);
-            if (!isFiniteNumber(totalParts) || totalParts <= 0) continue;
-            if (!(isFiniteNumber(completedParts) && completedParts >= totalParts)) continue;
+        for (const cycle of allCycles) {
+            const moldId = Number(cycle.moldId);
+            const planningId = Number(cycle.planningId || 0);
+            if (!planningId) continue;
+
+            const status = await getPlanningStatus(planningId);
+            if (status !== 'completed') continue;
+
+            const summary = await getCompletedMoldSummary({ moldId, moldName: cycle.moldName, planningId, todayISO });
             molds.push({
                 ...summary,
                 today: todayISO,
@@ -1004,15 +1044,6 @@ const getMoldsCompleted = async (req, res, next) => {
         molds = molds
             .sort((a, b) => String(b?.lastWorkDate || '').localeCompare(String(a?.lastWorkDate || '')))
             .slice(0, limit);
-
-        // Filtro opcional por mes/año (historial por mes)
-        const ym = parseYMQuery(req);
-        if (ym) {
-            molds = molds.filter(m => {
-                const d = String(m?.lastWorkDate || '');
-                return d.startsWith(ym.ymPrefix);
-            });
-        }
 
         res.json({ today: todayISO, count: molds.length, molds });
     } catch (error) {

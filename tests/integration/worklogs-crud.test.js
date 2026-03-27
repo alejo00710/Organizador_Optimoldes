@@ -34,18 +34,55 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
             partId: partRes.insertId,
         };
 
+        const partOtherRes = await query('INSERT INTO mold_parts (name, is_active) VALUES (?, TRUE)', [
+            `${partName}_other`,
+        ]);
+        ids.partIdOther = partOtherRes.insertId;
+
         await query(
-            `INSERT INTO plan_entries (mold_id, part_id, machine_id, date, hours_planned, created_by)
-             VALUES (?, ?, ?, ?, ?, ?),
-                    (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO planning_history (mold_id, event_type, to_start_date, created_by)
+             VALUES (?, 'PLANNED', ?, ?)`,
+            [ids.moldId, '2026-01-14', ctx.userId]
+        );
+        const planningRows = await query(
+            `SELECT id
+             FROM planning_history
+             WHERE mold_id = ? AND event_type = 'PLANNED'
+             ORDER BY id DESC
+             LIMIT 1`,
+            [ids.moldId]
+        );
+        ids.planningId = Number(planningRows?.[0]?.id || 0);
+
+        await query(
+            `INSERT INTO planning_history (mold_id, event_type, to_start_date, created_by)
+             VALUES (?, 'PLANNED', ?, ?)`,
+            [ids.moldId, '2026-02-01', ctx.userId]
+        );
+        const planningNoCellRows = await query(
+            `SELECT id
+             FROM planning_history
+             WHERE mold_id = ? AND event_type = 'PLANNED'
+             ORDER BY id DESC
+             LIMIT 1`,
+            [ids.moldId]
+        );
+        ids.invalidPlanningId = Number(planningNoCellRows?.[0]?.id || 0);
+
+        await query(
+            `INSERT INTO plan_entries (mold_id, planning_id, part_id, machine_id, date, hours_planned, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?),
+                    (?, ?, ?, ?, ?, ?, ?)`,
             [
                 ids.moldId,
+                ids.planningId,
                 ids.partId,
                 ids.machineId,
                 '2026-01-14',
                 3,
                 ctx.userId,
                 ids.moldId,
+                ids.planningId,
                 ids.partId,
                 ids.machineId,
                 '2026-01-20',
@@ -62,26 +99,35 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
                 .delete(`/api/work_logs/${workLogId}`)
                 .set('Authorization', `Bearer ${ctx.token}`);
         }
+
+        if (ids?.moldId) {
+            await query('DELETE FROM work_logs WHERE mold_id = ?', [ids.moldId]);
+        }
+
         if (ids?.moldId && ids?.partId && ids?.machineId) {
             await query(
                 'DELETE FROM plan_entries WHERE mold_id = ? AND part_id = ? AND machine_id = ?',
                 [ids.moldId, ids.partId, ids.machineId]
             );
         }
+        if (ids?.planningId) await query('DELETE FROM planning_history WHERE id = ?', [ids.planningId]);
+        if (ids?.invalidPlanningId) await query('DELETE FROM planning_history WHERE id = ?', [ids.invalidPlanningId]);
         if (ids?.operatorId) await query('DELETE FROM operators WHERE id = ?', [ids.operatorId]);
         if (ids?.machineId) await query('DELETE FROM machines WHERE id = ?', [ids.machineId]);
         if (ids?.moldId) await query('DELETE FROM molds WHERE id = ?', [ids.moldId]);
         if (ids?.partId) await query('DELETE FROM mold_parts WHERE id = ?', [ids.partId]);
+        if (ids?.partIdOther) await query('DELETE FROM mold_parts WHERE id = ?', [ids.partIdOther]);
 
         if (ctx?.cleanup) await ctx.cleanup();
     });
 
-    it('POST /api/work_logs crea un registro', async () => {
+    it('POST /api/work_logs crea un registro con planning_id válido', async () => {
         const res = await request(app)
             .post('/api/work_logs')
             .set('Authorization', `Bearer ${ctx.token}`)
             .send({
                 moldId: ids.moldId,
+                planning_id: ids.planningId,
                 partId: ids.partId,
                 machineId: ids.machineId,
                 operatorId: ids.operatorId,
@@ -110,14 +156,64 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
         expect(Number(created.diff_hours)).toBeCloseTo(-5.5, 2);
     });
 
-    it('PUT /api/work_logs/:id actualiza horas', async () => {
+    it('POST /api/work_logs retorna 422 si falta planning_id', async () => {
+        await request(app)
+            .post('/api/work_logs')
+            .set('Authorization', `Bearer ${ctx.token}`)
+            .send({
+                moldId: ids.moldId,
+                partId: ids.partId,
+                machineId: ids.machineId,
+                operatorId: ids.operatorId,
+                hours_worked: 1,
+                work_date: '2026-01-14',
+            })
+            .expect(422);
+    });
+
+    it('POST /api/work_logs retorna 409 si la celda no pertenece al ciclo', async () => {
+        await request(app)
+            .post('/api/work_logs')
+            .set('Authorization', `Bearer ${ctx.token}`)
+            .send({
+                moldId: ids.moldId,
+                planning_id: ids.planningId,
+                partId: ids.partIdOther,
+                machineId: ids.machineId,
+                operatorId: ids.operatorId,
+                hours_worked: 1.5,
+                work_date: '2026-01-14',
+            })
+            .expect(409);
+    });
+
+    it('PUT /api/work_logs/:id actualiza sin enviar planning_id', async () => {
         const res = await request(app)
             .put(`/api/work_logs/${workLogId}`)
             .set('Authorization', `Bearer ${ctx.token}`)
-            .send({ hours_worked: 3 })
+            .send({
+                hours_worked: 3,
+            })
             .expect(200);
 
         expect(res.body).toHaveProperty('message');
+        expect(Number(res.body?.data?.planning_id || 0)).toBe(ids.planningId);
+    });
+
+    it('PUT /api/work_logs/:id ignora planning_id enviado y conserva el original', async () => {
+        const res = await request(app)
+            .put(`/api/work_logs/${workLogId}`)
+            .set('Authorization', `Bearer ${ctx.token}`)
+            .send({
+                planning_id: ids.invalidPlanningId,
+                hours_worked: 2,
+            })
+            .expect(200);
+
+        expect(Number(res.body?.data?.planning_id || 0)).toBe(ids.planningId);
+
+        const rows = await query('SELECT planning_id FROM work_logs WHERE id = ? LIMIT 1', [workLogId]);
+        expect(Number(rows?.[0]?.planning_id || 0)).toBe(ids.planningId);
     });
 
     it('DELETE /api/work_logs/:id elimina (admin/planner)', async () => {
@@ -137,6 +233,7 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
             .set('Authorization', `Bearer ${ctx.token}`)
             .send({
                 moldId: ids.moldId,
+                planning_id: ids.planningId,
                 partId: ids.partId,
                 machineId: ids.machineId,
                 operatorId: ids.operatorId,

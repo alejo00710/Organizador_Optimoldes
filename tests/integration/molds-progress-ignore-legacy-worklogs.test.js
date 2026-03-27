@@ -47,6 +47,7 @@ describe('Molds progress ignora work_logs históricos de ciclos previos', () => 
   let partId;
   let machineId;
   let operatorId;
+  let oldPlanningId;
 
   beforeAll(async () => {
     ctx = await createUserAndToken({ role: ROLES.PLANNER });
@@ -82,7 +83,7 @@ describe('Molds progress ignora work_logs históricos de ciclos previos', () => 
     const opRes = await query('INSERT INTO operators (name, user_id, is_active) VALUES (?, NULL, TRUE)', [operatorName]);
     operatorId = opRes.insertId;
 
-    await request(app)
+    const oldPlan = await request(app)
       .post('/api/tasks/plan/block')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({
@@ -91,15 +92,17 @@ describe('Molds progress ignora work_logs históricos de ciclos previos', () => 
         tasks: [{ partName, machineName, totalHours: 2 }],
       })
       .expect(201);
+    oldPlanningId = Number(oldPlan.body?.planningId || 0);
+    expect(oldPlanningId).toBeGreaterThan(0);
 
     moldId = Number((await query('SELECT id FROM molds WHERE name = ? LIMIT 1', [moldName]))?.[0]?.id);
     partId = Number((await query('SELECT id FROM mold_parts WHERE name = ? LIMIT 1', [partName]))?.[0]?.id);
     machineId = Number((await query('SELECT id FROM machines WHERE name = ? LIMIT 1', [machineName]))?.[0]?.id);
 
     await query(
-      `INSERT INTO work_logs (mold_id, part_id, machine_id, operator_id, work_date, hours_worked, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [moldId, partId, machineId, operatorId, oldDate, 2, 'ciclo anterior']
+      `INSERT INTO work_logs (mold_id, planning_id, part_id, machine_id, operator_id, work_date, hours_worked, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [moldId, oldPlanningId, partId, machineId, operatorId, oldDate, 2, 'ciclo anterior']
     );
 
     await request(app)

@@ -5,5 +5,6 @@ const { authenticateToken } = require('../middleware/auth');
 
 // Ruta para la nueva vista de calendario por mes
 router.get('/month-view', authenticateToken, calendarController.getMonthView);
+router.get('/month-view-legacy', authenticateToken, calendarController.getMonthViewLegacy);
 
 module.exports = router;

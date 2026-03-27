@@ -31,8 +31,8 @@ app.use(
         contentSecurityPolicy: {
             directives: {
                 defaultSrc: ["'self'"],
-                scriptSrc: ["'self'", "'unsafe-inline'"],
-                styleSrc: ["'self'", "'unsafe-inline'"],
+                scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+                styleSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
                 imgSrc: ["'self'", 'data:', 'https:'],
                 // Permitir llamadas desde el origen del front (Live Server)
                 connectSrc: [

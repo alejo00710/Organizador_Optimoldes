@@ -1659,6 +1659,7 @@ function buildMoldProgressPanelWithToggle(m, listKind) {
       ${buildMoldProgressContent(m, m?.moldName, { listKind })}
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
         <button class="btn btn-secondary" data-toggle-mold-detail="${escapeHtml(key)}">Detalle (partes/máquinas)</button>
+        ${listKind === 'in-progress' && moldId ? `<button class="btn btn-danger" data-delete-mold-plan="${escapeHtml(String(moldId))}" data-delete-mold-name="${escapeHtml(String(m?.moldName || ''))}">Eliminar</button>` : ''}
         ${m?.lastWorkDate ? `<span style="color:var(--text-muted); font-size:0.85rem;">Último registro: ${escapeHtml(String(m.lastWorkDate))}</span>` : ''}
       </div>
       <div data-mold-detail="${escapeHtml(key)}" style="margin-top:10px; display:none;"></div>
@@ -1728,6 +1729,52 @@ async function wireMoldDetailToggles(container) {
         detail.setAttribute('data-loaded', '1');
       } catch (_) {
         detail.innerHTML = '<div style="color:var(--danger)">Error cargando detalle</div>';
+      }
+    });
+  });
+
+  const deleteButtons = Array.from(container.querySelectorAll('button[data-delete-mold-plan]'));
+  deleteButtons.forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (isDeletingMold || isCalendarLoading) {
+        console.warn('[calendar] delete ignorado por operación en curso', { isDeletingMold, isCalendarLoading });
+        return;
+      }
+
+      const moldId = Number(btn.getAttribute('data-delete-mold-plan'));
+      const moldName = String(btn.getAttribute('data-delete-mold-name') || '').trim();
+      if (!Number.isFinite(moldId) || moldId <= 0) return;
+
+      const ok = window.confirm(`¿Eliminar la planificación completa del molde "${moldName || moldId}"?`);
+      if (!ok) return;
+
+      const prevLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Eliminando...';
+      isDeletingMold = true;
+
+      try {
+        const res = await fetch(`${API_URL}/tasks/plan/mold/${encodeURIComponent(String(moldId))}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.error('[calendar] error eliminando molde', { moldId, out });
+          alert(out?.error || 'No se pudo eliminar la planificación');
+          return;
+        }
+
+        await refreshCalendarData();
+        try { await renderInProgressMoldList(); } catch (_) {}
+        try { await renderCompletedMoldList(); } catch (_) {}
+      } catch (e) {
+        console.error('[calendar] error de red eliminando molde', e);
+        alert('Ocurrió un error, intenta nuevamente');
+      } finally {
+        isDeletingMold = false;
+        btn.disabled = false;
+        btn.textContent = prevLabel;
       }
     });
   });
@@ -2713,10 +2760,87 @@ async function saveTiempoMolde() {
   if (!monthNo) return displayResponse('tmResponse', { error: 'Mes inválido' }, false);
   const work_date = toISODate(anio, monthNo, dia);
 
+  const resolvePlanningIdForWorkLog = async ({ year, monthNo, day, moldId, partId, machineId }) => {
+    if (!Number.isInteger(year) || !Number.isInteger(monthNo) || monthNo < 1 || monthNo > 12) {
+      return { planningId: null, error: 'No existe planificación activa para este molde' };
+    }
+
+    let eventsByDay = null;
+    const state = calendarMonthState || {};
+    if (Number(state.year) === Number(year) && Number(state.month) === Number(monthNo - 1)) {
+      const monthData = state.monthData;
+      eventsByDay = (monthData && typeof monthData === 'object' && monthData.events && typeof monthData.events === 'object')
+        ? monthData.events
+        : null;
+    }
+
+    if (!eventsByDay) {
+      try {
+        eventsByDay = await fetchTiemposPlannedMonth(year, monthNo);
+      } catch (_) {
+        eventsByDay = null;
+      }
+    }
+
+    if (!eventsByDay || typeof eventsByDay !== 'object') {
+      return { planningId: null, error: 'No existe planificación activa para este molde' };
+    }
+
+    const dayKey = String(Number(day));
+    const dayTasks = Array.isArray(eventsByDay?.[dayKey]?.tasks)
+      ? eventsByDay[dayKey].tasks
+      : [];
+
+    const planningIdsFromDay = Array.from(new Set(
+      dayTasks
+        .filter(t => Number(t?.moldId) === Number(moldId)
+          && Number(t?.partId) === Number(partId)
+          && Number(t?.machineId) === Number(machineId))
+        .map(t => Number(t?.planningId))
+        .filter(pid => Number.isFinite(pid) && pid > 0)
+    ));
+
+    if (planningIdsFromDay.length === 1) {
+      return { planningId: planningIdsFromDay[0], error: null };
+    }
+    if (planningIdsFromDay.length > 1) {
+      return { planningId: null, error: 'Inconsistencia detectada: múltiples planning_id para la misma combinación seleccionada en el día' };
+    }
+
+    // Fallback: si no hay celda planificada en el día, usar la planificación activa del molde.
+    try {
+      const asOf = getBogotaTodayISO && getBogotaTodayISO();
+      const url = asOf ? `${API_URL}/molds/in-progress?asOf=${encodeURIComponent(asOf)}` : `${API_URL}/molds/in-progress`;
+      const res = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+        cache: 'no-store'
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const molds = Array.isArray(data?.molds) ? data.molds : [];
+        const active = molds.find(m => Number(m?.moldId) === Number(moldId));
+        const planningId = Number(active?.planning?.planningId || active?.planningId || 0);
+        if (Number.isFinite(planningId) && planningId > 0) {
+          return { planningId, error: null };
+        }
+      }
+    } catch (_) {
+      // Si falla la consulta, devolvemos el error de negocio estándar.
+    }
+
+    return { planningId: null, error: 'No existe planificación activa para este molde' };
+  };
+
+  const planning = await resolvePlanningIdForWorkLog({ year: anio, monthNo, day: dia, moldId, partId, machineId });
+  if (!planning?.planningId) {
+    return displayResponse('tmResponse', { error: planning?.error || 'No existe planificación activa para este molde' }, false);
+  }
+
   const payload = {
     moldId,
     partId,
     machineId,
+    planning_id: planning.planningId,
     operatorId,
     work_date,
     hours_worked: round2(horas),
@@ -3835,6 +3959,19 @@ let lastDayDetailsContext = null;
 let calendarHolidaysCache = {}; // { 'YYYY-MM-DD': 'Nombre' }
 let calendarWorkingOverridesCache = {}; // { 'YYYY-MM-DD': true|false }
 let calendarCompletedMoldIdsCache = new Set();
+let fullCalendarInstance = null;
+let fullCalendarResourcesCache = [];
+let calendarMonthState = {
+  year: null,
+  month: null,
+  monthData: null,
+  hideCompleted: false,
+};
+let isCalendarLoading = false;
+let isDeletingMold = false;
+let currentCalendarRequestId = 0;
+let calendarLoadingCount = 0;
+let currentDayDetailsRequestId = 0;
 
 function makeMoldCycleKey(moldId, planningId) {
   const mid = Number(moldId);
@@ -3842,6 +3979,345 @@ function makeMoldCycleKey(moldId, planningId) {
   if (!Number.isFinite(mid) || mid <= 0) return '';
   if (Number.isFinite(pid) && pid > 0) return `${mid}:${pid}`;
   return `${mid}:`;
+}
+
+function hasFullCalendarSupport() {
+  return !!(window.FullCalendar && document.getElementById('calendar-fullcalendar'));
+}
+
+function getDayFromISO(dateISO) {
+  const s = String(dateISO || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const day = Number.parseInt(s.slice(8, 10), 10);
+  return Number.isInteger(day) && day > 0 ? day : null;
+}
+
+function normalizeToISODate(v) {
+  const s = String(v || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  return m ? m[1] : '';
+}
+
+function setCalendarMonthState(data, { year, month, hideCompleted = false } = {}) {
+  calendarMonthState = {
+    year: Number(year),
+    month: Number(month),
+    monthData: data || null,
+    hideCompleted: !!hideCompleted,
+  };
+}
+
+function ensureCalendarLoadingIndicator() {
+  const container = document.querySelector('#tab-calendar .calendar-container');
+  if (!container) return null;
+
+  let el = document.getElementById('calendar-loading-indicator');
+  if (el) return el;
+
+  el = document.createElement('div');
+  el.id = 'calendar-loading-indicator';
+  el.className = 'calendar-loading-indicator';
+  el.textContent = 'Cargando planificación...';
+  el.style.display = 'none';
+  container.insertBefore(el, container.firstChild);
+  return el;
+}
+
+function setCalendarLoadingState(loading) {
+  const indicator = ensureCalendarLoadingIndicator();
+  if (!indicator) return;
+  indicator.style.display = loading ? 'flex' : 'none';
+}
+
+function buildDayEventsFromMonthState(dateISO, { focusMoldId = null, focusPlanningId = null } = {}) {
+  const day = getDayFromISO(dateISO);
+  const monthData = calendarMonthState?.monthData;
+  if (!day || !monthData || typeof monthData !== 'object') return null;
+
+  const source = (monthData.events && typeof monthData.events === 'object') ? monthData.events : {};
+  const dayData = source[String(day)] || source[day] || null;
+  if (!dayData || !Array.isArray(dayData.tasks)) {
+    return { tasks: [], machineUsage: {}, machineCapacity: {}, hasOverlap: false };
+  }
+
+  const hideCompleted = !!calendarMonthState?.hideCompleted;
+  const sourceTasks = Array.isArray(dayData.tasks) ? dayData.tasks : [];
+  let tasks = sourceTasks.filter(t => {
+    if (!t || typeof t !== 'object') return false;
+    const planningId = Number(t?.planningId);
+    const moldId = Number(t?.moldId);
+    const machineId = Number(t?.machineId);
+    if (!Number.isFinite(planningId) || planningId <= 0) return false;
+    if (!Number.isFinite(moldId) || moldId <= 0) return false;
+    if (!Number.isFinite(machineId) || machineId <= 0) return false;
+    if (!hideCompleted) return true;
+    return String(t?.status || '').toLowerCase() !== 'completed';
+  });
+
+  // Evita inconsistencias silenciosas en modal cuando el payload trae repetidos.
+  const dedup = new Map();
+  for (const t of tasks) {
+    const key = [
+      String(dateISO || ''),
+      String(t?.planningId ?? ''),
+      String(t?.moldId ?? ''),
+      String(t?.machineId ?? ''),
+    ].join('|');
+    if (!dedup.has(key)) dedup.set(key, t);
+  }
+  tasks = Array.from(dedup.values());
+
+  const focusMid = Number(focusMoldId);
+  const focusPid = Number(focusPlanningId);
+  if (Number.isFinite(focusMid) && focusMid > 0) {
+    tasks = tasks.slice().sort((a, b) => {
+      const aMid = Number(a?.moldId);
+      const bMid = Number(b?.moldId);
+      const aPid = Number(a?.planningId);
+      const bPid = Number(b?.planningId);
+      const aMatch = aMid === focusMid && (!Number.isFinite(focusPid) || focusPid <= 0 || aPid === focusPid);
+      const bMatch = bMid === focusMid && (!Number.isFinite(focusPid) || focusPid <= 0 || bPid === focusPid);
+      if (aMatch === bMatch) return 0;
+      return aMatch ? -1 : 1;
+    }).map(t => {
+      const tMid = Number(t?.moldId);
+      const tPid = Number(t?.planningId);
+      const isFocused = tMid === focusMid && (!Number.isFinite(focusPid) || focusPid <= 0 || tPid === focusPid);
+      return { ...t, __focusedCycle: isFocused };
+    });
+  }
+
+  const machineUsage = {};
+  const machineCapacity = (dayData.machineCapacity && typeof dayData.machineCapacity === 'object') ? { ...dayData.machineCapacity } : {};
+  const byMachineMolds = new Map();
+
+  for (const t of tasks) {
+    const machine = String(t?.machine || '');
+    const h = Number(t?.hours || 0);
+    if (!machineUsage[machine]) machineUsage[machine] = 0;
+    machineUsage[machine] += Number.isFinite(h) ? h : 0;
+
+    if (!byMachineMolds.has(machine)) byMachineMolds.set(machine, new Set());
+    byMachineMolds.get(machine).add(Number(t?.moldId));
+  }
+
+  const hasOverlap = Array.from(byMachineMolds.values()).some(s => s.size > 1);
+  return { tasks, machineUsage, machineCapacity, hasOverlap };
+}
+
+function buildDayDetailsFromCalendarState(dateISO, opts = {}) {
+  const iso = normalizeToISODate(dateISO);
+  if (!iso) return null;
+
+  const dayEvents = buildDayEventsFromMonthState(iso, opts) || { tasks: [], machineUsage: {}, machineCapacity: {}, hasOverlap: false };
+  const holiday = calendarHolidaysCache?.[iso] || null;
+  return { iso, dayEvents, holiday };
+}
+
+function openDayDetailsFromCalendar(dateISO, opts = {}) {
+  try {
+    if (isCalendarLoading || isDeletingMold) {
+      console.warn('[calendar] openDayDetails bloqueado por operación en curso', { isCalendarLoading, isDeletingMold });
+      return;
+    }
+
+    const iso = normalizeToISODate(dateISO);
+    if (!iso) {
+      console.error('[calendar] Fecha inválida en apertura de modal', { dateISO });
+      alert('Ocurrió un error, intenta nuevamente');
+      return;
+    }
+
+    const details = buildDayDetailsFromCalendarState(iso, opts);
+    if (!details) {
+      console.error('[calendar] No se pudo construir detalle del día desde monthData', { iso });
+      alert('Ocurrió un error, intenta nuevamente');
+      return;
+    }
+
+    showDayDetails(details.iso, details.dayEvents, details.holiday);
+  } catch (e) {
+    console.error('[calendar] Error abriendo detalle de día', e);
+    alert('Ocurrió un error, intenta nuevamente');
+  }
+}
+
+function getFullCalendarDayCellClasses(dateISO) {
+  const classes = [];
+  const iso = normalizeToISODate(dateISO);
+  if (!iso) return classes;
+
+  if (isWeekendISO(iso)) classes.push('fc-day-weekend');
+  if (Object.prototype.hasOwnProperty.call(calendarHolidaysCache || {}, iso)) classes.push('fc-day-holiday');
+
+  if (Object.prototype.hasOwnProperty.call(calendarWorkingOverridesCache || {}, iso)) {
+    const isWorking = !!calendarWorkingOverridesCache[iso];
+    if (isWorking) classes.push('fc-day-enabled-override');
+    else classes.push('fc-day-disabled-override');
+  }
+
+  return classes;
+}
+
+function renderFullCalendarEventContent(arg) {
+  const ex = arg?.event?.extendedProps || {};
+  const mold = String(ex.mold || 'Molde');
+  const machine = String(ex.machine || 'Máquina');
+  const hours = Number(ex.totalHours || 0);
+  const statusRaw = String(ex.status || 'pending').toLowerCase();
+  const status = statusRaw === 'completed' ? 'completed' : 'in_progress';
+  const badge = status === 'completed' ? 'Terminado' : 'Pendiente';
+  const hoursLabel = Number.isFinite(hours) ? `${hours.toFixed(2)}h` : '0.00h';
+
+  return {
+    html: `
+      <div class="fc-event-rich">
+        <div class="fc-event-rich-title">${escapeHtml(mold)}</div>
+        <div class="fc-event-rich-row">${escapeHtml(machine)} · ${escapeHtml(hoursLabel)}</div>
+        <div class="fc-event-rich-status ${status}">${escapeHtml(badge)}</div>
+      </div>
+    `
+  };
+}
+
+function transformMonthViewToFullCalendarEvents(data, { hideCompleted = false } = {}) {
+  const inputEvents = Array.isArray(data?.fullCalendar?.events) ? data.fullCalendar.events : [];
+  const dedup = new Map();
+
+  for (const e of inputEvents) {
+    const planningId = Number(e?.extendedProps?.planningId ?? e?.planningId);
+    const moldId = Number(e?.extendedProps?.moldId ?? e?.moldId);
+    if (!Number.isFinite(planningId) || planningId <= 0) continue;
+    if (!Number.isFinite(moldId) || moldId <= 0) continue;
+
+    const status = String(e?.extendedProps?.status || 'pending').toLowerCase() === 'completed' ? 'completed' : 'pending';
+    if (hideCompleted && status === 'completed') continue;
+
+    const id = String(e?.id || `fc:${moldId}:${planningId}:${String(e?.start || '')}:${String(e?.extendedProps?.machineId || '')}`);
+    if (dedup.has(id)) continue;
+
+    dedup.set(id, {
+      id,
+      title: String(e?.title || 'Planificación'),
+      start: String(e?.start || ''),
+      end: e?.end ? String(e.end) : null,
+      allDay: e?.allDay !== false,
+      classNames: ['fc-mold-event', `status-${status}`],
+      color: status === 'completed' ? '#16a34a' : '#f59e0b',
+      borderColor: status === 'completed' ? '#16a34a' : '#f59e0b',
+      extendedProps: {
+        mold: String(e?.extendedProps?.mold || ''),
+        machine: String(e?.extendedProps?.machine || ''),
+        status,
+        planningId,
+        moldId,
+        machineId: Number(e?.extendedProps?.machineId || 0) || null,
+        totalHours: Number(e?.extendedProps?.totalHours || 0),
+        partCount: Number(e?.extendedProps?.partCount || 0),
+        isPriority: Boolean(e?.extendedProps?.isPriority),
+      },
+    });
+  }
+
+  return Array.from(dedup.values());
+}
+
+function extractFullCalendarResources(data) {
+  const rows = Array.isArray(data?.fullCalendar?.resources) ? data.fullCalendar.resources : [];
+  return rows
+    .map(r => ({ id: String(r?.id || ''), title: String(r?.title || '') }))
+    .filter(r => r.id && r.title);
+}
+
+function ensureFullCalendarInstance() {
+  if (!hasFullCalendarSupport()) return null;
+  if (fullCalendarInstance) return fullCalendarInstance;
+
+  const el = document.getElementById('calendar-fullcalendar');
+  if (!el) return null;
+
+  fullCalendarInstance = new window.FullCalendar.Calendar(el, {
+    initialView: 'dayGridMonth',
+    headerToolbar: false,
+    locale: 'es',
+    firstDay: 1,
+    fixedWeekCount: false,
+    height: 'auto',
+    editable: false,
+    eventStartEditable: false,
+    eventDurationEditable: false,
+    // Base para futuro drag & drop:
+    // editable: true,
+    // eventDrop: async (info) => { ... }
+    // TODO: no activar eventDrop/eventResize todavía.
+    // Los eventos actuales son agregados por (mold, planning, machine, day)
+    // y no representan un plan_entry único para actualización directa.
+    dateClick: (info) => {
+      openDayDetailsFromCalendar(info?.dateStr || '');
+    },
+    eventClick: (info) => {
+      const ex = info?.event?.extendedProps || {};
+      const planningId = Number(ex.planningId);
+      const moldId = Number(ex.moldId);
+      const machineId = Number(ex.machineId);
+      if (!Number.isFinite(planningId) || planningId <= 0 || !Number.isFinite(moldId) || moldId <= 0 || !Number.isFinite(machineId) || machineId <= 0) {
+        console.warn('[calendar] eventClick ignorado por extendedProps incompletos', { ex });
+        alert('Ocurrió un error, intenta nuevamente');
+        return;
+      }
+      openDayDetailsFromCalendar(info?.event?.startStr || info?.event?.start || '', {
+        focusMoldId: moldId,
+        focusPlanningId: planningId,
+      });
+    },
+    dayCellClassNames: (arg) => {
+      return getFullCalendarDayCellClasses(arg?.date);
+    },
+    eventContent: renderFullCalendarEventContent,
+    eventDidMount: (info) => {
+      const ex = info?.event?.extendedProps || {};
+      const title = [
+        String(ex.mold || ''),
+        String(ex.machine || ''),
+        `Estado: ${String(ex.status || 'pending')}`,
+        Number.isFinite(Number(ex.totalHours)) ? `Horas: ${Number(ex.totalHours).toFixed(2)}` : '',
+        Number.isFinite(Number(ex.planningId)) ? `Planning ID: ${Number(ex.planningId)}` : ''
+      ].filter(Boolean).join('\n');
+      if (title) info.el.setAttribute('title', title);
+    },
+  });
+
+  fullCalendarInstance.render();
+  return fullCalendarInstance;
+}
+
+function setCalendarRenderMode(useFullCalendar) {
+  const fcEl = document.getElementById('calendar-fullcalendar');
+  const grid = document.getElementById('calendar-grid');
+  const gridHeader = document.querySelector('#tab-calendar .calendar-grid-header');
+  if (fcEl) fcEl.style.display = useFullCalendar ? '' : 'none';
+  if (grid) grid.style.display = useFullCalendar ? 'none' : '';
+  if (gridHeader) gridHeader.style.display = useFullCalendar ? 'none' : '';
+}
+
+function renderFullCalendarMonth(data, { year, month, hideCompleted = false } = {}) {
+  const calendar = ensureFullCalendarInstance();
+  if (!calendar) return false;
+
+  setCalendarMonthState(data, { year, month, hideCompleted });
+
+  const events = transformMonthViewToFullCalendarEvents(data, { hideCompleted });
+  fullCalendarResourcesCache = extractFullCalendarResources(data);
+
+  const monthDateISO = `${year}-${String(Number(month) + 1).padStart(2, '0')}-01`;
+  calendar.batchRendering(() => {
+    calendar.gotoDate(monthDateISO);
+    calendar.removeAllEvents();
+    calendar.addEventSource(events);
+  });
+
+  return true;
 }
 
 async function refreshCompletedMoldIdsCache() {
@@ -3942,31 +4418,82 @@ async function fetchMoldProgressDetail(moldId, opts = {}) {
 
 async function loadCalendar() {
   if (!authToken) return;
+  const requestId = ++currentCalendarRequestId;
+  calendarLoadingCount += 1;
+  isCalendarLoading = true;
+  setCalendarLoadingState(true);
+
   const display = document.getElementById('calendar-month-year');
   const grid = document.getElementById('calendar-grid');
   const progressList = document.getElementById('inProgressMoldList');
   const hideCompleted = !!document.getElementById('hideCompletedToggle')?.checked;
+  const canUseFullCalendar = hasFullCalendarSupport();
   if (display) display.textContent = `${capitalize(monthNames[currentMonth])} ${currentYear}`;
-  if (grid) grid.innerHTML = 'Cargando...';
+  if (grid && !canUseFullCalendar) grid.innerHTML = 'Cargando...';
   if (progressList) progressList.innerHTML = '';
   try {
     const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth + 1}`, { headers: { 'Authorization': `Bearer ${authToken}` }, cache: 'no-store' });
     const data = await res.json();
+    if (requestId !== currentCalendarRequestId) {
+      console.warn('[calendar] respuesta de month-view descartada por obsoleta', { requestId, currentCalendarRequestId });
+      return;
+    }
+
     if (res.ok) {
-      if (hideCompleted) {
-        try { await refreshCompletedMoldIdsCache(); } catch (_) { calendarCompletedMoldIdsCache = new Set(); }
-      }
-      const events = filterCalendarEventsHideCompleted(data.events || {}, hideCompleted);
       calendarHolidaysCache = (data && typeof data.holidays === 'object' && data.holidays) ? data.holidays : {};
       calendarWorkingOverridesCache = (data && typeof data.overrides === 'object' && data.overrides) ? data.overrides : {};
-      renderCalendar(currentYear, currentMonth, events, data.holidays || {}, data.overrides || {});
+      setCalendarMonthState(data, { year: currentYear, month: currentMonth, hideCompleted });
+
+      const renderedWithFullCalendar = canUseFullCalendar
+        ? renderFullCalendarMonth(data, { year: currentYear, month: currentMonth, hideCompleted })
+        : false;
+
+      if (renderedWithFullCalendar) {
+        setCalendarRenderMode(true);
+      } else {
+        setCalendarRenderMode(false);
+        if (hideCompleted) {
+          try { await refreshCompletedMoldIdsCache(); } catch (_) { calendarCompletedMoldIdsCache = new Set(); }
+        }
+        const events = filterCalendarEventsHideCompleted(data.events || {}, hideCompleted);
+        renderCalendar(currentYear, currentMonth, events, data.holidays || {}, data.overrides || {});
+      }
+
       try {
         renderInProgressMoldList();
       } catch (_) {}
     }
-    else if (grid) grid.innerHTML = '<p>Error cargar calendario</p>';
+    else if (grid) {
+      console.error('[calendar] error HTTP cargando month-view', data);
+      setCalendarRenderMode(false);
+      grid.innerHTML = '<p>Error cargar calendario</p>';
+      alert('Ocurrió un error, intenta nuevamente');
+    }
   } catch (e) {
+    console.error('[calendar] error de red cargando month-view', e);
+    setCalendarRenderMode(false);
     if (grid) grid.innerHTML = 'Error cargar calendario';
+    alert('Ocurrió un error, intenta nuevamente');
+  } finally {
+    calendarLoadingCount = Math.max(0, calendarLoadingCount - 1);
+    isCalendarLoading = calendarLoadingCount > 0;
+    if (!isCalendarLoading) setCalendarLoadingState(false);
+  }
+}
+
+async function refreshCalendarData() {
+  if (isCalendarLoading || isDeletingMold) {
+    console.warn('[calendar] refreshCalendarData ignorado por operación en curso', { isCalendarLoading, isDeletingMold });
+    return false;
+  }
+
+  try {
+    await loadCalendar();
+    return true;
+  } catch (e) {
+    console.error('[calendar] refreshCalendarData error', e);
+    alert('Ocurrió un error, intenta nuevamente');
+    return false;
   }
 }
 function renderCalendar(year, month, events = {}, holidays = {}, overrides = {}) {
@@ -4092,8 +4619,9 @@ function renderDayDetailsView(dateISO, events, holiday) {
     const byMold = new Map();
     for (const t of events.tasks) {
       const moldKey = `${String(t.moldId ?? t.mold ?? '')}:${String(t.planningId ?? '')}`;
-      if (!byMold.has(moldKey)) byMold.set(moldKey, { moldId: t.moldId, planningId: t.planningId != null ? Number(t.planningId) : null, moldName: t.mold, isPriority: false, tasks: [] });
+      if (!byMold.has(moldKey)) byMold.set(moldKey, { moldId: t.moldId, planningId: t.planningId != null ? Number(t.planningId) : null, moldName: t.mold, isPriority: false, isFocused: false, tasks: [] });
       if (t && t.isPriority) byMold.get(moldKey).isPriority = true;
+      if (t && t.__focusedCycle) byMold.get(moldKey).isFocused = true;
       byMold.get(moldKey).tasks.push(t);
     }
 
@@ -4103,11 +4631,15 @@ function renderDayDetailsView(dateISO, events, holiday) {
       const priorityBadge = grp.isPriority
         ? '<span style="color:#b76e00; font-weight:800;">★ Prioridad</span>'
         : '';
+      const focusedStyle = grp.isFocused
+        ? 'border:1px solid rgba(37,99,235,0.35); border-radius:10px; padding:8px; background:rgba(37,99,235,0.06);'
+        : '';
       html += `
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:10px; ${focusedStyle}">
           <h4 style="margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <span>${escapeHtml(grp.moldName || 'Molde')}</span>
             ${priorityBadge}
+            ${grp.isFocused ? '<span style="font-size:0.75rem; color:#1d4ed8; font-weight:800;">Enfocado</span>' : ''}
             <span${moldIdAttr} style="font-size:0.85rem; color:var(--text-muted);">(Estado: ...)</span>
           </h4>
           ${grp.moldId ? `<button class="btn btn-secondary" data-edit-mold="${grp.moldId}" data-mold-name="${escapeHtml(grp.moldName || '')}">Editar este molde</button>` : ''}
@@ -4134,7 +4666,7 @@ function renderDayDetailsView(dateISO, events, holiday) {
       `;
     }
   } else {
-    html += '<p>No hay tareas planificadas para este día.</p>';
+    html += '<p>No hay planificación para este día.</p>';
   }
 
   html += `<div style="margin-top:12px;"><button class="btn btn-secondary" id="toggleWorkingBtn">Cargando estado...</button><small style="display:block; margin-top:6px;">Esto crea una excepción para este día.</small></div>`;
@@ -4176,32 +4708,29 @@ function renderDayDetailsView(dateISO, events, holiday) {
   };
 
   const refreshDayModalData = async () => {
+    const requestId = ++currentDayDetailsRequestId;
     try {
-      const res = await fetch(`${API_URL}/calendar/month-view?year=${currentYear}&month=${currentMonth + 1}`, {
-        headers: { 'Authorization': `Bearer ${authToken}` },
-        cache: 'no-store'
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        await loadCalendar();
+      const refreshed = await refreshCalendarData();
+      if (requestId !== currentDayDetailsRequestId) {
+        console.warn('[calendar] refresh de modal descartado por obsolescencia', { requestId, currentDayDetailsRequestId });
         return;
       }
 
-      const hideCompleted = !!document.getElementById('hideCompletedToggle')?.checked;
-      if (hideCompleted) {
-        try { await refreshCompletedMoldIdsCache(); } catch (_) { calendarCompletedMoldIdsCache = new Set(); }
+      if (!refreshed && isCalendarLoading) {
+        console.warn('[calendar] refresh de modal aplazado por carga en curso');
       }
-      const filteredEvents = filterCalendarEventsHideCompleted(data.events || {}, hideCompleted);
 
-      calendarHolidaysCache = (data && typeof data.holidays === 'object' && data.holidays) ? data.holidays : {};
-      calendarWorkingOverridesCache = (data && typeof data.overrides === 'object' && data.overrides) ? data.overrides : {};
+      const details = buildDayDetailsFromCalendarState(dateStr);
+      if (!details) {
+        console.error('[calendar] no se pudo construir detalle de modal desde monthData', { dateStr });
+        alert('Ocurrió un error, intenta nuevamente');
+        return;
+      }
 
-      renderCalendar(currentYear, currentMonth, filteredEvents, data.holidays || {}, data.overrides || {});
-      renderDayDetailsView(dateStr, (filteredEvents || {})[String(Number(dateStr.slice(8, 10)))], (data.holidays || {})[dateStr]);
-      const modal = document.getElementById('day-details-modal');
-      if (modal) modal.classList.remove('hidden');
-    } catch (_) {
-      await loadCalendar();
+      showDayDetails(details.iso, details.dayEvents, details.holiday);
+    } catch (e) {
+      console.error('[calendar] error refrescando modal con fuente cacheada', e);
+      alert('Ocurrió un error, intenta nuevamente');
     }
   };
 
@@ -4515,7 +5044,7 @@ async function openMoldEditorView(moldId, moldName) {
           const out = await resp.json();
           displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
           if (resp.ok) {
-            await loadCalendar();
+            await refreshCalendarData();
             // Recargar vista del molde para reflejar cambios
             await openMoldEditorView(moldId, moldName);
           } else {
@@ -4551,7 +5080,7 @@ async function openMoldEditorView(moldId, moldName) {
           const out = await resp.json();
           displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
           if (resp.ok) {
-            await loadCalendar();
+            await refreshCalendarData();
             await openMoldEditorView(moldId, moldName);
           } else {
             // Mensaje ya mostrado en moldEditorResponse
@@ -4628,7 +5157,7 @@ async function openMoldEditorView(moldId, moldName) {
         const out = await resp.json().catch(() => ({}));
         displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
         if (resp.ok) {
-          await loadCalendar();
+          await refreshCalendarData();
           await openMoldEditorView(moldId, moldName);
         }
       } catch (e) {

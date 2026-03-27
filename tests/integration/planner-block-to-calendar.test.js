@@ -67,6 +67,7 @@ describe('Planificador -> Calendario (flujo real)', () => {
             if (moldId) {
                 await query('DELETE FROM plan_entries WHERE mold_id = ?', [moldId]);
                 await query('DELETE FROM planner_grid_snapshots WHERE mold_id = ?', [moldId]);
+                await query('DELETE FROM planning_history WHERE mold_id = ?', [moldId]);
                 await query('DELETE FROM molds WHERE id = ?', [moldId]);
             }
             if (machineId) await query('DELETE FROM machines WHERE id = ?', [machineId]);
@@ -76,55 +77,64 @@ describe('Planificador -> Calendario (flujo real)', () => {
         }
     });
 
-    it('crea plan con /tasks/plan/block y aparece en /calendar/month-view', async () => {
+    it('con datos estrictos (planning_id) aparece en /calendar/month-view', async () => {
         const startDate = await findNextWorkingDateISO(ctx.token);
 
-        // Crear plan en bloque (una tarea simple)
-        await request(app)
-            .post('/api/tasks/plan/block')
-            .set('Authorization', `Bearer ${ctx.token}`)
-            .send({
-                moldName,
-                startDate,
-                tasks: [
-                    {
-                        partName,
-                        machineName,
-                        totalHours: 4,
-                    },
-                ],
-            })
-            .expect(201);
+        const moldRes = await query('INSERT INTO molds (name, is_active) VALUES (?, TRUE)', [moldName]);
+        moldId = moldRes.insertId;
+        const machineRes = await query('INSERT INTO machines (name, is_active) VALUES (?, TRUE)', [machineName]);
+        machineId = machineRes.insertId;
+        const partRes = await query('INSERT INTO mold_parts (name, is_active) VALUES (?, TRUE)', [partName]);
+        partId = partRes.insertId;
 
-        // Capturar ids creados para cleanup
-        const molds = await query('SELECT id FROM molds WHERE name = ? LIMIT 1', [moldName]);
-        moldId = molds[0]?.id;
-        const machines = await query('SELECT id FROM machines WHERE name = ? LIMIT 1', [machineName]);
-        machineId = machines[0]?.id;
-        const parts = await query('SELECT id FROM mold_parts WHERE name = ? LIMIT 1', [partName]);
-        partId = parts[0]?.id;
+        await query(
+            `INSERT INTO planning_history (mold_id, event_type, to_start_date, created_by)
+             VALUES (?, 'PLANNED', ?, ?)`,
+            [moldId, startDate, ctx.userId]
+        );
+        const planningRows = await query(
+            `SELECT id
+             FROM planning_history
+             WHERE mold_id = ? AND event_type = 'PLANNED'
+             ORDER BY id DESC
+             LIMIT 1`,
+            [moldId]
+        );
+        const planningId = Number(planningRows?.[0]?.id || 0);
+        expect(planningId).toBeGreaterThan(0);
+
+        await query(
+            `INSERT INTO plan_entries (mold_id, planning_id, part_id, machine_id, date, hours_planned, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [moldId, planningId, partId, machineId, startDate, 4, ctx.userId]
+        );
 
         expect(moldId).toBeTruthy();
         expect(machineId).toBeTruthy();
         expect(partId).toBeTruthy();
 
-        const [y, m, d] = startDate.split('-').map(Number);
+        const [y, m] = startDate.split('-').map(Number);
 
         const calRes = await request(app)
             .get(`/api/calendar/month-view?year=${y}&month=${m}`)
             .set('Authorization', `Bearer ${ctx.token}`)
             .expect(200);
 
-        const dayEntry = calRes.body?.events?.[String(d)] || calRes.body?.events?.[d];
-        expect(dayEntry).toBeTruthy();
-        expect(Array.isArray(dayEntry.tasks)).toBe(true);
+        const eventsByDay = calRes.body?.events || {};
+        const allTasks = Object.values(eventsByDay)
+            .flatMap(day => (Array.isArray(day?.tasks) ? day.tasks : []));
 
-        const hit = (dayEntry.tasks || []).find(
+        expect(allTasks.length).toBeGreaterThan(0);
+
+        const hit = allTasks.find(
             (t) => t && t.mold === moldName && t.machine === machineName && t.part === partName
         );
 
         expect(hit).toBeTruthy();
         expect(Number(hit.hours)).toBe(4);
         expect(hit).toHaveProperty('entryId');
+        expect(String(hit.entryId)).toMatch(/^pe:\d+:\d+:\d+:\d{4}-\d{2}-\d{2}$/);
+        expect(Number(hit.planningId)).toBe(planningId);
+        expect(Number(hit.planningId)).toBeGreaterThan(0);
     });
 });

@@ -56,6 +56,7 @@ describe('Molds progress: preserva avance tras prioridad y soporta desglose por 
     let moldBId;
     let partAId;
     let partBId;
+    let moldAPlanningId;
 
     let machineDayId;
     let moldDayId;
@@ -110,7 +111,7 @@ describe('Molds progress: preserva avance tras prioridad y soporta desglose por 
         const opRes = await query('INSERT INTO operators (name, user_id, is_active) VALUES (?, NULL, TRUE)', [operatorName]);
         operatorId = opRes.insertId;
 
-        await request(app)
+        const planA = await request(app)
             .post('/api/tasks/plan/block')
             .set('Authorization', `Bearer ${ctx.token}`)
             .send({
@@ -119,15 +120,17 @@ describe('Molds progress: preserva avance tras prioridad y soporta desglose por 
                 tasks: [{ partName: partA, machineName, totalHours: 6 }],
             })
             .expect(201);
+        moldAPlanningId = Number(planA.body?.planningId || 0);
+        expect(moldAPlanningId).toBeGreaterThan(0);
 
         moldAId = (await query('SELECT id FROM molds WHERE name = ? LIMIT 1', [moldA]))?.[0]?.id;
         machineId = (await query('SELECT id FROM machines WHERE name = ? LIMIT 1', [machineName]))?.[0]?.id;
         partAId = (await query('SELECT id FROM mold_parts WHERE name = ? LIMIT 1', [partA]))?.[0]?.id;
 
         await query(
-            `INSERT INTO work_logs (mold_id, part_id, machine_id, operator_id, work_date, hours_worked, note)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [moldAId, partAId, machineId, operatorId, baseDate, 3, 'avance parcial']
+            `INSERT INTO work_logs (mold_id, planning_id, part_id, machine_id, operator_id, work_date, hours_worked, note)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [moldAId, moldAPlanningId, partAId, machineId, operatorId, baseDate, 3, 'avance parcial']
         );
 
         const before = await request(app)
