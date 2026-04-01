@@ -501,15 +501,22 @@ const updateWorkLog = async (req, res, next) => {
             ? log.operator_id
             : (nextOperatorId !== undefined ? nextOperatorId : log.operator_id);
 
-        // is_final_log: operadores solo pueden poner true (no desactivar); admins pueden cambiar
-        let finalIsFinalLog = log.is_final_log;
-        if (is_final_log !== undefined) {
-            const newVal = !!is_final_log;
+        const hasIncomingFinalFlag = Object.prototype.hasOwnProperty.call(req.body || {}, 'is_final_log');
+        const existingIsFinalLog = isTruthyFlag(log.is_final_log);
+        const requestedIsFinalLog = hasIncomingFinalFlag ? isTruthyFlag(is_final_log) : undefined;
+
+        if (existingIsFinalLog && requestedIsFinalLog === false) {
+            return res.status(400).json({ error: 'No se puede desmarcar un registro final' });
+        }
+
+        // Valor seguro: conservar existente cuando el campo no viene.
+        let finalIsFinalLog = existingIsFinalLog;
+        if (requestedIsFinalLog !== undefined) {
             if (req.user.role === ROLES.OPERATOR) {
-                // Operario solo puede cerrar (true), no reabrir
-                if (newVal) finalIsFinalLog = true;
+                // Operario solo puede cerrar (true), no reabrir.
+                if (requestedIsFinalLog) finalIsFinalLog = true;
             } else {
-                finalIsFinalLog = newVal;
+                finalIsFinalLog = requestedIsFinalLog;
             }
         }
 
@@ -578,11 +585,20 @@ const deleteWorkLog = async (req, res, next) => {
     try {
         const { id } = req.params;
 
-        const existing = await query('SELECT id, planning_id FROM work_logs WHERE id = ? LIMIT 1', [id]);
+        const role = String(req?.user?.role || '').toLowerCase();
+        const canDelete = role === ROLES.ADMIN || role === ROLES.PLANNER;
+        if (!canDelete) {
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        const existing = await query('SELECT * FROM work_logs WHERE id = ? LIMIT 1', [id]);
         if (!existing.length) {
             return res.status(404).json({ error: 'Registro no encontrado' });
         }
-        const planningIdNum = Number(existing[0]?.planning_id || 0);
+        const row = existing[0] || {};
+        const planningIdNum = Number(row?.planning_id || 0);
+        const moldIdNum = Number(row?.mold_id || 0);
+        const wasFinalLog = isTruthyFlag(row?.is_final_log);
 
         const sql = 'DELETE FROM work_logs WHERE id = ?';
         const result = await query(sql, [id]);
@@ -592,6 +608,26 @@ const deleteWorkLog = async (req, res, next) => {
         }
 
         if (Number.isFinite(planningIdNum) && planningIdNum > 0) {
+            if (wasFinalLog && Number.isFinite(moldIdNum) && moldIdNum > 0) {
+                const finalRows = await query(
+                    `SELECT COUNT(1) AS cnt
+                     FROM work_logs
+                     WHERE mold_id = ?
+                       AND planning_id = ?
+                       AND is_final_log = TRUE`,
+                    [moldIdNum, planningIdNum]
+                );
+                const remainingFinals = Number(finalRows?.[0]?.cnt || 0);
+                if (remainingFinals <= 0) {
+                    await query(
+                        `UPDATE planning_history
+                         SET status = 'IN_PROGRESS'
+                         WHERE id = ?
+                           AND event_type = 'PLANNED'`,
+                        [planningIdNum]
+                    ).catch(() => {});
+                }
+            }
             await reconcilePlanningStatus(planningIdNum);
         }
 

@@ -124,7 +124,7 @@ async function tryLoadPlannerSnapshot(moldId, startDate) {
     try { snap = JSON.parse(snap); } catch (_) {}
   }
   // IMPORTANTE: el startDate canónico es el del registro (planner_grid_snapshots.start_date).
-  // El snapshot JSON puede contener un startDate viejo (ej. antes de “Seguir consecutivamente”).
+  // El snapshot JSON puede contener un startDate viejo por ediciones previas.
   if (snap && data?.startDate) {
     try { snap.startDate = String(data.startDate); } catch (_) {}
   }
@@ -410,7 +410,8 @@ try {
 
     // Evitar mostrar mensajes por intentos de edición en filas bloqueadas.
     if (action === 'wl-edit') {
-      const tr = btn.closest('tr[data-id]');
+      const targetId = String(id || '').trim();
+      const tr = targetId ? findRowByDataId('#workLogsTable tbody', targetId) : btn.closest('tr[data-id]');
       if (tr && tr.getAttribute('data-can-edit') !== '1') return;
     }
 
@@ -423,6 +424,10 @@ try {
         return startEditWorkLogRow(id);
       case 'wl-save':
         return saveWorkLogRow(id);
+      case 'wl-more':
+        return toggleWorkLogRowDetails(id);
+      case 'wl-delete':
+        return deleteWorkLogRow(id);
       case 'dato-save':
         return saveDatoRow(id);
       case 'dato-delete':
@@ -1031,11 +1036,6 @@ async function initPlannerTab() {
 function setPlannerLoadedMold(mold) {
   plannerLoadedMold = mold || null;
   const banner = document.getElementById('plannerLoadedMoldBanner');
-  const exitBtn = document.getElementById('exitPlannedMoldEditBtn');
-  if (exitBtn) exitBtn.style.display = plannerLoadedMold ? '' : 'none';
-
-  const consecutiveBtnTop = document.getElementById('consecutivePlannedMoldBtn');
-  if (consecutiveBtnTop) consecutiveBtnTop.style.display = plannerLoadedMold ? '' : 'none';
 
   const submitBtn = document.getElementById('submitGridPlanBtn');
   if (submitBtn) submitBtn.textContent = plannerLoadedMold ? 'Actualizar Planificación' : 'Crear Planificación';
@@ -1055,6 +1055,7 @@ function setPlannerLoadedMold(mold) {
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <div style="color:var(--text-muted); font-size:0.9rem;">Rango: ${range}</div>
           <button class="btn btn-danger btn-sm" id="deletePlannedMoldBtn" title="Eliminar toda la planificación de este molde">Eliminar</button>
+          <button class="btn btn-secondary btn-sm" id="exitPlannedMoldEditBtnInline" title="Salir del modo edición de molde planificado">Salir de edición</button>
         </div>
       </div>
       <div style="margin-top:6px;">Molde: <strong>${name}</strong></div>
@@ -1095,101 +1096,12 @@ function setPlannerLoadedMold(mold) {
     }, { once: true });
   }
 
-  // Botón superior (junto a Refrescar/Salir): seguir consecutivamente
-  if (consecutiveBtnTop) {
-    consecutiveBtnTop.onclick = async (e) => {
+  const exitInlineBtn = document.getElementById('exitPlannedMoldEditBtnInline');
+  if (exitInlineBtn) {
+    exitInlineBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      if (!plannerLoadedMold?.moldId) return;
-
-      const moldName = String(plannerLoadedMold.moldName || '');
-      const ok = window.confirm(
-        `¿Seguir consecutivamente con "${moldName}"?\n\n` +
-        `El sistema buscará el molde anterior (por orden de creación de la planificación).\n` +
-        `Solo permitirá la acción si el molde anterior está COMPLETO; entonces intentará pegar este molde detrás de él.`
-      );
-      if (!ok) return;
-
-      // Construir tasks desde la parrilla (en modo edición puede haber inputs deshabilitados)
-      const grid = document.getElementById('planningGridFixed');
-      if (!grid) {
-        displayResponse('gridResponse', 'La parrilla no está lista.', false);
-        return;
-      }
-
-      const tasks = [];
-      const allowDisabledInputs = true;
-
-      grid.querySelectorAll('tbody tr').forEach(row => {
-        const partName = row.getAttribute('data-part-name');
-        if (!partName) return;
-
-        const qtyEl = row.querySelector('.qty-input');
-        if (qtyEl && qtyEl.disabled && !allowDisabledInputs) return;
-        const qty = parseLocaleNumber(qtyEl?.value);
-        if (isNaN(qty) || qty <= 0) return;
-
-        row.querySelectorAll('.hours-input').forEach(inp => {
-          if (inp.disabled && !allowDisabledInputs) return;
-          const base = parseLocaleNumber(inp.value);
-          if (isNaN(base) || base <= 0) return;
-
-          const machineId = inp.getAttribute('data-machine-id');
-          const machinesForPlan = (plannerMachinesInGrid && plannerMachinesInGrid.length)
-            ? plannerMachinesInGrid
-            : (window.FIXED_MACHINES || FIXED_MACHINES || []);
-          const machineName =
-            machinesForPlan.find(m => String(m.id) === String(machineId))?.name
-            || machineId;
-
-          const totalHours = round2(base * qty);
-          if (totalHours > 0) tasks.push({ partName, machineName, totalHours });
-        });
-      });
-
-      if (!tasks.length) {
-        displayResponse('gridResponse', 'No hay datos para planificar.', false);
-        return;
-      }
-
-      const payload = {
-        moldName: getPlannerSelectedMoldName() || moldName,
-        moldId: Number(plannerLoadedMold.moldId),
-        tasks,
-        gridSnapshot: buildPlannerGridSnapshotFromUI()
-      };
-
-      const responseBox = document.getElementById('gridResponse');
-      if (responseBox) responseBox.textContent = 'Buscando consecutivo y reprogramando...';
-
-      try {
-        const res = await fetch(`${API_URL}/tasks/plan/consecutive`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          displayResponse('gridResponse', data?.error || 'No se pudo reprogramar consecutivamente', false);
-          return;
-        }
-
-        displayResponse('gridResponse', data?.message || 'Planificación actualizada (consecutivo).', true);
-
-        // Si el backend devuelve startDate, actualizamos el input para que quede consistente
-        try {
-          const startDateEl = document.getElementById('gridStartDate');
-          if (startDateEl && data?.startDate) startDateEl.value = String(data.startDate);
-        } catch (_) {}
-
-        loadCalendar();
-        try { await loadPlannedMoldsList(); } catch (_) {}
-      } catch (err) {
-        displayResponse('gridResponse', { error: 'Error de conexión', details: String(err) }, false);
-      }
-    };
+      setPlannerLoadedMold(null);
+    }, { once: true });
   }
 }
 
@@ -1659,7 +1571,6 @@ function buildMoldProgressPanelWithToggle(m, listKind) {
       ${buildMoldProgressContent(m, m?.moldName, { listKind })}
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
         <button class="btn btn-secondary" data-toggle-mold-detail="${escapeHtml(key)}">Detalle (partes/máquinas)</button>
-        ${listKind === 'in-progress' && moldId ? `<button class="btn btn-danger" data-delete-mold-plan="${escapeHtml(String(moldId))}" data-delete-mold-name="${escapeHtml(String(m?.moldName || ''))}">Eliminar</button>` : ''}
         ${m?.lastWorkDate ? `<span style="color:var(--text-muted); font-size:0.85rem;">Último registro: ${escapeHtml(String(m.lastWorkDate))}</span>` : ''}
       </div>
       <div data-mold-detail="${escapeHtml(key)}" style="margin-top:10px; display:none;"></div>
@@ -1729,52 +1640,6 @@ async function wireMoldDetailToggles(container) {
         detail.setAttribute('data-loaded', '1');
       } catch (_) {
         detail.innerHTML = '<div style="color:var(--danger)">Error cargando detalle</div>';
-      }
-    });
-  });
-
-  const deleteButtons = Array.from(container.querySelectorAll('button[data-delete-mold-plan]'));
-  deleteButtons.forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (isDeletingMold || isCalendarLoading) {
-        console.warn('[calendar] delete ignorado por operación en curso', { isDeletingMold, isCalendarLoading });
-        return;
-      }
-
-      const moldId = Number(btn.getAttribute('data-delete-mold-plan'));
-      const moldName = String(btn.getAttribute('data-delete-mold-name') || '').trim();
-      if (!Number.isFinite(moldId) || moldId <= 0) return;
-
-      const ok = window.confirm(`¿Eliminar la planificación completa del molde "${moldName || moldId}"?`);
-      if (!ok) return;
-
-      const prevLabel = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Eliminando...';
-      isDeletingMold = true;
-
-      try {
-        const res = await fetch(`${API_URL}/tasks/plan/mold/${encodeURIComponent(String(moldId))}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        const out = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          console.error('[calendar] error eliminando molde', { moldId, out });
-          alert(out?.error || 'No se pudo eliminar la planificación');
-          return;
-        }
-
-        await refreshCalendarData();
-        try { await renderInProgressMoldList(); } catch (_) {}
-        try { await renderCompletedMoldList(); } catch (_) {}
-      } catch (e) {
-        console.error('[calendar] error de red eliminando molde', e);
-        alert('Ocurrió un error, intenta nuevamente');
-      } finally {
-        isDeletingMold = false;
-        btn.disabled = false;
-        btn.textContent = prevLabel;
       }
     });
   });
@@ -2320,6 +2185,13 @@ function normStr(v) {
 }
 
 function getWorkLogRowSelectedYMD(row) {
+  const dateRaw = String(row?.querySelector('.wl-date')?.value || '').trim();
+  const dateIso = parseUiDateToISO(dateRaw);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) {
+    const [year, monthNo, day] = dateIso.split('-').map(Number);
+    return { year, monthNo, day };
+  }
+
   const day = parseInt(row?.querySelector('.wl-dia')?.value, 10);
   const mesLabel = String(row?.querySelector('.wl-mes')?.value || '');
   const year = parseInt(row?.querySelector('.wl-anio')?.value, 10);
@@ -2432,6 +2304,7 @@ function bindWorkLogPlannedListeners(row) {
   if (row.dataset.wlPlannedBound === '1') return;
   row.dataset.wlPlannedBound = '1';
 
+  const dateEl = row.querySelector('.wl-date');
   const diaEl = row.querySelector('.wl-dia');
   const mesEl = row.querySelector('.wl-mes');
   const anioEl = row.querySelector('.wl-anio');
@@ -2440,6 +2313,7 @@ function bindWorkLogPlannedListeners(row) {
   const machineEl = row.querySelector('.wl-maquina');
   const hoursEl = row.querySelector('.wl-hours');
 
+  if (dateEl) dateEl.addEventListener('input', () => scheduleWorkLogPlannedRefresh(row));
   if (diaEl) diaEl.addEventListener('input', () => scheduleWorkLogPlannedRefresh(row));
   if (mesEl) mesEl.addEventListener('change', () => scheduleWorkLogPlannedRefresh(row));
   if (anioEl) anioEl.addEventListener('input', () => scheduleWorkLogPlannedRefresh(row));
@@ -2875,9 +2749,7 @@ let workLogsFilterUiBound = false;
 let workLogsActivePopover = null; // { key, anchorEl }
 
 const WORKLOG_FILTERS = [
-  { key: 'dia', label: 'Día' },
-  { key: 'mes', label: 'Mes' },
-  { key: 'anio', label: 'Año' },
+  { key: 'fecha', label: 'Fecha' },
   { key: 'operario', label: 'Operario' },
   { key: 'proceso', label: 'Proceso' },
   { key: 'molde', label: 'Molde' },
@@ -2904,21 +2776,9 @@ function parseProcesoOperacion(note) {
 
 function getWorkLogDerivedForFilters(r) {
   const workDateIso = r?.work_date || (r?.recorded_at ? fmtDateOnly(r.recorded_at) : '');
-  let dia = '', mes = '', anio = '';
-  try {
-    const d = workDateIso ? parseISODateOnlyLocal(workDateIso) : null;
-    if (d && !Number.isNaN(d.getTime())) {
-      dia = String(d.getDate());
-      const mIdx = d.getMonth();
-      mes = capitalize(monthNames[mIdx] || '');
-      anio = String(d.getFullYear());
-    }
-  } catch (_) {}
   const po = parseProcesoOperacion(r?.note);
   return {
-    dia,
-    mes,
-    anio,
+    fecha: formatDateDisplay(workDateIso),
     operario: String(r?.operator_name || ''),
     proceso: String(po.proceso || ''),
     molde: String(r?.mold_name || ''),
@@ -2933,9 +2793,7 @@ function getWorkLogRowValueFromDom(tr, key) {
   if (!tr) return '';
   const getVal = (sel) => String(tr.querySelector(sel)?.value ?? '').trim();
   switch (key) {
-    case 'dia': return getVal('input.wl-dia');
-    case 'mes': return getVal('select.wl-mes');
-    case 'anio': return getVal('input.wl-anio');
+    case 'fecha': return getVal('input.wl-date');
     case 'operario': return getVal('input.wl-operario');
     case 'proceso': return getVal('input.wl-proceso');
     case 'molde': return getVal('input.wl-molde');
@@ -2997,6 +2855,15 @@ function applyWorkLogsFiltersToDom() {
       if (!selected.has(norm)) { ok = false; break; }
     }
     tr.style.display = ok ? '' : 'none';
+    const detailTr = tbody.querySelector(`tr[data-detail-for="${safeCssEscape(String(tr.getAttribute('data-id') || ''))}"]`);
+    if (detailTr) {
+      if (!ok) {
+        detailTr.style.display = 'none';
+      } else {
+        const expanded = tr.getAttribute('data-expanded') === '1';
+        detailTr.style.display = expanded ? '' : 'none';
+      }
+    }
     if (ok) {
       shown += 1;
       const h = parseFloat(String(tr.querySelector('input.wl-hours')?.value ?? '').trim());
@@ -3176,13 +3043,13 @@ function ensureWorkLogsFiltersUi() {
 async function loadWorkLogsHistory(reset = true) {
   const tbody = document.querySelector('#workLogsTable tbody');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="16" class="text-muted">Cargando...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="13" class="text-muted">Cargando...</td></tr>';
 
   try {
     const res = await fetch(`${API_URL}/work_logs?limit=200&offset=0`, { headers: { 'Authorization': `Bearer ${authToken}` } });
     const data = await res.json();
     if (!res.ok) {
-      tbody.innerHTML = '<tr><td colspan="16" class="text-muted">Error cargando registros</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="13" class="text-muted">Error cargando registros</td></tr>';
       return displayResponse('workLogsResponse', data, false);
     }
     workLogsHistoryCache = Array.isArray(data) ? data : [];
@@ -3191,7 +3058,7 @@ async function loadWorkLogsHistory(reset = true) {
     try { ensureWorkLogsTotalsLiveUpdate(); } catch (_) {}
     try { applyWorkLogsFiltersToDom(); } catch (_) {}
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="16" class="text-muted">Error de conexión</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="text-muted">Error de conexión</td></tr>';
     displayResponse('workLogsResponse', { error: 'Error de conexión', details: String(e) }, false);
   }
 }
@@ -3227,6 +3094,42 @@ function fmtDateOnly(v) {
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   } catch { return String(v); }
+}
+
+function formatDateDisplay(v) {
+  const iso = fmtDateOnly(v);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function parseUiDateToISO(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return '';
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const year = Number(m[3]);
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return '';
+  if (day < 1 || day > 31 || month < 1 || month > 12 || year < 2000 || year > 2100) return '';
+  const iso = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const check = parseISODateOnlyLocal(iso);
+  return check ? iso : '';
+}
+
+function formatTimeHM(v) {
+  if (!v) return '';
+  try {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return '';
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  } catch {
+    return '';
+  }
 }
 
 function getColombiaTodayISO() {
@@ -3324,6 +3227,7 @@ function businessDaysElapsedInclusiveFromColombiaToday(dateStr) {
 function setWorkLogRowEditing(row, enabled, role) {
   if (!row) return;
   const isOperator = String(role || '').toLowerCase() === 'operator';
+  const detailRow = getWorkLogDetailRow(row);
 
   row.querySelectorAll('input, select').forEach(el => {
     // Campos siempre no editables
@@ -3340,10 +3244,17 @@ function setWorkLogRowEditing(row, enabled, role) {
     el.disabled = !enabled;
   });
 
-  const editBtn = row.querySelector('button.wl-edit');
-  const saveBtn = row.querySelector('button.wl-save');
+  const editBtn = detailRow ? detailRow.querySelector('button.wl-edit') : row.querySelector('button.wl-edit');
+  const saveBtn = detailRow ? detailRow.querySelector('button.wl-save') : row.querySelector('button.wl-save');
   if (editBtn) editBtn.style.display = enabled ? 'none' : '';
   if (saveBtn) saveBtn.style.display = enabled ? '' : 'none';
+
+  if (detailRow) {
+    row.setAttribute('data-expanded', '1');
+    detailRow.style.display = '';
+    const moreBtn = row.querySelector('button.more-btn');
+    if (moreBtn) moreBtn.setAttribute('aria-expanded', 'true');
+  }
 
   // Al editar, adaptar sugerencias de Molde/Parte/Máquina al día seleccionado.
   if (enabled) {
@@ -3353,6 +3264,30 @@ function setWorkLogRowEditing(row, enabled, role) {
     // Al salir de edición, volver a catálogos completos.
     try { ensureWorkLogsMeta(); } catch (_) {}
   }
+}
+
+function getWorkLogDetailRow(row) {
+  if (!row) return null;
+  const tbody = row.closest('tbody');
+  if (!tbody) return null;
+  const rowId = String(row.getAttribute('data-id') || '').trim();
+  if (!rowId) return null;
+  return tbody.querySelector(`tr[data-detail-for="${safeCssEscape(rowId)}"]`);
+}
+
+function toggleWorkLogRowDetails(id) {
+  const row = findRowByDataId('#workLogsTable tbody', id);
+  if (!row) return;
+  const detailRow = getWorkLogDetailRow(row);
+  if (!detailRow) return;
+
+  const expanded = row.getAttribute('data-expanded') === '1';
+  const nextExpanded = !expanded;
+  row.setAttribute('data-expanded', nextExpanded ? '1' : '0');
+  detailRow.style.display = nextExpanded ? '' : 'none';
+
+  const moreBtn = row.querySelector('button.more-btn');
+  if (moreBtn) moreBtn.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
 }
 
 function findRowByDataId(tbodySelector, id) {
@@ -3392,9 +3327,10 @@ function renderWorkLogsTable(rows) {
   const role = String(currentUser?.role || '').toLowerCase();
   const isOperator = role === 'operator';
   const canEditAll = role === 'admin' || role === 'planner';
+  const canDeleteAll = role === 'admin' || role === 'planner';
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="17" class="text-muted">(sin registros)</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="text-muted">(sin registros)</td></tr>';
     return;
   }
 
@@ -3411,17 +3347,11 @@ function renderWorkLogsTable(rows) {
 
   tbody.innerHTML = rows.map(r => {
     const workDateIso = r.work_date || (r.recorded_at ? fmtDateOnly(r.recorded_at) : '');
-    const recordedAt = fmtDateTime(r.recorded_at);
-    let day = '', mes = '', anio = '';
-    try {
-      const d = workDateIso ? parseISODateOnlyLocal(workDateIso) : null;
-      if (d && !Number.isNaN(d.getTime())) {
-        day = String(d.getDate());
-        const mIdx = d.getMonth();
-        mes = capitalize(monthNames[mIdx] || '');
-        anio = String(d.getFullYear());
-      }
-    } catch (_) {}
+    const workDateDisplay = formatDateDisplay(workDateIso);
+    const recordedDate = formatDateDisplay(r.recorded_at);
+    const recordedTime = formatTimeHM(r.recorded_at);
+    const updatedDate = formatDateDisplay(r.updated_at);
+    const updatedTime = formatTimeHM(r.updated_at);
 
     const po = parseProcesoOperacion(r.note);
     const planned = (r.planned_hours == null) ? '' : Number(r.planned_hours).toFixed(2);
@@ -3447,27 +3377,22 @@ function renderWorkLogsTable(rows) {
     const diffDays = baseDateForEdit ? daysDiffFromColombiaToday(baseDateForEdit) : 9999;
     const tooOld = diffDays > 2;
     const canEdit = canEditAll || (isOperator && !tooOld);
+    const canDelete = canDeleteAll;
 
     // Campos bloqueados por defecto; se habilitan solo al presionar "Editar".
     const disabled = 'disabled';
 
     const rowClass = isAlert ? 'class="wl-alert"' : '';
-
-    const monthOptions = monthNames.map(m => {
-      const label = capitalize(m);
-      const sel = label === mes ? 'selected' : '';
-      return `<option value="${escapeHtml(label)}" ${sel}>${escapeHtml(label)}</option>`;
-    }).join('');
+    const rowId = escapeHtml(String(r.id));
+    const detailNote = escapeHtml(String(r.note || ''));
+    const editWhy = isOperator
+      ? 'Operarios: solo puedes editar hasta 2 días desde el registro.'
+      : 'Solo el jefe/admin puede editar este registro.';
+    const deleteWhy = 'Solo admin o planner puede eliminar este registro.';
 
     return `
-      <tr data-id="${escapeHtml(String(r.id))}" data-can-edit="${canEdit ? '1' : '0'}" data-is-final="${isFinalLog ? '1' : '0'}" ${rowClass}>
-        <td><input type="number" class="wl-dia" min="1" max="31" value="${escapeHtml(day)}" ${disabled}></td>
-        <td>
-          <select class="wl-mes" ${disabled}>
-            ${monthOptions}
-          </select>
-        </td>
-        <td><input type="number" class="wl-anio" min="2016" max="2100" value="${escapeHtml(anio)}" ${disabled}></td>
+      <tr data-id="${rowId}" data-planning-id="${escapeHtml(String(r.planning_id ?? ''))}" data-expanded="0" data-can-edit="${canEdit ? '1' : '0'}" data-is-final="${isFinalLog ? '1' : '0'}" ${rowClass}>
+        <td><input type="text" class="wl-date" value="${escapeHtml(workDateDisplay)}" placeholder="DD/MM/YYYY" ${disabled}></td>
         <td><input type="text" class="wl-operario" list="wlOperarios" value="${escapeHtml(r.operator_name || '')}" ${disabled}></td>
         <td><input type="text" class="wl-proceso" list="wlProcesos" value="${escapeHtml(po.proceso || '')}" ${disabled}></td>
         <td><input type="text" class="wl-molde" list="wlMoldes" value="${escapeHtml(r.mold_name || '')}" ${disabled}></td>
@@ -3482,18 +3407,26 @@ function renderWorkLogsTable(rows) {
         <td><input type="text" class="wl-reason" value="${escapeHtml(r.reason || '')}" ${disabled}></td>
         <td class="wl-planned">${escapeHtml(planned)}</td>
         <td class="wl-deviation">${escapeHtml(deviation)}</td>
-        <td>${escapeHtml(recordedAt)}</td>
-        <td>${escapeHtml(r.note || '')}</td>
         <td>
-          ${canEdit ? `
-            <button class="btn btn-primary btn-sm wl-edit" data-action="wl-edit" data-id="${escapeHtml(String(r.id))}">Editar</button>
-            <button class="btn btn-primary btn-sm wl-save" style="display:none" data-action="wl-save" data-id="${escapeHtml(String(r.id))}">Guardar</button>
-          ` : (() => {
-              const why = isOperator
-                ? 'Operarios: solo puedes editar hasta 2 días desde el registro.'
-                : 'Solo el jefe/admin puede editar este registro.';
-              return `<button class="btn btn-secondary btn-sm wl-edit" disabled aria-disabled="true" title="${escapeHtml(why)}">Editar</button>`;
-            })()}
+          <button class="more-btn" data-action="wl-more" data-id="${rowId}" aria-expanded="false" title="Ver más">&#8942;</button>
+        </td>
+      </tr>
+      <tr class="wl-detail-row" data-detail-for="${rowId}" style="display:none;">
+        <td colspan="13">
+          <div class="wl-detail-grid">
+            <div><strong>Registrado:</strong> ${escapeHtml(recordedDate)} ${escapeHtml(recordedTime)}</div>
+            <div><strong>Última actualización:</strong> ${escapeHtml(updatedDate)} ${escapeHtml(updatedTime)}</div>
+          </div>
+          <div class="wl-detail-note"><strong>Detalle:</strong> ${detailNote || '<span class="text-muted">(sin detalle)</span>'}</div>
+          <div class="wl-detail-actions">
+            ${canEdit
+              ? `<button class="btn btn-primary btn-sm wl-edit" data-action="wl-edit" data-id="${rowId}">Editar</button>
+                 <button class="btn btn-primary btn-sm wl-save" style="display:none" data-action="wl-save" data-id="${rowId}">Guardar</button>`
+              : `<button class="btn btn-secondary btn-sm wl-edit" disabled aria-disabled="true" title="${escapeHtml(editWhy)}">Editar</button>`}
+            ${canDelete
+              ? `<button class="btn btn-danger btn-sm wl-delete" data-action="wl-delete" data-id="${rowId}">Eliminar</button>`
+              : `<button class="btn btn-secondary btn-sm wl-delete" disabled aria-disabled="true" title="${escapeHtml(deleteWhy)}">Eliminar</button>`}
+          </div>
         </td>
       </tr>
     `;
@@ -3517,9 +3450,7 @@ async function saveWorkLogRow(id) {
   }
   const meta = tiemposMetaCache || {};
 
-  const dia = Number(row.querySelector('.wl-dia')?.value);
-  const mesName = String(row.querySelector('.wl-mes')?.value || '').toLowerCase();
-  const anio = Number(row.querySelector('.wl-anio')?.value);
+  const dateInput = String(row.querySelector('.wl-date')?.value || '').trim();
 
   const operarioName = String(row.querySelector('.wl-operario')?.value || '').trim();
   const proceso = String(row.querySelector('.wl-proceso')?.value || '').trim();
@@ -3531,13 +3462,18 @@ async function saveWorkLogRow(id) {
   const hours = row.querySelector('.wl-hours')?.value;
   const reason = row.querySelector('.wl-reason')?.value;
 
-  if (!dia || !mesName || !anio || !operarioName || !proceso || !moldeName || !parteName || !maquinaName || !operacion) {
+  if (!dateInput || !operarioName || !proceso || !moldeName || !parteName || !maquinaName || !operacion) {
     return displayResponse('workLogsResponse', { error: 'Completa todos los campos principales antes de guardar' }, false);
   }
 
-  const monthNo = monthNameToNumber(mesName);
-  if (!monthNo) return displayResponse('workLogsResponse', { error: 'Mes inválido' }, false);
-  const work_date = toISODate(anio, monthNo, dia);
+  const work_date = parseUiDateToISO(dateInput);
+  if (!work_date) return displayResponse('workLogsResponse', { error: 'Fecha inválida (use DD/MM/YYYY)' }, false);
+
+  const planningIdRaw = String(row.getAttribute('data-planning-id') || '').trim();
+  const planningId = Number.parseInt(planningIdRaw, 10);
+  if (!Number.isInteger(planningId) || planningId <= 0) {
+    return displayResponse('workLogsResponse', { error: 'No se pudo determinar planning_id del registro en edición' }, false);
+  }
 
   const operator = findByName(meta.operators, operarioName);
   const mold = findByName(meta.molds, moldeName);
@@ -3559,16 +3495,23 @@ async function saveWorkLogRow(id) {
     return displayResponse('workLogsResponse', { error: 'No puedes cambiar el operario del registro' }, false);
   }
 
+  // Siempre enviar is_final_log: si no hay checkbox visible, usar estado actual de la fila.
+  // Esto evita perder el cierre final al editar registros ya cerrados.
+  const finalCheckbox = row.querySelector('input.wl-is-final');
+  const currentRowIsFinal = String(row.getAttribute('data-is-final') || '0') === '1';
+  const finalFlag = finalCheckbox ? !!finalCheckbox.checked : currentRowIsFinal;
+
   const payload = {
     work_date,
     operatorId,
     moldId,
+    planning_id: planningId,
     partId,
     machineId,
     hours_worked: Number(hours),
     reason: String(reason || '').trim() || null,
     note: `Proceso: ${proceso} | Operación: ${operacion}`,
-    is_final_log: !!(row.querySelector('input.wl-is-final')?.checked),
+    is_final_log: finalFlag,
   };
 
   try {
@@ -3578,6 +3521,27 @@ async function saveWorkLogRow(id) {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
+    displayResponse('workLogsResponse', data, res.ok);
+    if (res.ok) {
+      try { loadWorkLogsHistory(true); } catch (_) {}
+    }
+  } catch (e) {
+    displayResponse('workLogsResponse', { error: 'Error de conexión', details: String(e) }, false);
+  }
+}
+
+async function deleteWorkLogRow(id) {
+  const rowId = String(id || '').trim();
+  if (!rowId) return;
+  const ok = window.confirm('¿Eliminar este registro de trabajo? Esta acción no se puede deshacer.');
+  if (!ok) return;
+
+  try {
+    const res = await fetch(`${API_URL}/work_logs/${encodeURIComponent(rowId)}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${authToken}` },
+    });
+    const data = await res.json().catch(() => ({}));
     displayResponse('workLogsResponse', data, res.ok);
     if (res.ok) {
       try { loadWorkLogsHistory(true); } catch (_) {}
@@ -3993,6 +3957,13 @@ function getDayFromISO(dateISO) {
 }
 
 function normalizeToISODate(v) {
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return localISOFromDate(v);
+  }
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const d = new Date(v);
+    if (!Number.isNaN(d.getTime())) return localISOFromDate(d);
+  }
   const s = String(v || '');
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
@@ -4148,14 +4119,21 @@ function getFullCalendarDayCellClasses(dateISO) {
   const iso = normalizeToISODate(dateISO);
   if (!iso) return classes;
 
-  if (isWeekendISO(iso)) classes.push('fc-day-weekend');
-  if (Object.prototype.hasOwnProperty.call(calendarHolidaysCache || {}, iso)) classes.push('fc-day-holiday');
+  const isWeekend = isWeekendISO(iso);
+  const isHoliday = Object.prototype.hasOwnProperty.call(calendarHolidaysCache || {}, iso);
+  if (isWeekend) classes.push('fc-day-weekend');
+  if (isHoliday) classes.push('fc-day-holiday');
+
+  let isWorkingDay = !(isWeekend || isHoliday);
 
   if (Object.prototype.hasOwnProperty.call(calendarWorkingOverridesCache || {}, iso)) {
     const isWorking = !!calendarWorkingOverridesCache[iso];
+    isWorkingDay = isWorking;
     if (isWorking) classes.push('fc-day-enabled-override');
     else classes.push('fc-day-disabled-override');
   }
+
+  if (!isWorkingDay) classes.push('fc-day-non-working');
 
   return classes;
 }
@@ -4163,19 +4141,11 @@ function getFullCalendarDayCellClasses(dateISO) {
 function renderFullCalendarEventContent(arg) {
   const ex = arg?.event?.extendedProps || {};
   const mold = String(ex.mold || 'Molde');
-  const machine = String(ex.machine || 'Máquina');
-  const hours = Number(ex.totalHours || 0);
-  const statusRaw = String(ex.status || 'pending').toLowerCase();
-  const status = statusRaw === 'completed' ? 'completed' : 'in_progress';
-  const badge = status === 'completed' ? 'Terminado' : 'Pendiente';
-  const hoursLabel = Number.isFinite(hours) ? `${hours.toFixed(2)}h` : '0.00h';
 
   return {
     html: `
       <div class="fc-event-rich">
         <div class="fc-event-rich-title">${escapeHtml(mold)}</div>
-        <div class="fc-event-rich-row">${escapeHtml(machine)} · ${escapeHtml(hoursLabel)}</div>
-        <div class="fc-event-rich-status ${status}">${escapeHtml(badge)}</div>
       </div>
     `
   };
@@ -4183,7 +4153,7 @@ function renderFullCalendarEventContent(arg) {
 
 function transformMonthViewToFullCalendarEvents(data, { hideCompleted = false } = {}) {
   const inputEvents = Array.isArray(data?.fullCalendar?.events) ? data.fullCalendar.events : [];
-  const dedup = new Map();
+  const byDay = new Map();
 
   for (const e of inputEvents) {
     const planningId = Number(e?.extendedProps?.planningId ?? e?.planningId);
@@ -4194,33 +4164,55 @@ function transformMonthViewToFullCalendarEvents(data, { hideCompleted = false } 
     const status = String(e?.extendedProps?.status || 'pending').toLowerCase() === 'completed' ? 'completed' : 'pending';
     if (hideCompleted && status === 'completed') continue;
 
-    const id = String(e?.id || `fc:${moldId}:${planningId}:${String(e?.start || '')}:${String(e?.extendedProps?.machineId || '')}`);
-    if (dedup.has(id)) continue;
+    const dayISO = normalizeToISODate(e?.start || e?.date || '');
+    if (!dayISO) continue;
 
-    dedup.set(id, {
-      id,
-      title: String(e?.title || 'Planificación'),
-      start: String(e?.start || ''),
-      end: e?.end ? String(e.end) : null,
-      allDay: e?.allDay !== false,
-      classNames: ['fc-mold-event', `status-${status}`],
-      color: status === 'completed' ? '#16a34a' : '#f59e0b',
-      borderColor: status === 'completed' ? '#16a34a' : '#f59e0b',
-      extendedProps: {
-        mold: String(e?.extendedProps?.mold || ''),
-        machine: String(e?.extendedProps?.machine || ''),
+    const moldCycleKey = makeMoldCycleKey(moldId, planningId);
+    const moldLabel = String(e?.extendedProps?.mold || e?.title || '').trim() || (Number.isFinite(moldId) && moldId > 0 ? `Molde ${moldId}` : 'Molde');
+
+    if (!byDay.has(dayISO)) {
+      byDay.set(dayISO, {
+        dayISO,
         status,
         planningId,
         moldId,
-        machineId: Number(e?.extendedProps?.machineId || 0) || null,
-        totalHours: Number(e?.extendedProps?.totalHours || 0),
-        partCount: Number(e?.extendedProps?.partCount || 0),
-        isPriority: Boolean(e?.extendedProps?.isPriority),
-      },
-    });
+        moldLabel,
+        seenCycles: new Set([moldCycleKey]),
+      });
+      continue;
+    }
+
+    const dayData = byDay.get(dayISO);
+    if (!dayData.seenCycles.has(moldCycleKey)) {
+      dayData.seenCycles.add(moldCycleKey);
+    }
   }
 
-  return Array.from(dedup.values());
+  return Array.from(byDay.values())
+    .sort((a, b) => String(a.dayISO).localeCompare(String(b.dayISO)))
+    .map((dayData) => {
+      const status = dayData.status === 'completed' ? 'completed' : 'pending';
+      return {
+        id: `fc-day:${dayData.dayISO}`,
+        title: dayData.moldLabel,
+        start: dayData.dayISO,
+        end: null,
+        allDay: true,
+        classNames: ['fc-mold-event', `status-${status}`],
+        color: status === 'completed' ? '#16a34a' : '#f59e0b',
+        borderColor: status === 'completed' ? '#16a34a' : '#f59e0b',
+        extendedProps: {
+          mold: dayData.moldLabel,
+          status,
+          planningId: dayData.planningId,
+          moldId: dayData.moldId,
+          machineId: null,
+          totalHours: 0,
+          partCount: 0,
+          isPriority: false,
+        },
+      };
+    });
 }
 
 function extractFullCalendarResources(data) {
@@ -4260,13 +4252,12 @@ function ensureFullCalendarInstance() {
       const ex = info?.event?.extendedProps || {};
       const planningId = Number(ex.planningId);
       const moldId = Number(ex.moldId);
-      const machineId = Number(ex.machineId);
-      if (!Number.isFinite(planningId) || planningId <= 0 || !Number.isFinite(moldId) || moldId <= 0 || !Number.isFinite(machineId) || machineId <= 0) {
-        console.warn('[calendar] eventClick ignorado por extendedProps incompletos', { ex });
-        alert('Ocurrió un error, intenta nuevamente');
+      const eventDate = info?.event?.startStr || info?.event?.start || '';
+      if (!Number.isFinite(planningId) || planningId <= 0 || !Number.isFinite(moldId) || moldId <= 0) {
+        openDayDetailsFromCalendar(eventDate);
         return;
       }
-      openDayDetailsFromCalendar(info?.event?.startStr || info?.event?.start || '', {
+      openDayDetailsFromCalendar(eventDate, {
         focusMoldId: moldId,
         focusPlanningId: planningId,
       });
@@ -4277,13 +4268,7 @@ function ensureFullCalendarInstance() {
     eventContent: renderFullCalendarEventContent,
     eventDidMount: (info) => {
       const ex = info?.event?.extendedProps || {};
-      const title = [
-        String(ex.mold || ''),
-        String(ex.machine || ''),
-        `Estado: ${String(ex.status || 'pending')}`,
-        Number.isFinite(Number(ex.totalHours)) ? `Horas: ${Number(ex.totalHours).toFixed(2)}` : '',
-        Number.isFinite(Number(ex.planningId)) ? `Planning ID: ${Number(ex.planningId)}` : ''
-      ].filter(Boolean).join('\n');
+      const title = String(ex.mold || '').trim();
       if (title) info.el.setAttribute('title', title);
     },
   });
@@ -4426,7 +4411,7 @@ async function loadCalendar() {
   const display = document.getElementById('calendar-month-year');
   const grid = document.getElementById('calendar-grid');
   const progressList = document.getElementById('inProgressMoldList');
-  const hideCompleted = !!document.getElementById('hideCompletedToggle')?.checked;
+  const hideCompleted = false;
   const canUseFullCalendar = hasFullCalendarSupport();
   if (display) display.textContent = `${capitalize(monthNames[currentMonth])} ${currentYear}`;
   if (grid && !canUseFullCalendar) grid.innerHTML = 'Cargando...';
@@ -4452,10 +4437,7 @@ async function loadCalendar() {
         setCalendarRenderMode(true);
       } else {
         setCalendarRenderMode(false);
-        if (hideCompleted) {
-          try { await refreshCompletedMoldIdsCache(); } catch (_) { calendarCompletedMoldIdsCache = new Set(); }
-        }
-        const events = filterCalendarEventsHideCompleted(data.events || {}, hideCompleted);
+        const events = data.events || {};
         renderCalendar(currentYear, currentMonth, events, data.holidays || {}, data.overrides || {});
       }
 
@@ -4509,43 +4491,61 @@ function renderCalendar(year, month, events = {}, holidays = {}, overrides = {})
 
   for (let d = 1; d <= daysInMonth; d++) {
     const dateISO = isoFromYMD(year, month, d);
-    const cell = document.createElement('div'); cell.className = 'calendar-day';
-    cell.innerHTML = `<div class="day-number">${d}</div>`;
-    if (dateISO === todayStr) cell.classList.add('today');
+    const classes = ['calendar-day'];
 
-    const dow = new Date(Date.UTC(year, month, d)).getUTCDay();
-    const isWeekend = (dow === 0 || dow === 6);
+    const isWeekend = isWeekendISO(dateISO);
     const holidayName = holidays[dateISO];
     const isHoliday = Boolean(holidayName);
-    const isBaseNonWorking = isWeekend || isHoliday;
+    const hasOverride = Object.prototype.hasOwnProperty.call(overrides, dateISO);
+    const isWorkingOverride = hasOverride ? overrides[dateISO] === true : null;
+    const isNonWorking = hasOverride ? !isWorkingOverride : (isWeekend || isHoliday);
 
-    if (isWeekend) cell.classList.add('weekend');
-    if (isHoliday) { cell.classList.add('holiday'); cell.innerHTML += `<div class="holiday-name">${escapeHtml(holidayName)}</div>`; }
+    if (dateISO === todayStr) classes.push('today');
+    if (isWeekend) classes.push('weekend');
+    if (isHoliday) classes.push('holiday');
+    if (isNonWorking) classes.push('non-working-day');
+
+    const cell = document.createElement('div');
+    cell.className = classes.join(' ');
+    cell.innerHTML = `<div class="day-number">${d}</div>`;
+
+    if (isHoliday) { cell.innerHTML += `<div class="holiday-name">${escapeHtml(holidayName)}</div>`; }
 
     // Visual override indicators:
     // - Deshabilitado (override false): X roja
     // - Habilitado (override true) solo si era NO laborable por defecto (festivo/fin de semana): ✓ verde
-    if (Object.prototype.hasOwnProperty.call(overrides, dateISO)) {
-      const isWorkingOverride = overrides[dateISO];
+    if (hasOverride) {
       if (isWorkingOverride === false) {
         cell.innerHTML += `<div class="working-override-icon disabled" title="Día deshabilitado">✖</div>`;
-      } else if (isWorkingOverride === true && isBaseNonWorking) {
+      } else if (isWorkingOverride === true && (isWeekend || isHoliday)) {
         cell.innerHTML += `<div class="working-override-icon enabled" title="Día habilitado">✓</div>`;
       }
     }
 
-    if (events && events[d]) {
-      const total = Object.values(events[d].machineUsage || {}).reduce((a, b) => a + (b || 0), 0);
-      cell.classList.add('has-events');
-      cell.innerHTML += `<div class="events-indicator">${total.toFixed(1)}h</div>`;
+    if (events && events[d] && Array.isArray(events[d].tasks) && events[d].tasks.length) {
+      const tasks = Array.isArray(events[d].tasks) ? events[d].tasks : [];
+      const seenCycles = new Set();
+      let representativeMoldName = '';
 
-      if (events[d].hasOverlap) {
-        cell.innerHTML += `<div class="overlap-indicator" title="Convivencia activa">🔀</div>`;
+      for (const t of tasks) {
+        const mid = Number(t?.moldId);
+        const pid = Number(t?.planningId);
+        const cycleKey = makeMoldCycleKey(mid, pid) || String(mid || '');
+        if (cycleKey && seenCycles.has(cycleKey)) continue;
+        if (cycleKey) seenCycles.add(cycleKey);
+
+        const moldName = String(t?.mold || '').trim();
+        representativeMoldName = moldName || (Number.isFinite(mid) && mid > 0 ? `Molde ${mid}` : 'Molde');
+        if (representativeMoldName) break;
       }
 
-      const hasPriority = Array.isArray(events[d].tasks) && events[d].tasks.some(t => t && t.isPriority);
-      if (hasPriority) {
-        cell.innerHTML += `<div class="priority-indicator" title="Prioridad">★</div>`;
+      cell.classList.add('has-events');
+      if (representativeMoldName) {
+        cell.innerHTML += `
+          <div class="calendar-day-molds">
+            <div class="calendar-day-mold">${escapeHtml(representativeMoldName)}</div>
+          </div>
+        `;
       }
     }
     cell.addEventListener('click', () => showDayDetails(dateISO, events[d], holidays[dateISO]));
@@ -6725,8 +6725,6 @@ function setupEventListeners() {
 
   const refreshPlannedMoldsBtn = document.getElementById('refreshPlannedMoldsBtn');
   if (refreshPlannedMoldsBtn) refreshPlannedMoldsBtn.addEventListener('click', (e) => { e.preventDefault(); loadPlannedMoldsList(); });
-  const exitPlannedMoldEditBtn = document.getElementById('exitPlannedMoldEditBtn');
-  if (exitPlannedMoldEditBtn) exitPlannedMoldEditBtn.addEventListener('click', (e) => { e.preventDefault(); setPlannerLoadedMold(null); });
 
   const plannedMoldsList = document.getElementById('plannedMoldsList');
   if (plannedMoldsList) {
@@ -6846,8 +6844,6 @@ function setupEventListeners() {
   // Calendario
   const prevMonthBtn = document.getElementById('prev-month-btn'); if (prevMonthBtn) prevMonthBtn.addEventListener('click', () => changeMonth(-1));
   const nextMonthBtn = document.getElementById('next-month-btn'); if (nextMonthBtn) nextMonthBtn.addEventListener('click', () => changeMonth(1));
-  const hideCompletedToggle = document.getElementById('hideCompletedToggle');
-  if (hideCompletedToggle) hideCompletedToggle.addEventListener('change', () => { loadCalendar(); });
   const modalCloseBtn = document.getElementById('modal-close-btn'); if (modalCloseBtn) modalCloseBtn.addEventListener('click', hideModal);
 
   // Datos

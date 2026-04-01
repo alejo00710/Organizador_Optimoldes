@@ -173,8 +173,6 @@
               <h3 style="margin: 0;">Moldes planificados</h3>
               <div style="display:flex; gap:8px; align-items:center;">
                 <button class="btn btn-secondary" id="refreshPlannedMoldsBtn">Refrescar</button>
-                <button class="btn btn-secondary" id="consecutivePlannedMoldBtn" style="display:none;" title="Pegar este molde detrás del molde anterior (si el anterior ya está completo)">Seguir consecutivamente</button>
-                <button class="btn btn-danger" id="exitPlannedMoldEditBtn" style="display:none;">Salir de edición</button>
               </div>
             </div>
             <div id="plannerLoadedMoldBanner" style="margin-top:8px;"></div>
@@ -241,51 +239,113 @@
         <!-- Tiempos de Moldes (sin cambios) -->
         <div class="tab-content" id="tab-tiempos">
           <h2>Tiempos de Moldes</h2>
-          <div class="form-grid-3-col">
-            <div class="form-group"><label>Día</label><select id="tmDia"></select></div>
-            <div class="form-group"><label>Mes</label><select id="tmMes"></select></div>
-            <div class="form-group"><label>Año</label><select id="tmAnio"></select></div>
+          <p class="tiempos-ux-subtitle">Registra el trabajo en 4 pasos: contexto, selección, ingreso y guardar.</p>
 
-            <div class="form-group"><label>Operario</label><input list="tmOperarios" id="tmOperario"><datalist
-                id="tmOperarios"></datalist></div>
-            <div class="form-group"><label>Proceso</label><input list="tmProcesos" id="tmProceso"><datalist
-                id="tmProcesos"></datalist></div>
+          <div class="tiempos-ux-layout">
+            <section class="tiempos-ux-card tiempos-ux-card-context">
+              <div class="tiempos-ux-card-head">
+                <h3>Contexto</h3>
+                <span class="tiempos-ux-step">Paso 1</span>
+              </div>
 
-            <div class="form-group">
-              <label>Molde</label>
-              <input type="text" id="tmMoldeFilter" placeholder="Filtrar moldes...">
-              <select id="tmMoldeSelect" size="8"></select>
-            </div>
+              <div class="tiempos-ux-grid-2">
+                <div class="form-group tiempos-ux-field">
+                  <label>Operario</label>
+                  <input list="tmOperarios" id="tmOperario" placeholder="Escribe o selecciona el operario">
+                  <datalist id="tmOperarios"></datalist>
+                </div>
+                <div class="form-group tiempos-ux-field">
+                  <label>Proceso</label>
+                  <input list="tmProcesos" id="tmProceso" placeholder="Ej: Inyección, Ajuste, Pulido">
+                  <datalist id="tmProcesos"></datalist>
+                </div>
+              </div>
 
-            <div class="form-group">
-              <label>Parte</label>
-              <input type="text" id="tmParteFilter" placeholder="Filtrar partes...">
-              <select id="tmParteSelect" size="8"></select>
-            </div>
+              <div class="tiempos-ux-grid-3">
+                <div class="form-group tiempos-ux-field"><label>Día</label><select id="tmDia"></select></div>
+                <div class="form-group tiempos-ux-field"><label>Mes</label><select id="tmMes"></select></div>
+                <div class="form-group tiempos-ux-field"><label>Año</label><select id="tmAnio"></select></div>
+              </div>
 
-            <div class="form-group">
-              <label>Máquina</label>
-              <input type="text" id="tmMaquinaFilter" placeholder="Filtrar máquinas...">
-              <select id="tmMaquinaSelect" size="8"></select>
-            </div>
-            <div class="form-group"><label>Operación</label><input list="tmOperaciones" id="tmOperacion"><datalist
-                id="tmOperaciones"></datalist></div>
-            <div class="form-group"><label>Horas</label><select id="tmHoras"></select></div>
+              <div class="form-group tiempos-ux-field">
+                <label>Molde</label>
+                <input type="text" id="tmMoldeFilter" placeholder="Busca por nombre del molde">
+                <select id="tmMoldeSelect" size="6"></select>
+              </div>
 
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label>Motivo (si hubo desviación)</label>
-              <input type="text" id="tmMotivo" placeholder="Ej: Ajuste, daño de máquina, retrabajo, espera material...">
-            </div>
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:700; color:var(--danger-color, #e74c3c);">
-                <input type="checkbox" id="tmIsFinalLog" style="width:18px;height:18px;cursor:pointer;" />
-                ¿Finalizar esta parte definitivamente? (Cierre manual — bloquea reprogramación futura)
-              </label>
-            </div>
+              <div class="tiempos-ux-info-chip">Planning: se detecta automaticamente al guardar segun el molde y la fecha.</div>
+            </section>
+
+            <section class="tiempos-ux-card tiempos-ux-card-selection">
+              <div class="tiempos-ux-card-head">
+                <h3>Seleccion</h3>
+                <span class="tiempos-ux-step">Paso 2</span>
+              </div>
+
+              <div class="tiempos-ux-grid-2">
+                <div class="form-group tiempos-ux-field">
+                  <label>Parte</label>
+                  <input type="text" id="tmParteFilter" placeholder="Busca la parte trabajada">
+                  <select id="tmParteSelect" size="6"></select>
+                </div>
+
+                <div class="form-group tiempos-ux-field">
+                  <label>Maquina</label>
+                  <input type="text" id="tmMaquinaFilter" placeholder="Busca la maquina usada">
+                  <select id="tmMaquinaSelect" size="6"></select>
+                </div>
+              </div>
+
+              <div class="form-group tiempos-ux-field">
+                <label>Operacion</label>
+                <input list="tmOperaciones" id="tmOperacion" placeholder="Describe la operacion realizada">
+                <datalist id="tmOperaciones"></datalist>
+              </div>
+            </section>
+
+            <section class="tiempos-ux-card tiempos-ux-card-entry">
+              <div class="tiempos-ux-card-head">
+                <h3>Ingreso</h3>
+                <span class="tiempos-ux-step">Paso 3</span>
+              </div>
+
+              <div class="tiempos-ux-grid-2">
+                <div class="form-group tiempos-ux-field">
+                  <label>Horas trabajadas</label>
+                  <select id="tmHoras"></select>
+                </div>
+
+                <div class="form-group tiempos-ux-field">
+                  <label>Cantidad registrada</label>
+                  <input type="text" value="Se calcula con las horas" disabled>
+                </div>
+              </div>
+
+              <div class="form-group tiempos-ux-field">
+                <label>Motivo (si hubo novedad)</label>
+                <input type="text" id="tmMotivo" placeholder="Ej: ajuste, falla de maquina, retrabajo, espera de material">
+              </div>
+
+              <div class="form-group tiempos-ux-field tiempos-ux-final-log">
+                <label>
+                  <input type="checkbox" id="tmIsFinalLog" />
+                  Finalizar esta parte definitivamente (bloquea reprogramacion futura)
+                </label>
+              </div>
+            </section>
+
+            <section class="tiempos-ux-card tiempos-ux-card-action">
+              <div class="tiempos-ux-card-head">
+                <h3>Accion</h3>
+                <span class="tiempos-ux-step">Paso 4</span>
+              </div>
+              <p class="tiempos-ux-action-help">Verifica los datos y guarda el registro.</p>
+              <div class="form-actions tiempos-ux-actions">
+                <button class="btn btn-primary tiempos-ux-save" id="tmGuardarBtn">Guardar registro</button>
+              </div>
+            </section>
           </div>
-          <div class="form-actions">
-            <button class="btn btn-secondary" id="tmGuardarBtn">Guardar</button>
-          </div>
+
           <div class="response-box" id="tmResponse"></div>
         </div>
 
@@ -324,9 +384,7 @@
             <table id="workLogsTable">
               <thead>
                 <tr>
-                  <th>Día</th>
-                  <th>Mes</th>
-                  <th>Año</th>
+                  <th>Fecha</th>
                   <th>Operario</th>
                   <th>Proceso</th>
                   <th>Molde</th>
@@ -338,9 +396,7 @@
                   <th>Motivo</th>
                   <th>Horas plan</th>
                   <th>Desv %</th>
-                  <th>Registrado</th>
-                  <th>Detalle</th>
-                  <th>Acción</th>
+                  <th>Más</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -539,10 +595,6 @@
             <div class="calendar-header">
               <h2 id="calendar-month-year"></h2>
               <div id="calendar-nav">
-                <label style="display:inline-flex; align-items:center; gap:6px; margin-right:10px;">
-                  <input type="checkbox" id="hideCompletedToggle">
-                  <span>Ocultar moldes terminados</span>
-                </label>
                 <button id="prev-month-btn">&larr; Anterior</button>
                 <button id="next-month-btn">Siguiente &rarr;</button>
               </div>

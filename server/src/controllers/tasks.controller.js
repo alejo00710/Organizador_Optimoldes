@@ -452,12 +452,42 @@ async function insertEntry({ mold_id, planning_id = null, part_id, machine_id, d
   );
 }
 
+async function cleanupPlanningConsistency(dbQuery = query) {
+  // Elimina filas huérfanas que no pertenecen a ningún planning_history.
+  await dbQuery(
+    `DELETE FROM plan_entries pe
+     WHERE pe.planning_id IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1
+         FROM planning_history ph
+         WHERE ph.id = pe.planning_id
+       )`
+  ).catch(() => {});
+
+  // Un ciclo IN_PROGRESS sin entradas no debe bloquear nuevas planificaciones.
+  await dbQuery(
+    `UPDATE planning_history ph
+     SET status = 'COMPLETED'
+     WHERE ph.event_type = 'PLANNED'
+       AND ph.status = 'IN_PROGRESS'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM plan_entries pe
+         WHERE pe.planning_id = ph.id
+       )`
+  ).catch(() => {});
+}
+
 async function getDayUsage(machine_id, dateISO, dbQuery = query) {
   const rows = await dbQuery(
-    `SELECT mold_id, SUM(hours_planned) AS used, BOOL_OR(is_priority) AS has_priority
-     FROM plan_entries
-     WHERE machine_id = ? AND date = ?
-     GROUP BY mold_id`,
+    `SELECT pe.mold_id, SUM(pe.hours_planned) AS used, BOOL_OR(pe.is_priority) AS has_priority
+     FROM plan_entries pe
+     JOIN planning_history ph ON ph.id = pe.planning_id
+     WHERE pe.machine_id = ?
+       AND pe.date = ?
+       AND ph.event_type = 'PLANNED'
+       AND ph.status = 'IN_PROGRESS'
+     GROUP BY pe.mold_id`,
     [machine_id, dateISO]
   );
   const used = rows.reduce((a, r) => a + Number(r.used || 0), 0);
@@ -471,10 +501,15 @@ async function getDayUsage(machine_id, dateISO, dbQuery = query) {
 
 async function getDayUsageExcludingEntry(machine_id, dateISO, excludeEntryId) {
   const rows = await query(
-    `SELECT mold_id, SUM(hours_planned) AS used, BOOL_OR(is_priority) AS has_priority
-     FROM plan_entries
-     WHERE machine_id = ? AND date = ? AND id <> ?
-     GROUP BY mold_id`,
+    `SELECT pe.mold_id, SUM(pe.hours_planned) AS used, BOOL_OR(pe.is_priority) AS has_priority
+     FROM plan_entries pe
+     JOIN planning_history ph ON ph.id = pe.planning_id
+     WHERE pe.machine_id = ?
+       AND pe.date = ?
+       AND pe.id <> ?
+       AND ph.event_type = 'PLANNED'
+       AND ph.status = 'IN_PROGRESS'
+     GROUP BY pe.mold_id`,
     [machine_id, dateISO, excludeEntryId]
   );
   const used = rows.reduce((a, r) => a + Number(r.used || 0), 0);
@@ -643,10 +678,13 @@ async function hasOtherMoldPlannedOnDate({ dateISO, currentMoldId, excludeEntryI
   if (!dateISO) return false;
   const rows = await query(
     `SELECT 1
-     FROM plan_entries
-     WHERE date = ?
-       AND mold_id <> ?
-       AND (?::int IS NULL OR id <> ?)
+     FROM plan_entries pe
+     JOIN planning_history ph ON ph.id = pe.planning_id
+     WHERE pe.date = ?
+       AND pe.mold_id <> ?
+       AND (?::int IS NULL OR pe.id <> ?)
+       AND ph.event_type = 'PLANNED'
+       AND ph.status = 'IN_PROGRESS'
      LIMIT 1`,
     [dateISO, currentMoldId, excludeEntryId, excludeEntryId]
   );
@@ -689,7 +727,15 @@ async function isLastDayOfBlock(machine_id, mold_id, dateISO, holidaySet, overri
   const cur = parseLocalISO(dateISO);
   const next = nextWorkingDayLocal(cur, holidaySet, overrideMap);
   const rows = await query(
-    `SELECT 1 FROM plan_entries WHERE machine_id = ? AND date = ? AND mold_id = ? LIMIT 1`,
+    `SELECT 1
+     FROM plan_entries pe
+     JOIN planning_history ph ON ph.id = pe.planning_id
+     WHERE pe.machine_id = ?
+       AND pe.date = ?
+       AND pe.mold_id = ?
+       AND ph.event_type = 'PLANNED'
+       AND ph.status = 'IN_PROGRESS'
+     LIMIT 1`,
     [machine_id, localISO(next), mold_id]
   );
   return rows.length === 0;
@@ -731,7 +777,15 @@ async function placeBlockNoPreempt({ mold_id, planning_id = null, machine_id, ca
     const dateISO = localISO(cursor);
 
     if (strictGlobalUniqueDay) {
-      const dayMolds = await dbQuery('SELECT DISTINCT mold_id FROM plan_entries WHERE date = ?', [dateISO]);
+      const dayMolds = await dbQuery(
+        `SELECT DISTINCT pe.mold_id
+         FROM plan_entries pe
+         JOIN planning_history ph ON ph.id = pe.planning_id
+         WHERE pe.date = ?
+           AND ph.event_type = 'PLANNED'
+           AND ph.status = 'IN_PROGRESS'`,
+        [dateISO]
+      );
       const otherMolds = (dayMolds || []).map(r => Number(r.mold_id)).filter(mid => mid !== Number(mold_id));
       if (otherMolds.length > 0) {
         if (strictNoSkip) {
@@ -864,10 +918,19 @@ async function findStrictBlockedDayForQueue({ mold_id, machine_id, capPerDay, ba
 // Bloques existentes desde baseDate, preservando orden original
 async function getExistingBlocksFrom(machine_id, baseDateISO, holidaySet, overrideMap) {
   const rows = await query(
-    `SELECT to_char(date, 'YYYY-MM-DD') AS date_str, mold_id, part_id, hours_planned, is_priority
-     FROM plan_entries
-     WHERE machine_id = ? AND date >= ?
-     ORDER BY date ASC, id ASC`,
+    `SELECT
+       to_char(pe.date, 'YYYY-MM-DD') AS date_str,
+       pe.mold_id,
+       pe.part_id,
+       pe.hours_planned,
+       pe.is_priority
+     FROM plan_entries pe
+     JOIN planning_history ph ON ph.id = pe.planning_id
+     WHERE pe.machine_id = ?
+       AND pe.date >= ?
+       AND ph.event_type = 'PLANNED'
+       AND ph.status = 'IN_PROGRESS'
+     ORDER BY pe.date ASC, pe.id ASC`,
     [machine_id, baseDateISO]
   );
 
@@ -918,6 +981,8 @@ exports.planBlock = async (req, res, next) => {
   try {
     const createdBy = getRequestUserId(req);
     if (!createdBy) return res.status(403).json({ error: 'Usuario no válido para crear planificación' });
+
+    await cleanupPlanningConsistency();
 
     const allowOverlap = parseBoolInput(req.body?.allowOverlap);
 
@@ -1001,7 +1066,15 @@ exports.planBlock = async (req, res, next) => {
 
       if (blockedDate) {
         const occupied = await query(
-          `SELECT mold_id FROM plan_entries WHERE machine_id = ? AND date = ? ORDER BY id ASC LIMIT 1`,
+          `SELECT pe.mold_id
+           FROM plan_entries pe
+           JOIN planning_history ph ON ph.id = pe.planning_id
+           WHERE pe.machine_id = ?
+             AND pe.date = ?
+             AND ph.event_type = 'PLANNED'
+             AND ph.status = 'IN_PROGRESS'
+           ORDER BY pe.id ASC
+           LIMIT 1`,
           [machine_id, blockedDate]
         );
         const existingMoldId = occupied?.[0]?.mold_id || null;

@@ -216,6 +216,77 @@ describe('Tiempos de Moldes / work_logs (CRUD básico)', () => {
         expect(Number(rows?.[0]?.planning_id || 0)).toBe(ids.planningId);
     });
 
+    it('PUT /api/work_logs/:id no permite desmarcar un registro final', async () => {
+        await request(app)
+            .put(`/api/work_logs/${workLogId}`)
+            .set('Authorization', `Bearer ${ctx.token}`)
+            .send({
+                hours_worked: 2.5,
+                is_final_log: true,
+            })
+            .expect(200);
+
+        const res = await request(app)
+            .put(`/api/work_logs/${workLogId}`)
+            .set('Authorization', `Bearer ${ctx.token}`)
+            .send({
+                hours_worked: 2,
+                is_final_log: false,
+            })
+            .expect(400);
+
+        expect(String(res.body?.error || '')).toContain('No se puede desmarcar un registro final');
+
+        const rows = await query('SELECT is_final_log FROM work_logs WHERE id = ? LIMIT 1', [workLogId]);
+        expect(rows?.[0]?.is_final_log).toBe(true);
+    });
+
+    it('DELETE /api/work_logs/:id reabre ciclo si se elimina el último final_log', async () => {
+        const finalLogId = Number(workLogId || 0);
+        expect(finalLogId).toBeGreaterThan(0);
+
+        const statusBeforeRows = await query(
+            `SELECT status
+             FROM planning_history
+             WHERE id = ?
+             LIMIT 1`,
+            [ids.planningId]
+        );
+        expect(String(statusBeforeRows?.[0]?.status || '').toUpperCase()).toBe('COMPLETED');
+
+        await request(app)
+            .delete(`/api/work_logs/${finalLogId}`)
+            .set('Authorization', `Bearer ${ctx.token}`)
+            .expect(200);
+
+        const statusAfterRows = await query(
+            `SELECT status
+             FROM planning_history
+             WHERE id = ?
+             LIMIT 1`,
+            [ids.planningId]
+        );
+        expect(String(statusAfterRows?.[0]?.status || '').toUpperCase()).toBe('IN_PROGRESS');
+
+        // Reponer un registro no final para las pruebas siguientes de DELETE.
+        const replacementRes = await request(app)
+            .post('/api/work_logs')
+            .set('Authorization', `Bearer ${ctx.token}`)
+            .send({
+                moldId: ids.moldId,
+                planning_id: ids.planningId,
+                partId: ids.partId,
+                machineId: ids.machineId,
+                operatorId: ids.operatorId,
+                hours_worked: 1,
+                work_date: '2026-01-15',
+            })
+            .expect(201);
+
+        workLogId = Number(replacementRes?.body?.data?.id || 0);
+        expect(workLogId).toBeGreaterThan(0);
+    });
+
     it('DELETE /api/work_logs/:id elimina (admin/planner)', async () => {
         const res = await request(app)
             .delete(`/api/work_logs/${workLogId}`)
