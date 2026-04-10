@@ -337,38 +337,53 @@ const getWorkLogs = async (req, res, next) => {
 
         const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-                const sql = `
-            SELECT 
-                wl.*, 
-                to_char(wl.work_date, 'YYYY-MM-DD') AS work_date,
-                m.name as mold_name,
-                mp.name as part_name,
-                ma.name as machine_name,
-                o.name as operator_name,
-                COALESCE(wl.planned_hours_snapshot, pe.planned_hours) AS planned_hours,
-                (wl.hours_worked - COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) AS diff_hours,
+        const sql = `
+            WITH task_totals AS (
+                SELECT
+                    wlt.id,
+                    SUM(wlt.hours_worked) OVER (
+                        PARTITION BY wlt.planning_id, wlt.part_id, wlt.machine_id
+                    ) AS total_task_hours
+                FROM work_logs wlt
+            ),
+            base_logs AS (
+                SELECT
+                    wl.*,
+                    to_char(wl.work_date, 'YYYY-MM-DD') AS work_date,
+                    m.name as mold_name,
+                    mp.name as part_name,
+                    ma.name as machine_name,
+                    o.name as operator_name,
+                    COALESCE(wl.planned_hours_snapshot, pe.planned_hours) AS planned_hours,
+                    COALESCE(tt.total_task_hours, 0) AS total_task_hours
+                FROM work_logs wl
+                JOIN molds m ON wl.mold_id = m.id
+                JOIN mold_parts mp ON wl.part_id = mp.id
+                JOIN machines ma ON wl.machine_id = ma.id
+                JOIN operators o ON wl.operator_id = o.id
+                LEFT JOIN task_totals tt ON tt.id = wl.id
+                LEFT JOIN LATERAL (
+                    SELECT SUM(pe2.hours_planned) AS planned_hours
+                    FROM plan_entries pe2
+                    WHERE pe2.mold_id = wl.mold_id
+                      AND pe2.part_id = wl.part_id
+                      AND pe2.machine_id = wl.machine_id
+                      AND pe2.planning_id = wl.planning_id
+                ) pe ON TRUE
+            )
+            SELECT
+                wl.*,
+                (wl.total_task_hours - wl.planned_hours) AS diff_hours,
                 CASE
-                    WHEN COALESCE(wl.planned_hours_snapshot, pe.planned_hours) IS NULL OR COALESCE(wl.planned_hours_snapshot, pe.planned_hours) <= 0 THEN NULL
-                    ELSE ROUND(ABS(wl.hours_worked - COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) / COALESCE(wl.planned_hours_snapshot, pe.planned_hours) * 100, 2)
+                    WHEN wl.planned_hours IS NULL OR wl.planned_hours <= 0 THEN NULL
+                    ELSE ROUND(((wl.total_task_hours - wl.planned_hours) / wl.planned_hours) * 100, 2)
                 END AS deviation_pct,
                 CASE
-                    WHEN COALESCE(wl.planned_hours_snapshot, pe.planned_hours) IS NULL OR COALESCE(wl.planned_hours_snapshot, pe.planned_hours) <= 0 THEN 0
-                    WHEN (ABS(wl.hours_worked - COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) / COALESCE(wl.planned_hours_snapshot, pe.planned_hours)) > 0.05 THEN 1
+                    WHEN wl.planned_hours IS NULL OR wl.planned_hours <= 0 THEN 0
+                    WHEN ABS((wl.total_task_hours - wl.planned_hours) / wl.planned_hours) > 0.05 THEN 1
                     ELSE 0
                 END AS is_alert
-            FROM work_logs wl
-            JOIN molds m ON wl.mold_id = m.id
-            JOIN mold_parts mp ON wl.part_id = mp.id
-            JOIN machines ma ON wl.machine_id = ma.id
-            JOIN operators o ON wl.operator_id = o.id
-            LEFT JOIN LATERAL (
-                                SELECT SUM(pe2.hours_planned) AS planned_hours
-                FROM plan_entries pe2
-                WHERE pe2.mold_id = wl.mold_id
-                  AND pe2.part_id = wl.part_id
-                  AND pe2.machine_id = wl.machine_id
-                                    AND pe2.planning_id = wl.planning_id
-            ) pe ON TRUE
+            FROM base_logs wl
             ${whereClause}
             ORDER BY wl.recorded_at DESC
             LIMIT ${limit} OFFSET ${offset}
