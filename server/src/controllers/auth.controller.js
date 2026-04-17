@@ -347,12 +347,13 @@ module.exports = {
 async function bootstrapStatus(req, res, next) {
     try {
         const rows = await query(
-            'SELECT username, role FROM users WHERE username IN (?, ?) LIMIT 2',
-            ['admin', 'jefe']
+            'SELECT username, role FROM users WHERE username IN (?, ?) OR role = ? LIMIT 10',
+            ['admin', 'jefe', ROLES.MANAGEMENT]
         );
         const adminExists = rows.some((r) => r.username === 'admin' && r.role === ROLES.ADMIN);
         const jefeExists = rows.some((r) => r.username === 'jefe' && r.role === ROLES.PLANNER);
-        res.json({ adminExists, jefeExists, canBootstrap: !(adminExists && jefeExists) });
+        const gerenciaExists = rows.some((r) => r.role === ROLES.MANAGEMENT);
+        res.json({ adminExists, jefeExists, gerenciaExists, canBootstrap: !(adminExists && jefeExists && gerenciaExists) });
     } catch (e) {
         next(e);
     }
@@ -365,17 +366,18 @@ async function bootstrapStatus(req, res, next) {
  */
 async function bootstrapInit(req, res, next) {
     try {
-        const { adminPassword, jefePassword } = req.body || {};
+        const { adminPassword, jefePassword, gerenciaPassword } = req.body || {};
 
         // Estado actual
         const rows = await query(
-            'SELECT username, role FROM users WHERE username IN (?, ?) LIMIT 2',
-            ['admin', 'jefe']
+            'SELECT username, role FROM users WHERE username IN (?, ?) OR role = ? LIMIT 10',
+            ['admin', 'jefe', ROLES.MANAGEMENT]
         );
         const adminExists = rows.some((r) => r.username === 'admin' && r.role === ROLES.ADMIN);
         const jefeExists = rows.some((r) => r.username === 'jefe' && r.role === ROLES.PLANNER);
+        const gerenciaExists = rows.some((r) => r.role === ROLES.MANAGEMENT);
 
-        if (adminExists && jefeExists) {
+        if (adminExists && jefeExists && gerenciaExists) {
             return res.status(403).json({ error: 'Bootstrap ya completado' });
         }
 
@@ -386,8 +388,11 @@ async function bootstrapInit(req, res, next) {
         if (!jefeExists && !jefePassword) {
             return res.status(400).json({ error: 'jefePassword requerido' });
         }
+        if (!gerenciaExists && !gerenciaPassword) {
+            return res.status(400).json({ error: 'gerenciaPassword requerido' });
+        }
 
-        const created = { admin: false, jefe: false };
+        const created = { admin: false, jefe: false, gerencia: false };
 
         if (!adminExists) {
             const hash = await bcrypt.hash(String(adminPassword), 10);
@@ -407,7 +412,23 @@ async function bootstrapInit(req, res, next) {
             created.jefe = true;
         }
 
-        res.status(201).json({ message: 'Bootstrap completado', created });
+        if (!gerenciaExists) {
+            const hash = await bcrypt.hash(String(gerenciaPassword), 10);
+            await query(
+                'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)',
+                ['gerente', hash, ROLES.MANAGEMENT]
+            );
+            created.gerencia = true;
+        }
+
+        const status = {
+            adminExists: adminExists || created.admin,
+            jefeExists: jefeExists || created.jefe,
+            gerenciaExists: gerenciaExists || created.gerencia,
+        };
+        status.canBootstrap = !(status.adminExists && status.jefeExists && status.gerenciaExists);
+
+        res.status(201).json({ message: 'Bootstrap completado', created, status });
     } catch (e) {
         // Si hay carrera y ya existe, devolvemos mensaje claro
         if (String(e?.code || '') === '23505' || String(e?.code || '').toUpperCase() === 'ER_DUP_ENTRY') {

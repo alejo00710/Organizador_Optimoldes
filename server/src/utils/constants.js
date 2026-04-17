@@ -3,6 +3,7 @@ module.exports = {
         ADMIN: 'admin',
         PLANNER: 'planner',
         OPERATOR: 'operator',
+        MANAGEMENT: 'management',
     },
 
     WORKING_DAYS: [1, 2, 3, 4, 5], // Lunes a Viernes

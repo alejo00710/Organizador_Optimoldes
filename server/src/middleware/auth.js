@@ -69,6 +69,13 @@ const authorizeRoles = (...roles) => {
       return next();
     }
 
+    // Gerencia: solo privilegios de lectura (GET) equivalentes a admin/planner.
+    const method = String(req.method || '').toUpperCase();
+    const allowsAdminOrPlanner = roles.includes(ROLES.ADMIN) || roles.includes(ROLES.PLANNER);
+    if (method === 'GET' && req.user.role === ROLES.MANAGEMENT && allowsAdminOrPlanner) {
+      return next();
+    }
+
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({
         error: 'No tienes permisos para realizar esta acción',
@@ -86,8 +93,8 @@ const authorizeOperatorOwnData = (req, res, next) => {
     return res.status(401).json({ error: 'Usuario no autenticado' });
   }
 
-  // Admin y planner pueden ver todo
-  if ([ROLES.ADMIN, ROLES.PLANNER].includes(req.user.role)) {
+  // Admin, planner y management pueden ver todo
+  if ([ROLES.ADMIN, ROLES.PLANNER, ROLES.MANAGEMENT].includes(req.user.role)) {
     return next();
   }
 

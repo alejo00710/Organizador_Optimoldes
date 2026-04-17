@@ -29,6 +29,7 @@
           <select id="username">
             <option value="admin">Administrador</option>
             <option value="jefe" selected>Jefe</option>
+            <option value="gerente">Gerencia</option>
             <option value="operarios">Operarios</option>
           </select>
         </div>
@@ -54,7 +55,7 @@
         <div id="bootstrapCard" class="hidden" style="margin-top: 18px;">
           <hr style="margin: 18px 0;">
           <h3 style="margin: 0 0 6px 0;">Configuración inicial</h3>
-          <p class="text-muted" style="font-size: 0.9rem; margin-top: 0;">Crea las cuentas <strong>admin</strong> y <strong>jefe</strong> una sola vez. Después se oculta automáticamente.</p>
+          <p class="text-muted" style="font-size: 0.9rem; margin-top: 0;">Crea las cuentas <strong>admin</strong>, <strong>jefe</strong> y <strong>gerencia</strong> una sola vez. Después se oculta automáticamente.</p>
 
           <div id="bootstrapAdminGroup" class="form-group">
             <label>Contraseña Admin</label>
@@ -63,6 +64,10 @@
           <div id="bootstrapJefeGroup" class="form-group">
             <label>Contraseña Jefe (Planner)</label>
             <input type="password" id="bootstrapJefePassword" placeholder="Nueva contraseña para jefe">
+          </div>
+          <div id="bootstrapGerenciaGroup" class="form-group">
+            <label>Contraseña Gerencia</label>
+            <input type="password" id="bootstrapGerenciaPassword" placeholder="Nueva contraseña para gerente">
           </div>
 
           <button class="btn btn-secondary" id="bootstrapBtn" style="width: 100%; margin-top: 0.5rem;">Crear cuentas</button>
@@ -99,6 +104,8 @@
           <button class="tab" data-tab="datos">Datos</button>
           <button class="tab" data-tab="importar">Importar</button>
           <button class="tab" data-tab="indicators">Indicadores</button>
+          <button class="tab hidden" data-tab="reports">Informes</button>
+          <button class="tab hidden" data-tab="financial">Financiero</button>
           <button class="tab" data-tab="sesiones">Sesiones</button>
           <button class="tab" data-tab="tiempos">Tiempos de Moldes</button>
           <button class="tab" data-tab="registros">Registros</button>
@@ -117,6 +124,10 @@
             <div class="form-group">
               <label>Fecha de inicio</label>
               <input type="date" id="gridStartDate">
+            </div>
+            <div class="form-group" style="flex:1">
+              <label>Nombre del Cliente</label>
+              <input type="text" id="planClientName" placeholder="Ej: Cliente ABC">
             </div>
             <div class="form-group">
               <label style="display:flex; align-items:center; gap:6px;"
@@ -322,8 +333,8 @@
               </div>
 
               <div class="form-group tiempos-ux-field">
-                <label>Motivo (si hubo novedad)</label>
-                <input type="text" id="tmMotivo" placeholder="Ej: ajuste, falla de maquina, retrabajo, espera de material">
+                <label>Detalle (si hubo novedad)</label>
+                <input type="text" id="tmMotivo" placeholder="Ej: detalle de ajuste, falla de maquina, retrabajo, espera de material">
               </div>
 
               <div class="form-group tiempos-ux-field tiempos-ux-final-log">
@@ -352,13 +363,13 @@
         <!-- Registros (historial editable de Tiempos) -->
         <div class="tab-content" id="tab-registros">
           <h2>Registros (Tiempos)</h2>
-          <p class="text-muted" style="font-size: 0.9rem;">Los operarios pueden corregir hasta 2 días atrás. Alertas &gt; 5% se marcan en rojo.</p>
+          <p class="text-muted" style="font-size: 0.9rem;">Solo Gerencia puede editar registros. Alertas &gt; 5% se marcan en rojo.</p>
 
           <div class="mold-progress-panel" style="margin: 10px 0 12px 0;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
               <div>
                 <div style="font-weight:800;">Filtros</div>
-                <div class="text-muted" style="font-size:0.9rem;">Tipo Excel: selecciona valores por columna (hasta Motivo).</div>
+                <div class="text-muted" style="font-size:0.9rem;">Tipo Excel: selecciona valores por columna (hasta Detalle).</div>
               </div>
               <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                 <div style="padding:6px 10px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg);">
@@ -393,7 +404,7 @@
                   <th>Operación</th>
                   <th>Horas reales</th>
                   <th>Cierre</th>
-                  <th>Motivo</th>
+                  <th>Detalle</th>
                   <th>Horas plan</th>
                   <th>Desv %</th>
                   <th>Más</th>
@@ -573,7 +584,7 @@
             <div class="form-column">
               <h3>Festivo/Día No Laborable</h3>
               <div class="form-group"><label>Fecha</label><input type="date" id="newHolidayDate"></div>
-              <div class="form-group"><label>Nombre/Motivo</label><input type="text" id="newHolidayName"
+                <div class="form-group"><label>Nombre/Detalle</label><input type="text" id="newHolidayName"
                   placeholder="Ej: Feriado Nacional"></div>
               <button class="btn btn-secondary" id="createHolidayBtn">Registrar Festivo</button>
               <hr style="margin: 15px 0;">
@@ -722,6 +733,22 @@
           </div>
 
           <div class="response-box" id="indicatorsResponse"></div>
+        </div>
+
+        <div class="tab-content hidden" id="tab-reports">
+          <h2>Informes</h2>
+          <div class="mold-progress-panel" style="margin-top: 12px;">
+            <h3 style="margin:0 0 8px 0;">Panel de Informes</h3>
+            <p class="text-muted" style="font-size: 0.95rem; margin: 0;">Esta seccion esta en desarrollo. Aqui se publicaran reportes ejecutivos para Gerencia.</p>
+          </div>
+        </div>
+
+        <div class="tab-content hidden" id="tab-financial">
+          <h2>Financiero</h2>
+          <div class="mold-progress-panel" style="margin-top: 12px;">
+            <h3 style="margin:0 0 8px 0;">Panel Financiero</h3>
+            <p class="text-muted" style="font-size: 0.95rem; margin: 0;">Esta seccion esta en desarrollo. Aqui se mostraran indicadores financieros y de costos.</p>
+          </div>
         </div>
 
       </div>

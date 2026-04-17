@@ -185,6 +185,15 @@ async function firstWorkingOnOrAfter(dateISO, holidaySet, overrideMap) {
    Helpers de dominio y usuario
    ========================================= */
 function toStr(v) { return v == null ? null : String(v).trim(); }
+function normalizeClientName(v) {
+  const s = toStr(v);
+  if (!s) return null;
+  return String(s).slice(0, 255);
+}
+function getClientNameFromBody(body) {
+  if (!body || !Object.prototype.hasOwnProperty.call(body, 'clientName')) return undefined;
+  return normalizeClientName(body.clientName);
+}
 function round025(n) { return Math.round(n / 0.25) * 0.25; }
 function getRequestUserId(req) { return req.user?.id ?? req.user?.userId ?? req.user?.uid ?? null; }
 
@@ -306,7 +315,8 @@ async function getActivePlanningMetaForMold(mold_id, asOfISO = null) {
   const rows = await query(
     `SELECT
        id,
-       to_char(to_start_date, 'YYYY-MM-DD') AS start_date
+       to_char(to_start_date, 'YYYY-MM-DD') AS start_date,
+       client_name
      FROM planning_history
      WHERE mold_id = ?
        AND event_type = 'PLANNED'
@@ -318,6 +328,7 @@ async function getActivePlanningMetaForMold(mold_id, asOfISO = null) {
   return {
     planningId: Number(rows[0].id || 0) || null,
     startDate: rows[0].start_date || null,
+    clientName: rows[0].client_name || null,
   };
 }
 
@@ -392,6 +403,7 @@ async function insertPlanningHistoryEvent({
   eventType,
   fromRange,
   toRange,
+  clientName = null,
   note = null,
   createdBy = null,
   dbQuery = query,
@@ -405,9 +417,10 @@ async function insertPlanningHistoryEvent({
        from_end_date,
        to_start_date,
        to_end_date,
+       client_name,
        note,
        created_by
-     ) VALUES (?,?,?,?,?,?,?,?)
+     ) VALUES (?,?,?,?,?,?,?,?,?)
      RETURNING id`,
     [
       mold_id,
@@ -416,6 +429,7 @@ async function insertPlanningHistoryEvent({
       fromRange?.endDate || null,
       toRange?.startDate || null,
       toRange?.endDate || null,
+      clientName,
       note,
       createdBy || null,
     ]
@@ -987,6 +1001,7 @@ exports.planBlock = async (req, res, next) => {
     const allowOverlap = parseBoolInput(req.body?.allowOverlap);
 
     const { moldName, startDate, tasks, gridSnapshot } = req.body;
+    const clientName = getClientNameFromBody(req.body);
     if (!moldName || !startDate) return res.status(400).json({ error: 'moldName y startDate son requeridos' });
     if (!Array.isArray(tasks) || tasks.length === 0) return res.status(400).json({ error: 'Debe enviar tasks' });
 
@@ -1139,6 +1154,7 @@ exports.planBlock = async (req, res, next) => {
           startDate: localISO(startLocal),
           endDate: null,
         },
+        clientName: clientName === undefined ? null : clientName,
         note: `Planificación normal desde ${localISO(startLocal)}`,
         createdBy,
         dbQuery: txQuery,
@@ -1214,7 +1230,8 @@ exports.listPlannedMolds = async (req, res, next) => {
       WITH latest_planning AS (
         SELECT DISTINCT ON (ph.mold_id)
           ph.mold_id,
-          ph.id AS planning_id
+          ph.id AS planning_id,
+          ph.client_name
         FROM planning_history ph
         WHERE ph.event_type = 'PLANNED'
         ORDER BY ph.mold_id, ph.created_at DESC, ph.id DESC
@@ -1282,9 +1299,13 @@ exports.listPlannedMolds = async (req, res, next) => {
         p."startDate" AS "startDate",
         p."endDate" AS "endDate",
         p."plannedTotal" AS "totalHours",
-        p.planning_id AS "planningId"
+        p.planning_id AS "planningId",
+        lp.client_name AS "clientName"
       FROM plan_all p
       JOIN molds mo ON mo.id = p.mold_id
+      LEFT JOIN latest_planning lp
+        ON lp.mold_id = p.mold_id
+       AND lp.planning_id = p.planning_id
       LEFT JOIN completion c
         ON c.mold_id = p.mold_id
        AND c.planning_id = p.planning_id
@@ -1303,7 +1324,8 @@ exports.listPlannedMolds = async (req, res, next) => {
       moldName: r.moldName,
       startDate: r.startDate,
       endDate: r.endDate,
-      totalHours: Number(r.totalHours || 0)
+      totalHours: Number(r.totalHours || 0),
+      clientName: r.clientName || null,
     })) });
   } catch (e) {
     next(e);
@@ -1334,6 +1356,7 @@ exports.replaceMoldPlan = async (req, res, next) => {
     if (!createdBy) return res.status(403).json({ error: 'Usuario no válido para crear planificación' });
 
     const { moldId, moldName, startDate, tasks, gridSnapshot, replaceScope } = req.body;
+    const clientName = getClientNameFromBody(req.body);
     const allowBusyStart = req.body?.allowBusyStart === true;
     const allowOverlap = parseBoolInput(req.body?.allowOverlap);
     if ((!moldId && !moldName) || !startDate) return res.status(400).json({ error: 'moldId o moldName y startDate son requeridos' });
@@ -1532,9 +1555,17 @@ exports.replaceMoldPlan = async (req, res, next) => {
         eventType: 'PLANNED',
         fromRange: beforeRange,
         toRange: { startDate: baseISO, endDate: null },
+        clientName: clientName === undefined ? null : clientName,
         note: `Planificación normal desde ${baseISO}`,
         createdBy,
       });
+    } else if (clientName !== undefined) {
+      await query(
+        `UPDATE planning_history
+         SET client_name = ?
+         WHERE id = ?`,
+        [clientName, activePlanningId]
+      );
     }
     for (const [machineName, items] of byMachine.entries()) {
       const { id: machine_id, daily_capacity } = await getOrCreateMachineByName(machineName);
@@ -1774,6 +1805,7 @@ exports.planPriority = async (req, res, next) => {
     if (!createdBy) return res.status(403).json({ error: 'Usuario no válido para crear planificación' });
 
     const { moldId, moldName, startDate, tasks, gridSnapshot, replaceScope } = req.body;
+    const clientName = getClientNameFromBody(req.body);
     if (!moldId && !moldName) return res.status(400).json({ error: 'moldId o moldName es requerido' });
     if (!Array.isArray(tasks) || tasks.length === 0) return res.status(400).json({ error: 'Debe enviar tasks' });
 
@@ -1816,6 +1848,7 @@ exports.planPriority = async (req, res, next) => {
             startDate: baseISO,
             endDate: null,
           },
+          clientName: clientName === undefined ? null : clientName,
           note: `Planificación prioridad desde ${baseISO}`,
           createdBy,
         });
@@ -1847,9 +1880,19 @@ exports.planPriority = async (req, res, next) => {
           startDate: baseISO,
           endDate: null,
         },
+        clientName: clientName === undefined ? null : clientName,
         note: `Planificación prioridad desde ${baseISO}`,
         createdBy,
       });
+    }
+
+    if (targetPlanningId && clientName !== undefined) {
+      await query(
+        `UPDATE planning_history
+         SET client_name = ?
+         WHERE id = ?`,
+        [clientName, targetPlanningId]
+      );
     }
 
     const affectedMoldsBefore = new Map();
@@ -2137,6 +2180,7 @@ exports.getMoldPlan = async (req, res, next) => {
         moldId,
         moldName: moldRows[0].name,
         planningId: null,
+        clientName: null,
         startDate: null,
         endDate: null,
         entries: []
@@ -2177,6 +2221,7 @@ exports.getMoldPlan = async (req, res, next) => {
       moldId,
       moldName: moldRows[0].name,
       planningId: planningIdToUse,
+      clientName: planningMeta?.clientName || null,
       startDate,
       endDate,
       entries: entries.map(e => ({

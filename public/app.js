@@ -63,7 +63,7 @@ let plannerCatalogMachines = []; // [{id,name,daily_capacity,is_active}]
 let plannerCatalogParts = [];    // [{id,name,is_active}]
 let plannerMachinesInGrid = [];  // [{id,name,daily_capacity}]
 let plannerPartsInGrid = [];     // [{name}]
-let plannerLoadedMold = null;    // { moldId, moldName, startDate, endDate } cuando se carga desde "Moldes planificados"
+let plannerLoadedMold = null;    // { moldId, moldName, clientName, startDate, endDate } cuando se carga desde "Moldes planificados"
 
 function normalizeDateInputValue(value) {
   const s = String(value || '').trim();
@@ -84,6 +84,7 @@ function buildPlannerGridSnapshotFromUI() {
   const state = {
     version: 1,
     moldName: getPlannerSelectedMoldName(),
+    clientName: document.getElementById('planClientName')?.value || '',
     startDate: document.getElementById('gridStartDate')?.value || '',
     gridConfig: cfg,
     rows: []
@@ -145,6 +146,8 @@ function fillPlannerGridFromSnapshot(snapshot) {
   if (!snapshot) return false;
 
   const gridConfig = snapshot.gridConfig || null;
+  const clientNameEl = document.getElementById('planClientName');
+  if (clientNameEl) clientNameEl.value = String(snapshot.clientName || '');
   if (gridConfig) {
     applyPlannerGridConfigFromSnapshot(gridConfig);
   }
@@ -648,6 +651,7 @@ async function refreshBootstrapStatus() {
 
   const adminGroup = document.getElementById('bootstrapAdminGroup');
   const jefeGroup = document.getElementById('bootstrapJefeGroup');
+  const gerenciaGroup = document.getElementById('bootstrapGerenciaGroup');
   const btn = document.getElementById('bootstrapBtn');
 
   try {
@@ -656,6 +660,7 @@ async function refreshBootstrapStatus() {
     const can = !!data?.canBootstrap;
     const adminExists = !!data?.adminExists;
     const jefeExists = !!data?.jefeExists;
+    const gerenciaExists = !!data?.gerenciaExists;
 
     // Mostrar el bloque si falta al menos una cuenta
     card.classList.toggle('hidden', !can);
@@ -663,6 +668,7 @@ async function refreshBootstrapStatus() {
     // Mostrar solo los inputs que faltan
     if (adminGroup) adminGroup.classList.toggle('hidden', adminExists);
     if (jefeGroup) jefeGroup.classList.toggle('hidden', jefeExists);
+    if (gerenciaGroup) gerenciaGroup.classList.toggle('hidden', gerenciaExists);
 
     // Habilitar botón solo cuando se puede ejecutar
     if (btn) btn.disabled = !can;
@@ -679,8 +685,9 @@ async function runBootstrapInit(e) {
   if (e) e.preventDefault();
   const adminPassword = document.getElementById('bootstrapAdminPassword')?.value;
   const jefePassword = document.getElementById('bootstrapJefePassword')?.value;
+  const gerenciaPassword = document.getElementById('bootstrapGerenciaPassword')?.value;
 
-  const payload = { adminPassword, jefePassword };
+  const payload = { adminPassword, jefePassword, gerenciaPassword };
 
   try {
     const res = await fetch(`${API_URL}/auth/bootstrap`, {
@@ -694,6 +701,7 @@ async function runBootstrapInit(e) {
       // limpiamos inputs y ocultamos si ya no aplica
       const a = document.getElementById('bootstrapAdminPassword'); if (a) a.value = '';
       const j = document.getElementById('bootstrapJefePassword'); if (j) j.value = '';
+      const g = document.getElementById('bootstrapGerenciaPassword'); if (g) g.value = '';
       await refreshBootstrapStatus();
     }
   } catch (err) {
@@ -709,14 +717,17 @@ function showMainApp(user) {
   const opRowEl = document.getElementById('userInfoOperatorRow');
 
   // Nota: mantenemos los roles internos (admin/planner/operator) para permisos,
-  // pero en UI mostramos: admin / jefe / operario.
+  // pero en UI mostramos: admin / jefe / gerencia / operario.
   const role = String(user.role || '').toLowerCase();
   const isOperator = role === 'operator';
+  const isManagement = role === 'management';
 
   const uiUserLabel = role === 'admin'
     ? 'admin'
     : role === 'planner'
       ? 'jefe'
+      : role === 'management'
+        ? 'gerencia'
       : role === 'operator'
         ? 'operario'
         : (user.username || '');
@@ -726,15 +737,19 @@ function showMainApp(user) {
   if (opRowEl) opRowEl.classList.toggle('hidden', !isOperator);
 
   // Tabs por rol
-  const canSeeAll = role === 'admin' || role === 'planner';
+  const canSeeAll = role === 'admin' || role === 'planner' || role === 'management';
 
   // Por defecto, mostramos todo a admin/planner y limitamos al operario solo a "tiempos"
   document.querySelectorAll('.tabs .tab').forEach(btn => {
     const tab = btn.getAttribute('data-tab');
+    const isManagementTab = tab === 'reports' || tab === 'financial';
     if (isOperator) {
       btn.classList.toggle('hidden', !(tab === 'tiempos' || tab === 'registros'));
-    } else if (canSeeAll) {
+    } else if (isManagement) {
+      // Gerencia ve todas las pestañas estándar y también las exclusivas.
       btn.classList.remove('hidden');
+    } else if (canSeeAll) {
+      btn.classList.toggle('hidden', isManagementTab);
     } else {
       // fallback conservador: si algún rol nuevo aparece, dejamos visibles solo tabs "seguros"
       btn.classList.toggle('hidden', tab === 'config');
@@ -761,7 +776,7 @@ function showMainApp(user) {
 
   preloadMoldsForSearch();
 
-  const defaultTab = isOperator ? 'tiempos' : 'plan';
+  const defaultTab = isOperator ? 'tiempos' : (isManagement ? 'reports' : 'plan');
   openTab(defaultTab);
   setTimeout(() => {
     try { loadCalendar(); } catch (e) { }
@@ -1036,6 +1051,7 @@ async function initPlannerTab() {
 function setPlannerLoadedMold(mold) {
   plannerLoadedMold = mold || null;
   const banner = document.getElementById('plannerLoadedMoldBanner');
+  const clientNameEl = document.getElementById('planClientName');
 
   const submitBtn = document.getElementById('submitGridPlanBtn');
   if (submitBtn) submitBtn.textContent = plannerLoadedMold ? 'Actualizar Planificación' : 'Crear Planificación';
@@ -1043,10 +1059,14 @@ function setPlannerLoadedMold(mold) {
   if (!banner) return;
   if (!plannerLoadedMold) {
     try { clearPlannerProgressLocks(); } catch (_) {}
+    if (clientNameEl) clientNameEl.value = '';
     banner.innerHTML = '';
     return;
   }
+  if (clientNameEl) clientNameEl.value = String(plannerLoadedMold.clientName || '');
   const name = escapeHtml(String(plannerLoadedMold.moldName || ''));
+  const clientName = escapeHtml(String(plannerLoadedMold.clientName || ''));
+  const clientText = clientName || '<span class="text-muted">(sin cliente)</span>';
   const range = `${escapeHtml(String(plannerLoadedMold.startDate || '—'))} → ${escapeHtml(String(plannerLoadedMold.endDate || '—'))}`;
   banner.innerHTML = `
     <div style="padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg);">
@@ -1054,47 +1074,13 @@ function setPlannerLoadedMold(mold) {
         <div style="font-weight:800;">Editando molde planificado</div>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <div style="color:var(--text-muted); font-size:0.9rem;">Rango: ${range}</div>
-          <button class="btn btn-danger btn-sm" id="deletePlannedMoldBtn" title="Eliminar toda la planificación de este molde">Eliminar</button>
           <button class="btn btn-secondary btn-sm" id="exitPlannedMoldEditBtnInline" title="Salir del modo edición de molde planificado">Salir de edición</button>
         </div>
       </div>
-      <div style="margin-top:6px;">Molde: <strong>${name}</strong></div>
+      <div style="margin-top:6px;">Planificación: <strong>${name}</strong> - Cliente: <strong>${clientText}</strong></div>
       <div style="margin-top:6px; color:var(--text-muted); font-size:0.9rem;">Al actualizar en este modo, se elimina la planificación previa del molde y se vuelve a planificar desde la fecha de inicio seleccionada.</div>
     </div>
   `;
-
-  const delBtn = document.getElementById('deletePlannedMoldBtn');
-  if (delBtn) {
-    delBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      if (!plannerLoadedMold?.moldId) return;
-
-      const moldName = String(plannerLoadedMold.moldName || '');
-      const ok = window.confirm(`¿Eliminar la planificación completa del molde "${moldName}"?\n\nEsto lo removerá del calendario y de la lista de moldes planificados.`);
-      if (!ok) return;
-
-      displayResponse('gridResponse', { message: 'Eliminando planificación...' }, true);
-      try {
-        const res = await fetch(`${API_URL}/tasks/plan/mold/${encodeURIComponent(String(plannerLoadedMold.moldId))}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${authToken}` },
-          cache: 'no-store'
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          displayResponse('gridResponse', data?.error || 'No se pudo eliminar la planificación', false);
-          return;
-        }
-
-        setPlannerLoadedMold(null);
-        try { clearPlannerGrid(); } catch (_) {}
-        try { await loadPlannedMoldsList(); } catch (_) {}
-        displayResponse('gridResponse', { message: data?.message || 'Planificación eliminada.' }, true);
-      } catch (err) {
-        displayResponse('gridResponse', { error: 'Error de conexión eliminando la planificación', details: String(err) }, false);
-      }
-    }, { once: true });
-  }
 
   const exitInlineBtn = document.getElementById('exitPlannedMoldEditBtnInline');
   if (exitInlineBtn) {
@@ -1130,14 +1116,16 @@ async function loadPlannedMoldsList() {
     container.innerHTML = molds.map(m => {
       const mid = escapeHtml(String(m.moldId));
       const name = escapeHtml(String(m.moldName || ''));
+      const clientName = escapeHtml(String(m.clientName || ''));
       const range = `${escapeHtml(String(m.startDate || '—'))} → ${escapeHtml(String(m.endDate || '—'))}`;
       const hours = (m.totalHours != null) ? `${Number(m.totalHours).toFixed(1)}h` : '';
       return `
-        <div class="planned-mold-item" data-action="loadPlannedMold" data-mold-id="${mid}" data-mold-name="${name}" data-start-date="${escapeHtml(String(m.startDate || ''))}" data-end-date="${escapeHtml(String(m.endDate || ''))}" style="padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg); margin-bottom:8px; cursor:pointer;">
+        <div class="planned-mold-item" data-action="loadPlannedMold" data-mold-id="${mid}" data-mold-name="${name}" data-client-name="${clientName}" data-start-date="${escapeHtml(String(m.startDate || ''))}" data-end-date="${escapeHtml(String(m.endDate || ''))}" style="padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg); margin-bottom:8px; cursor:pointer;">
           <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
             <div style="font-weight:800;">${name}</div>
             <div style="color:var(--text-muted); font-size:0.9rem;">${range}</div>
           </div>
+          <div style="margin-top:4px; color:var(--text-muted); font-size:0.9rem;">Cliente: <strong>${clientName || '—'}</strong></div>
           <div style="margin-top:6px; color:var(--text-muted); font-size:0.9rem;">${hours ? `Total planificado: <strong>${escapeHtml(hours)}</strong>` : ''}</div>
         </div>
       `;
@@ -1807,6 +1795,8 @@ function renderFixedPlanningGrid() {
 
   const startDateEl = document.getElementById('gridStartDate');
   if (startDateEl) startDateEl.addEventListener('input', persistPlannerStateToStorage);
+  const clientNameEl = document.getElementById('planClientName');
+  if (clientNameEl) clientNameEl.addEventListener('input', persistPlannerStateToStorage);
 
   const inputs = container.querySelectorAll('.qty-input, .hours-input');
   inputs.forEach(input => {
@@ -1863,6 +1853,7 @@ function updateFixedGrandTotal() {
 function persistPlannerStateToStorage() {
   const state = {
     moldName: getPlannerSelectedMoldName(),
+    clientName: document.getElementById('planClientName')?.value || '',
     startDate: document.getElementById('gridStartDate')?.value || '',
     rows: []
   };
@@ -1892,6 +1883,8 @@ function restorePlannerStateFromStorage() {
     plannerPendingMoldName = state.moldName;
     selectPlannerMoldByName(state.moldName);
   }
+  const clientNameEl = document.getElementById('planClientName');
+  if (clientNameEl && typeof state.clientName === 'string') clientNameEl.value = state.clientName;
   if (startDateEl && typeof state.startDate === 'string' && state.startDate) startDateEl.value = state.startDate;
 
   const grid = document.getElementById('planningGridFixed');
@@ -1938,13 +1931,16 @@ async function submitGridPlan(e) {
   // INPUTS PRINCIPALES
   // ---------------------------
   const startDateEl = document.getElementById('gridStartDate');
+  const clientNameEl = document.getElementById('planClientName');
   const priorityEl = document.getElementById('prioritySwitch');
 
   const moldName = getPlannerSelectedMoldName();
+  const clientName = String(clientNameEl?.value || '').trim();
   const startDate = startDateEl ? startDateEl.value : '';
   const isPriority = !!priorityEl?.checked;
 
   console.log('moldName:', moldName);
+  console.log('clientName:', clientName);
   console.log('startDate (raw):', startDate);
   console.log('isPriority:', isPriority);
 
@@ -2058,6 +2054,7 @@ async function submitGridPlan(e) {
   // ---------------------------
   const payload = {
     moldName,
+    clientName: clientName || null,
     moldId: plannerLoadedMold?.moldId != null ? Number(plannerLoadedMold.moldId) : null,
     startDate: startDate || null,
     tasks,
@@ -2756,7 +2753,7 @@ const WORKLOG_FILTERS = [
   { key: 'parte', label: 'Parte' },
   { key: 'maquina', label: 'Máquina' },
   { key: 'operacion', label: 'Operación' },
-  { key: 'motivo', label: 'Motivo' },
+  { key: 'motivo', label: 'Detalle' },
 ];
 
 function normalizeFilterValue(v) {
@@ -3326,8 +3323,9 @@ function renderWorkLogsTable(rows) {
 
   const role = String(currentUser?.role || '').toLowerCase();
   const isOperator = role === 'operator';
-  const canEditAll = role === 'admin' || role === 'planner';
-  const canDeleteAll = role === 'admin' || role === 'planner';
+  const isManagement = role === 'management';
+  const canEditAll = isManagement;
+  const canDeleteAll = false;
 
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="13" class="text-muted">(sin registros)</td></tr>';
@@ -3372,11 +3370,7 @@ function renderWorkLogsTable(rows) {
     const isOverrun = !isFinalLog && Number.isFinite(plannedNum2) && plannedNum2 > 0 && Number.isFinite(actualNum) && actualNum > (plannedNum2 + 0.01);
     const canAdmin = String(currentUser?.role || '').toLowerCase() !== 'operator';
 
-    // Regla operarios: 2 dias calendario desde la fecha de registro (recorded_at).
-    const baseDateForEdit = r.recorded_at ? fmtDateOnly(r.recorded_at) : null;
-    const diffDays = baseDateForEdit ? daysDiffFromColombiaToday(baseDateForEdit) : 9999;
-    const tooOld = diffDays > 2;
-    const canEdit = canEditAll || (isOperator && !tooOld);
+    const canEdit = canEditAll;
     const canDelete = canDeleteAll;
 
     // Campos bloqueados por defecto; se habilitan solo al presionar "Editar".
@@ -3385,10 +3379,6 @@ function renderWorkLogsTable(rows) {
     const rowClass = isAlert ? 'class="wl-alert"' : '';
     const rowId = escapeHtml(String(r.id));
     const detailNote = escapeHtml(String(r.note || ''));
-    const editWhy = isOperator
-      ? 'Operarios: solo puedes editar hasta 2 días desde el registro.'
-      : 'Solo el jefe/admin puede editar este registro.';
-    const deleteWhy = 'Solo admin o planner puede eliminar este registro.';
 
     return `
       <tr data-id="${rowId}" data-planning-id="${escapeHtml(String(r.planning_id ?? ''))}" data-expanded="0" data-can-edit="${canEdit ? '1' : '0'}" data-is-final="${isFinalLog ? '1' : '0'}" ${rowClass}>
@@ -3422,10 +3412,10 @@ function renderWorkLogsTable(rows) {
             ${canEdit
               ? `<button class="btn btn-primary btn-sm wl-edit" data-action="wl-edit" data-id="${rowId}">Editar</button>
                  <button class="btn btn-primary btn-sm wl-save" style="display:none" data-action="wl-save" data-id="${rowId}">Guardar</button>`
-              : `<button class="btn btn-secondary btn-sm wl-edit" disabled aria-disabled="true" title="${escapeHtml(editWhy)}">Editar</button>`}
+              : ''}
             ${canDelete
               ? `<button class="btn btn-danger btn-sm wl-delete" data-action="wl-delete" data-id="${rowId}">Eliminar</button>`
-              : `<button class="btn btn-secondary btn-sm wl-delete" disabled aria-disabled="true" title="${escapeHtml(deleteWhy)}">Eliminar</button>`}
+              : ''}
           </div>
         </td>
       </tr>
@@ -6736,6 +6726,7 @@ function setupEventListeners() {
 
       const moldId = item.getAttribute('data-mold-id');
       const moldName = item.getAttribute('data-mold-name') || '';
+      const itemClientName = item.getAttribute('data-client-name') || '';
       const itemStartDate = item.getAttribute('data-start-date') || '';
       if (!moldId) return;
 
@@ -6779,7 +6770,13 @@ function setupEventListeners() {
           if (preferred) startDateEl.value = preferred;
         }
 
-        setPlannerLoadedMold({ moldId: Number(moldId), moldName: data?.moldName || moldName, startDate: data?.startDate, endDate: data?.endDate });
+        setPlannerLoadedMold({
+          moldId: Number(moldId),
+          moldName: data?.moldName || moldName,
+          clientName: data?.clientName || itemClientName || '',
+          startDate: data?.startDate,
+          endDate: data?.endDate
+        });
         if (!loadedFromSnapshot) {
           fillPlannerGridFromMoldPlanTotals(data);
           displayResponse('gridResponse', { message: 'Plan cargado en parrilla (modo totales).' }, true);
