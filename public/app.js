@@ -499,6 +499,21 @@ function round2(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+function formatCurrencyCOP(raw) {
+  const n = Number(raw || 0);
+  if (!Number.isFinite(n)) return '$ 0';
+  try {
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(n);
+  } catch (_) {
+    return `$ ${Math.round(n).toLocaleString('es-CO')}`;
+  }
+}
+
 let hoursOptionsCache = null; // number[]
 
 function normalizeHoursOptions(values) {
@@ -904,6 +919,10 @@ function openTab(tabName) {
   if (tabName === 'indicators') {
     try { defaultYearForIndicators(); } catch (e) {}
     try { loadOperatorsForIndicators(); } catch (e) {}
+  }
+  if (tabName === 'financial') {
+    try { loadFinancialMachines(); } catch (e) {}
+    try { loadCompletedCycles(); } catch (e) {}
   }
   if (tabName === 'sesiones') {
     try { loadSessionsHistory(); } catch (e) {}
@@ -1788,6 +1807,12 @@ function renderFixedPlanningGrid() {
           ${machines.map(m => `<td id="total-machine-${escapeHtml(String(m.id))}">0.00</td>`).join('')}
           <td id="grand-total">0.00</td>
         </tr>
+        <tr>
+          <td><strong>Costo Estimado</strong></td>
+          <td></td>
+          ${machines.map(m => `<td id="cost-machine-${escapeHtml(String(m.id))}">$ 0</td>`).join('')}
+          <td id="estimated-cost-total">$ 0</td>
+        </tr>
       </tfoot>
     </table>
   `;
@@ -1825,6 +1850,7 @@ function updateFixedColumnTotals() {
   const grid = document.getElementById('planningGridFixed');
   if (!grid) return;
   const machines = (plannerMachinesInGrid && plannerMachinesInGrid.length) ? plannerMachinesInGrid : FIXED_MACHINES;
+  let estimatedTotalCost = 0;
   machines.forEach(m => {
     let colSum = 0;
     grid.querySelectorAll(`tbody .hours-input[data-machine-id="${String(m.id)}"]`).forEach(inp => {
@@ -1835,7 +1861,16 @@ function updateFixedColumnTotals() {
     });
     const cell = document.getElementById(`total-machine-${String(m.id)}`);
     if (cell) cell.textContent = colSum.toFixed(2);
+
+    const machineCost = Number(m?.hourly_cost || 0);
+    const estimatedCost = (Number.isFinite(machineCost) && machineCost > 0) ? (colSum * machineCost) : 0;
+    estimatedTotalCost += estimatedCost;
+    const costCell = document.getElementById(`cost-machine-${String(m.id)}`);
+    if (costCell) costCell.textContent = formatCurrencyCOP(estimatedCost);
   });
+
+  const estimatedTotalCell = document.getElementById('estimated-cost-total');
+  if (estimatedTotalCell) estimatedTotalCell.textContent = formatCurrencyCOP(estimatedTotalCost);
 }
 function updateFixedGrandTotal() {
   const grid = document.getElementById('planningGridFixed');
@@ -5206,6 +5241,516 @@ function setInactivityMinutes(minutes) {
 let machinesCache = [];
 let machinesDraft = new Map(); // id -> { name, daily_capacity, is_active }
 
+let financialMachinesCache = [];
+let financialMachinesDraft = new Map(); // id -> { hourly_cost, hourly_price }
+let financialCompletedCyclesCache = [];
+let financialSettlementData = null;
+
+function isManagementRole() {
+  return String(currentUser?.role || '').toLowerCase() === 'management';
+}
+
+function parseMoneyInputValue(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const n = parseLocaleNumber(s);
+  if (!Number.isFinite(n) || n < 0) return NaN;
+  return round2(n);
+}
+
+function normalizeFinancialComparable(m) {
+  const cost = (m?.hourly_cost === '' ? null : m?.hourly_cost);
+  const price = (m?.hourly_price === '' ? null : m?.hourly_price);
+  return {
+    hourly_cost: cost == null ? null : Number(cost),
+    hourly_price: price == null ? null : Number(price),
+  };
+}
+
+function getFinancialNumericInputValue(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return 0;
+  const parsed = parseMoneyInputValue(input.value);
+  if (Number.isNaN(parsed)) return NaN;
+  return parsed == null ? 0 : Number(parsed);
+}
+
+function resetFinancialSettlementView(message) {
+  const summary = document.getElementById('financialCycleSummary');
+  if (summary) {
+    summary.textContent = message || 'Selecciona un ciclo para ver la liquidacion.';
+  }
+
+  const tbody = document.querySelector('#financialBreakdownTable tbody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Sin datos</td></tr>';
+  }
+
+  const labor = document.getElementById('financialLaborCost');
+  if (labor) labor.value = formatCurrencyCOP(0);
+
+  const total = document.getElementById('financialTotalCost');
+  if (total) total.textContent = formatCurrencyCOP(0);
+
+  financialSettlementData = null;
+}
+
+function recalculateFinancialTotalCost() {
+  const totalEl = document.getElementById('financialTotalCost');
+  if (!totalEl) return;
+
+  const laborCost = Number(financialSettlementData?.labor_cost_total || 0);
+  const materials = getFinancialNumericInputValue('financialMaterialsCost');
+  const external = getFinancialNumericInputValue('financialExternalServicesCost');
+
+  if (Number.isNaN(materials) || Number.isNaN(external)) {
+    totalEl.textContent = '-';
+    displayResponse('financialLiquidationResponse', { error: 'Revisa los costos adicionales: solo se permiten valores numericos no negativos.' }, false);
+    return;
+  }
+
+  const grandTotal = round2(laborCost + materials + external);
+  totalEl.textContent = formatCurrencyCOP(grandTotal);
+}
+
+function renderFinancialSettlement(data) {
+  const breakdown = Array.isArray(data?.machine_breakdown) ? data.machine_breakdown : [];
+
+  const summary = document.getElementById('financialCycleSummary');
+  if (summary) {
+    const range = [data?.start_date, data?.end_date]
+      .filter(Boolean)
+      .map((d) => formatDateDisplay(d))
+      .join(' - ');
+    summary.textContent = `Molde: ${String(data?.mold_name || 'N/A')} | Ciclo: #${String(data?.planning_id || '')}${range ? ` | Fechas: ${range}` : ''}`;
+  }
+
+  const tbody = document.querySelector('#financialBreakdownTable tbody');
+  if (tbody) {
+    if (!breakdown.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="text-muted">No hay work logs para este ciclo.</td></tr>';
+    } else {
+      tbody.innerHTML = breakdown.map((row) => {
+        const machineName = escapeHtml(String(row?.machine_name || ''));
+        const hours = Number(row?.total_hours || 0).toFixed(2);
+        const partialCost = formatCurrencyCOP(Number(row?.partial_cost || 0));
+        return `
+          <tr>
+            <td>${machineName}</td>
+            <td>${hours}</td>
+            <td>${partialCost}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+  }
+
+  const labor = document.getElementById('financialLaborCost');
+  if (labor) labor.value = formatCurrencyCOP(Number(data?.labor_cost_total || 0));
+
+  recalculateFinancialTotalCost();
+}
+
+async function loadMoldCostBreakdown(planningId) {
+  const id = Number.parseInt(String(planningId || ''), 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    resetFinancialSettlementView('Selecciona un ciclo para ver la liquidacion.');
+    return;
+  }
+
+  if (!isManagementRole()) {
+    resetFinancialSettlementView('Solo Gerencia puede acceder a liquidacion de moldes.');
+    return;
+  }
+
+  displayResponse('financialLiquidationResponse', { message: 'Calculando costo real...' }, true);
+  try {
+    const res = await fetch(`${API_URL}/management/mold-cost-breakdown/${encodeURIComponent(String(id))}`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || 'No se pudo calcular la liquidacion');
+
+    financialSettlementData = data;
+    renderFinancialSettlement(data);
+    displayResponse('financialLiquidationResponse', { message: 'Liquidacion cargada.' }, true);
+  } catch (e) {
+    resetFinancialSettlementView('No se pudo cargar la liquidacion del ciclo seleccionado.');
+    displayResponse('financialLiquidationResponse', { error: 'Error cargando liquidacion', details: String(e) }, false);
+  }
+}
+
+async function loadCompletedCycles() {
+  const select = document.getElementById('financialCompletedCycleSelect');
+  if (!select) return;
+
+  if (!isManagementRole()) {
+    select.innerHTML = '<option value="">Acceso solo para Gerencia</option>';
+    select.disabled = true;
+    resetFinancialSettlementView('Solo Gerencia puede acceder a liquidacion de moldes.');
+    return;
+  }
+
+  select.disabled = false;
+  const previous = String(select.value || '').trim();
+  select.innerHTML = '<option value="">Cargando ciclos...</option>';
+
+  try {
+    const res = await fetch(`${API_URL}/management/completed-cycles`, {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      cache: 'no-store'
+    });
+    const data = await res.json().catch(() => ([]));
+    if (!res.ok) throw new Error(data?.error || 'No se pudieron cargar ciclos terminados');
+
+    financialCompletedCyclesCache = Array.isArray(data) ? data : [];
+    if (!financialCompletedCyclesCache.length) {
+      select.innerHTML = '<option value="">(sin ciclos terminados)</option>';
+      resetFinancialSettlementView('No hay ciclos terminados para liquidar.');
+      return;
+    }
+
+    select.innerHTML = '<option value="">Selecciona un ciclo...</option>'
+      + financialCompletedCyclesCache.map((cycle) => {
+        const planningId = String(cycle?.planning_id || '');
+        const moldName = escapeHtml(String(cycle?.mold_name || 'Molde sin nombre'));
+        const startDate = cycle?.start_date ? formatDateDisplay(cycle.start_date) : 'N/A';
+        const endDate = cycle?.end_date ? formatDateDisplay(cycle.end_date) : 'N/A';
+        return `<option value="${escapeHtml(planningId)}">#${escapeHtml(planningId)} - ${moldName} (${escapeHtml(startDate)} -> ${escapeHtml(endDate)})</option>`;
+      }).join('');
+
+    const hasPrevious = previous && financialCompletedCyclesCache.some((c) => String(c?.planning_id) === previous);
+    const targetId = hasPrevious ? previous : String(financialCompletedCyclesCache[0]?.planning_id || '');
+    if (targetId) {
+      select.value = targetId;
+      await loadMoldCostBreakdown(targetId);
+    } else {
+      resetFinancialSettlementView('Selecciona un ciclo para ver la liquidacion.');
+    }
+  } catch (e) {
+    select.innerHTML = '<option value="">Error cargando ciclos</option>';
+    resetFinancialSettlementView('No se pudieron obtener ciclos terminados.');
+    displayResponse('financialLiquidationResponse', { error: 'Error cargando ciclos terminados', details: String(e) }, false);
+  }
+}
+
+function getFinancialSettlementSnapshot() {
+  if (!financialSettlementData || !Number(financialSettlementData?.planning_id)) {
+    displayResponse('financialLiquidationResponse', { error: 'Selecciona un ciclo antes de exportar.' }, false);
+    return null;
+  }
+
+  const materials = getFinancialNumericInputValue('financialMaterialsCost');
+  const external = getFinancialNumericInputValue('financialExternalServicesCost');
+  if (Number.isNaN(materials) || Number.isNaN(external)) {
+    displayResponse('financialLiquidationResponse', { error: 'Corrige los costos adicionales antes de exportar.' }, false);
+    return null;
+  }
+
+  const labor = Number(financialSettlementData?.labor_cost_total || 0);
+  const total = round2(labor + materials + external);
+
+  return {
+    planningId: Number(financialSettlementData.planning_id),
+    moldName: String(financialSettlementData?.mold_name || ''),
+    startDate: financialSettlementData?.start_date || '',
+    endDate: financialSettlementData?.end_date || '',
+    laborCost: round2(labor),
+    materialsCost: round2(materials),
+    externalServicesCost: round2(external),
+    totalCost: total,
+    breakdown: Array.isArray(financialSettlementData?.machine_breakdown)
+      ? financialSettlementData.machine_breakdown
+      : [],
+  };
+}
+
+function exportFinancialSettlementPdf() {
+  if (!isManagementRole()) {
+    displayResponse('financialLiquidationResponse', { error: 'Solo Gerencia puede exportar liquidaciones.' }, false);
+    return;
+  }
+
+  const settlement = getFinancialSettlementSnapshot();
+  if (!settlement) return;
+
+  const printableRows = settlement.breakdown.length
+    ? settlement.breakdown.map((row) => `
+      <tr>
+        <td>${escapeHtml(String(row?.machine_name || ''))}</td>
+        <td style="text-align:right;">${Number(row?.total_hours || 0).toFixed(2)}</td>
+        <td style="text-align:right;">${escapeHtml(formatCurrencyCOP(Number(row?.partial_cost || 0)))}</td>
+      </tr>
+    `).join('')
+    : '<tr><td colspan="3" style="color:#666;">Sin datos de mano de obra para este ciclo.</td></tr>';
+
+  const range = [settlement.startDate, settlement.endDate]
+    .filter(Boolean)
+    .map((d) => formatDateDisplay(d))
+    .join(' - ');
+
+  const html = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Liquidacion de Costos - Molde ${escapeHtml(settlement.moldName)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #1a1a1a; }
+    h1, h2 { margin: 0 0 8px 0; }
+    .muted { color: #555; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #ccc; padding: 8px; font-size: 13px; }
+    th { background: #f2f2f2; text-align: left; }
+    .totals { margin-top: 16px; }
+    .totals div { margin: 4px 0; }
+    .strong { font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Liquidacion y Cierre de Moldes</h1>
+  <div class="muted">
+    Molde: <strong>${escapeHtml(settlement.moldName)}</strong><br>
+    Planning ID: <strong>#${escapeHtml(String(settlement.planningId))}</strong>${range ? `<br>Rango: <strong>${escapeHtml(range)}</strong>` : ''}
+  </div>
+
+  <h2>Desglose de Maquinas</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Maquina</th>
+        <th>Horas reales</th>
+        <th>Costo parcial (COP)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${printableRows}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div>Costo de Mano de Obra: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.laborCost))}</span></div>
+    <div>Costo de Materiales: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.materialsCost))}</span></div>
+    <div>Costo de Servicios Externos: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.externalServicesCost))}</span></div>
+    <div class="strong">Costo Total: ${escapeHtml(formatCurrencyCOP(settlement.totalCost))}</div>
+  </div>
+</body>
+</html>`;
+
+  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+  if (!printWindow) {
+    displayResponse('financialLiquidationResponse', { error: 'No se pudo abrir la ventana de impresion (popup bloqueado).' }, false);
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+  }, 150);
+}
+
+function escapeCsvCell(value, delimiter) {
+  const raw = value == null ? '' : String(value);
+  if (!raw) return '';
+  const mustQuote = raw.includes('"') || raw.includes('\n') || raw.includes('\r') || raw.includes(delimiter);
+  return mustQuote ? `"${raw.replace(/"/g, '""')}"` : raw;
+}
+
+function exportFinancialSettlementExcel() {
+  if (!isManagementRole()) {
+    displayResponse('financialLiquidationResponse', { error: 'Solo Gerencia puede exportar liquidaciones.' }, false);
+    return;
+  }
+
+  const settlement = getFinancialSettlementSnapshot();
+  if (!settlement) return;
+
+  const delimiter = ';';
+  const rows = [
+    ['Liquidacion y Cierre de Moldes'],
+    ['Molde', settlement.moldName],
+    ['Planning ID', settlement.planningId],
+    ['Fecha inicio', settlement.startDate || ''],
+    ['Fecha fin', settlement.endDate || ''],
+    [],
+    ['Desglose de Maquinas'],
+    ['Maquina', 'Horas reales', 'Costo parcial (COP)'],
+  ];
+
+  if (settlement.breakdown.length) {
+    settlement.breakdown.forEach((row) => {
+      rows.push([
+        row?.machine_name || '',
+        Number(row?.total_hours || 0).toFixed(2),
+        Number(row?.partial_cost || 0).toFixed(2),
+      ]);
+    });
+  } else {
+    rows.push(['Sin datos', '', '']);
+  }
+
+  rows.push([]);
+  rows.push(['Costo de Mano de Obra', settlement.laborCost.toFixed(2)]);
+  rows.push(['Costo de Materiales', settlement.materialsCost.toFixed(2)]);
+  rows.push(['Costo de Servicios Externos', settlement.externalServicesCost.toFixed(2)]);
+  rows.push(['Costo Total', settlement.totalCost.toFixed(2)]);
+
+  const csvBody = rows
+    .map((row) => (Array.isArray(row) ? row : [row]).map((cell) => escapeCsvCell(cell, delimiter)).join(delimiter))
+    .join('\r\n');
+  const csvWithBom = `\ufeff${csvBody}`;
+
+  const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `liquidacion_molde_${settlement.planningId}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  displayResponse('financialLiquidationResponse', { message: 'Archivo CSV generado correctamente.' }, true);
+}
+
+async function loadFinancialMachines() {
+  const tbody = document.querySelector('#financialMachinesTable tbody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Cargando...</td></tr>';
+
+  try {
+    const res = await fetch(`${API_URL}/config/machines`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+    if (!res.ok) throw new Error('No se pudo cargar máquinas financieras');
+    const all = await res.json();
+    financialMachinesCache = (Array.isArray(all) ? all : []).filter(m => !!m?.is_active);
+    renderFinancialMachinesTable();
+  } catch (e) {
+    const body = document.querySelector('#financialMachinesTable tbody');
+    if (body) body.innerHTML = '<tr><td colspan="4" class="text-muted">Error cargando máquinas</td></tr>';
+    displayResponse('financialResponse', { error: 'Error cargando tarifas financieras', details: String(e) }, false);
+  }
+}
+
+function renderFinancialMachinesTable() {
+  const tbody = document.querySelector('#financialMachinesTable tbody');
+  if (!tbody) return;
+
+  const canEdit = isManagementRole();
+  const saveBtn = document.getElementById('financialSaveBtn');
+  if (saveBtn) saveBtn.classList.toggle('hidden', !canEdit);
+
+  if (!financialMachinesCache.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-muted">(sin máquinas activas)</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = financialMachinesCache.map(m => {
+    const id = String(m.id);
+    const draft = financialMachinesDraft.get(id) || {};
+    const cost = draft.hourly_cost !== undefined ? draft.hourly_cost : m.hourly_cost;
+    const price = draft.hourly_price !== undefined ? draft.hourly_price : m.hourly_price;
+    const pending = financialMachinesDraft.has(id);
+    return `
+      <tr data-id="${escapeHtml(id)}" class="${pending ? 'pending-save' : ''}">
+        <td>${escapeHtml(id)}</td>
+        <td>${escapeHtml(String(m.name || ''))}</td>
+        <td><input type="number" class="fin-cost" step="0.01" min="0" ${canEdit ? '' : 'disabled'} value="${cost != null && cost !== '' ? Number(cost) : ''}" placeholder="Ej: 85000"></td>
+        <td><input type="number" class="fin-price" step="0.01" min="0" ${canEdit ? '' : 'disabled'} value="${price != null && price !== '' ? Number(price) : ''}" placeholder="Ej: 120000"></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function captureFinancialDraftFromRow(row) {
+  if (!row) return;
+  const id = String(row.getAttribute('data-id') || '').trim();
+  if (!id) return;
+
+  const costRaw = row.querySelector('.fin-cost')?.value;
+  const priceRaw = row.querySelector('.fin-price')?.value;
+  const hourly_cost = parseMoneyInputValue(costRaw);
+  const hourly_price = parseMoneyInputValue(priceRaw);
+
+  if (Number.isNaN(hourly_cost) || Number.isNaN(hourly_price)) {
+    setPendingSave(row, true);
+    return;
+  }
+
+  const base = financialMachinesCache.find(m => String(m.id) === id);
+  const draft = normalizeFinancialComparable({ hourly_cost, hourly_price });
+  const current = base ? normalizeFinancialComparable(base) : null;
+  const changed = !current
+    || Number(draft.hourly_cost ?? -1) !== Number(current.hourly_cost ?? -1)
+    || Number(draft.hourly_price ?? -1) !== Number(current.hourly_price ?? -1);
+
+  if (changed) financialMachinesDraft.set(id, { hourly_cost, hourly_price });
+  else financialMachinesDraft.delete(id);
+
+  setPendingSave(row, changed);
+}
+
+async function saveFinancialRates() {
+  if (!isManagementRole()) {
+    displayResponse('financialResponse', { error: 'Solo Gerencia puede guardar cambios financieros' }, false);
+    return;
+  }
+
+  if (!financialMachinesDraft.size) {
+    displayResponse('financialResponse', { message: 'No hay cambios pendientes.' }, true);
+    return;
+  }
+
+  const updates = [];
+  for (const [id, draftRaw] of financialMachinesDraft.entries()) {
+    const base = financialMachinesCache.find(m => String(m.id) === String(id));
+    if (!base) continue;
+
+    const draft = normalizeFinancialComparable(draftRaw);
+    const current = normalizeFinancialComparable(base);
+    const changed = Number(draft.hourly_cost ?? -1) !== Number(current.hourly_cost ?? -1)
+      || Number(draft.hourly_price ?? -1) !== Number(current.hourly_price ?? -1);
+    if (changed) {
+      updates.push({
+        id,
+        body: {
+          hourly_cost: draft.hourly_cost,
+          hourly_price: draft.hourly_price,
+        }
+      });
+    }
+  }
+
+  if (!updates.length) {
+    financialMachinesDraft.clear();
+    displayResponse('financialResponse', { message: 'No hay cambios reales para guardar.' }, true);
+    return;
+  }
+
+  displayResponse('financialResponse', { message: `Guardando ${updates.length} cambio(s)...` }, true);
+  const failures = [];
+  for (const u of updates) {
+    try {
+      const res = await fetch(`${API_URL}/config/machines/${encodeURIComponent(String(u.id))}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify(u.body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) failures.push({ id: u.id, error: data?.error || data?.message || 'Error guardando' });
+    } catch (e) {
+      failures.push({ id: u.id, error: String(e) });
+    }
+  }
+
+  if (failures.length) {
+    displayResponse('financialResponse', { error: `Algunas filas no se guardaron (${failures.length}).`, details: failures }, false);
+  } else {
+    displayResponse('financialResponse', { message: 'Tarifas financieras guardadas.' }, true);
+  }
+
+  financialMachinesDraft.clear();
+  try { await loadFinancialMachines(); } catch (_) {}
+}
+
 async function loadMachinesList() {
   try {
     const res = await fetch(`${API_URL}/config/machines`, { headers:{'Authorization':`Bearer ${authToken}`} });
@@ -6614,6 +7159,14 @@ function setupEventListeners() {
 
   const btnSaveParts = document.getElementById('savePartsBtn'); if (btnSaveParts) btnSaveParts.addEventListener('click', (e) => { e.preventDefault(); savePartsBulk(); });
   const btnReloadParts = document.getElementById('reloadPartsBtn'); if (btnReloadParts) btnReloadParts.addEventListener('click', (e) => { e.preventDefault(); partsDraft.clear(); loadConfigPartsChecklist(); });
+  const financialReloadBtn = document.getElementById('financialReloadBtn'); if (financialReloadBtn) financialReloadBtn.addEventListener('click', (e) => { e.preventDefault(); loadFinancialMachines(); });
+  const financialSaveBtn = document.getElementById('financialSaveBtn'); if (financialSaveBtn) financialSaveBtn.addEventListener('click', (e) => { e.preventDefault(); saveFinancialRates(); });
+  const financialReloadCyclesBtn = document.getElementById('financialReloadCyclesBtn'); if (financialReloadCyclesBtn) financialReloadCyclesBtn.addEventListener('click', (e) => { e.preventDefault(); loadCompletedCycles(); });
+  const financialExportPdfBtn = document.getElementById('financialExportPdfBtn'); if (financialExportPdfBtn) financialExportPdfBtn.addEventListener('click', (e) => { e.preventDefault(); exportFinancialSettlementPdf(); });
+  const financialExportExcelBtn = document.getElementById('financialExportExcelBtn'); if (financialExportExcelBtn) financialExportExcelBtn.addEventListener('click', (e) => { e.preventDefault(); exportFinancialSettlementExcel(); });
+  const financialCompletedCycleSelect = document.getElementById('financialCompletedCycleSelect'); if (financialCompletedCycleSelect) financialCompletedCycleSelect.addEventListener('change', (e) => { loadMoldCostBreakdown(e.target?.value); });
+  const financialMaterialsCost = document.getElementById('financialMaterialsCost'); if (financialMaterialsCost) financialMaterialsCost.addEventListener('input', () => { recalculateFinancialTotalCost(); });
+  const financialExternalServicesCost = document.getElementById('financialExternalServicesCost'); if (financialExternalServicesCost) financialExternalServicesCost.addEventListener('input', () => { recalculateFinancialTotalCost(); });
 
   // Capturar cambios sin guardar inmediatamente
   const machinesTable = document.getElementById('machinesTable');
@@ -6631,6 +7184,17 @@ function setupEventListeners() {
       if (!t.classList.contains('mc-active')) return;
       const row = t.closest('tr');
       captureMachineDraftFromRow(row);
+    });
+  }
+
+  const financialMachinesTable = document.getElementById('financialMachinesTable');
+  if (financialMachinesTable) {
+    financialMachinesTable.addEventListener('input', (ev) => {
+      const t = ev.target;
+      if (!(t instanceof HTMLInputElement)) return;
+      if (!t.classList.contains('fin-cost') && !t.classList.contains('fin-price')) return;
+      const row = t.closest('tr');
+      captureFinancialDraftFromRow(row);
     });
   }
 

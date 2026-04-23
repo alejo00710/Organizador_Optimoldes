@@ -745,10 +745,90 @@
 
         <div class="tab-content hidden" id="tab-financial">
           <h2>Financiero</h2>
+
           <div class="mold-progress-panel" style="margin-top: 12px;">
-            <h3 style="margin:0 0 8px 0;">Panel Financiero</h3>
-            <p class="text-muted" style="font-size: 0.95rem; margin: 0;">Esta seccion esta en desarrollo. Aqui se mostraran indicadores financieros y de costos.</p>
+            <h3 style="margin:0 0 8px 0;">Liquidacion y Cierre de Moldes</h3>
+            <p class="text-muted" style="font-size: 0.95rem; margin: 0;">Selecciona un ciclo terminado para liquidar costos reales de mano de obra, agregar costos adicionales y exportar el cierre.</p>
           </div>
+
+          <div style="display:flex; gap:8px; align-items:end; margin: 12px 0; flex-wrap: wrap;">
+            <div class="form-group" style="min-width: 320px; margin: 0;">
+              <label for="financialCompletedCycleSelect">Ciclo terminado</label>
+              <select id="financialCompletedCycleSelect">
+                <option value="">Cargando ciclos...</option>
+              </select>
+            </div>
+            <button class="btn" id="financialReloadCyclesBtn">Refrescar ciclos</button>
+            <button class="btn" id="financialExportPdfBtn">Exportar PDF</button>
+            <button class="btn btn-secondary" id="financialExportExcelBtn">Exportar Excel</button>
+          </div>
+
+          <div class="mold-progress-panel" style="margin-top: 8px;">
+            <p id="financialCycleSummary" class="text-muted" style="margin:0;">Selecciona un ciclo para ver la liquidacion.</p>
+          </div>
+
+          <div class="table-container" style="margin-top: 12px;">
+            <h4 style="margin: 0 0 8px 0;">Desglose de Maquinas</h4>
+            <table id="financialBreakdownTable">
+              <thead>
+                <tr>
+                  <th>Maquina</th>
+                  <th>Horas reales</th>
+                  <th>Costo parcial (COP)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="3" class="text-muted">Sin datos</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="form-grid-3-col" style="margin-top: 12px; align-items:end;">
+            <div class="form-group">
+              <label>Costo de Mano de Obra</label>
+              <input type="text" id="financialLaborCost" value="$ 0" readonly>
+            </div>
+            <div class="form-group">
+              <label for="financialMaterialsCost">Costo de Materiales</label>
+              <input type="number" id="financialMaterialsCost" step="0.01" min="0" placeholder="0">
+            </div>
+            <div class="form-group">
+              <label for="financialExternalServicesCost">Costo de Servicios Externos</label>
+              <input type="number" id="financialExternalServicesCost" step="0.01" min="0" placeholder="0">
+            </div>
+          </div>
+
+          <div class="mold-progress-panel" style="margin-top: 10px;">
+            <h4 style="margin: 0;">Costo Total: <span id="financialTotalCost">$ 0</span></h4>
+          </div>
+
+          <div class="response-box" id="financialLiquidationResponse" style="margin-top: 12px;"></div>
+
+          <div class="mold-progress-panel" style="margin-top: 12px;">
+            <h3 style="margin:0 0 8px 0;">Tarifas por Maquina</h3>
+            <p class="text-muted" style="font-size: 0.95rem; margin: 0;">Define el Costo por Hora y el Precio por Hora para las maquinas activas. Solo Gerencia puede guardar cambios.</p>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center; margin: 12px 0; flex-wrap: wrap;">
+            <button class="btn" id="financialReloadBtn">Refrescar lista</button>
+            <button class="btn btn-secondary" id="financialSaveBtn">Guardar Cambios</button>
+          </div>
+
+          <div class="table-container">
+            <table id="financialMachinesTable">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Maquina</th>
+                  <th>Costo por Hora (COP)</th>
+                  <th>Precio por Hora (COP)</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="response-box" id="financialResponse" style="margin-top: 12px;"></div>
         </div>
 
       </div>
