@@ -22,6 +22,7 @@ const importRoutes = require('./routes/import.routes');
 const moldRoutes = require('./routes/mold.routes');
 const catalogRoutes = require('./routes/catalog.routes');
 const indicatorsRoutes = require('./routes/indicators.routes');
+const managementRoutes = require('./routes/management.routes');
 
 const app = express();
 
@@ -101,6 +102,7 @@ app.use('/api/import', importRoutes);
 app.use('/api/molds', moldRoutes);
 app.use('/api/catalogs', catalogRoutes);
 app.use('/api/indicators', indicatorsRoutes);
+app.use('/api/management', managementRoutes);
 
 const configRoutes = require('./routes/config.routes');
 app.use('/api', configRoutes);
@@ -164,6 +166,8 @@ async function startServer() {
         console.log('  GET    /api/datos/meta');
         console.log('  GET    /health');
         console.log('  GET    /api/indicators/summary');
+        console.log('  GET    /api/management/completed-cycles');
+        console.log('  GET    /api/management/mold-cost-breakdown/:planning_id');
         console.log('\n✅ Servidor listo para recibir peticiones\n');
     });
 

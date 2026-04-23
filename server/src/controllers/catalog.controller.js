@@ -5,7 +5,7 @@ exports.getMeta = async (req, res, next) => {
   try {
     const molds = await query('SELECT id, name, is_active FROM molds WHERE is_active = TRUE ORDER BY name ASC');
     const parts = await query('SELECT id, name, is_active FROM mold_parts WHERE is_active = TRUE ORDER BY name ASC');
-    const machines = await query('SELECT id, name, daily_capacity, is_active FROM machines WHERE is_active = TRUE ORDER BY name ASC');
+    const machines = await query('SELECT id, name, daily_capacity, hourly_cost, hourly_price, is_active FROM machines WHERE is_active = TRUE ORDER BY name ASC');
     const operators = await query('SELECT id, name, is_active FROM operators WHERE is_active = TRUE ORDER BY name ASC');
     // Importante: procesos/operaciones se crean automáticamente al crear/importar datos.
     // Para evitar que queden "fantasmas" en UI cuando se borran los últimos datos,

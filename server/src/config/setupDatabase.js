@@ -142,6 +142,37 @@ async function initializeDatabase() {
             console.warn('⚠️ No se pudo aplicar migración plan_entries.is_priority:', e.message);
         }
 
+        // machines.hourly_cost / machines.hourly_price (costos financieros por hora)
+        try {
+            const costCol = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'machines'
+                   AND column_name = 'hourly_cost'`
+            );
+            const hasCostCol = Number(costCol?.[0]?.cnt || 0) > 0;
+            if (!hasCostCol) {
+                await query(`ALTER TABLE machines ADD COLUMN hourly_cost NUMERIC(12,2) NULL`);
+                console.log('✅ Migración aplicada: machines.hourly_cost');
+            }
+
+            const priceCol = await query(
+                `SELECT COUNT(1) AS cnt
+                 FROM information_schema.columns
+                 WHERE table_schema = 'public'
+                   AND table_name = 'machines'
+                   AND column_name = 'hourly_price'`
+            );
+            const hasPriceCol = Number(priceCol?.[0]?.cnt || 0) > 0;
+            if (!hasPriceCol) {
+                await query(`ALTER TABLE machines ADD COLUMN hourly_price NUMERIC(12,2) NULL`);
+                console.log('✅ Migración aplicada: machines.hourly_price');
+            }
+        } catch (e) {
+            console.warn('⚠️ No se pudo aplicar migración de costos por hora en machines:', e.message);
+        }
+
         // work_logs.work_date (para registrar fecha real trabajada desde Tiempos de Moldes)
         try {
             const col = await query(

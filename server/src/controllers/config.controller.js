@@ -2,10 +2,18 @@ const { query } = require('../config/database');
 const bcrypt = require('bcryptjs');
 const { ROLES } = require('../utils/constants');
 
+function parseMoneyOrNull(v) {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  const n = Number.parseFloat(String(v));
+  if (!Number.isFinite(n) || n < 0) return NaN;
+  return n;
+}
+
 // LISTAR máquinas (para edición)
 exports.listMachines = async (req, res, next) => {
   try {
-    const rows = await query('SELECT id, name, daily_capacity, is_active, created_at FROM machines ORDER BY name ASC');
+    const rows = await query('SELECT id, name, daily_capacity, hourly_cost, hourly_price, is_active, created_at FROM machines ORDER BY name ASC');
     res.json(rows);
   } catch (e) { next(e); }
 };
@@ -13,11 +21,27 @@ exports.listMachines = async (req, res, next) => {
 // CREAR máquina: name + daily_capacity
 exports.createMachine = async (req, res, next) => {
   try {
-    const { name, daily_capacity } = req.body;
+    const { name, daily_capacity, hourly_cost, hourly_price } = req.body;
     if (!name || String(name).trim() === '') return res.status(400).json({ error:'Nombre requerido' });
     const cap = daily_capacity !== undefined && daily_capacity !== null && daily_capacity !== '' ? parseFloat(daily_capacity) : null;
-    const result = await query('INSERT INTO machines (name, daily_capacity, is_active) VALUES (?, ?, TRUE)', [name.trim(), cap]);
-    res.status(201).json({ message: 'Máquina creada', id: result.insertId, name: name.trim(), daily_capacity: cap, is_active: 1 });
+    const cost = parseMoneyOrNull(hourly_cost);
+    const price = parseMoneyOrNull(hourly_price);
+    if (Number.isNaN(cost) || Number.isNaN(price)) {
+      return res.status(400).json({ error:'hourly_cost/hourly_price inválidos' });
+    }
+    const result = await query(
+      'INSERT INTO machines (name, daily_capacity, hourly_cost, hourly_price, is_active) VALUES (?, ?, ?, ?, TRUE)',
+      [name.trim(), cap, cost ?? null, price ?? null]
+    );
+    res.status(201).json({
+      message: 'Máquina creada',
+      id: result.insertId,
+      name: name.trim(),
+      daily_capacity: cap,
+      hourly_cost: cost ?? null,
+      hourly_price: price ?? null,
+      is_active: 1
+    });
   } catch (e) { next(e); }
 };
 
@@ -25,10 +49,15 @@ exports.createMachine = async (req, res, next) => {
 exports.updateMachine = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, daily_capacity, is_active } = req.body;
+    const { name, daily_capacity, is_active, hourly_cost, hourly_price } = req.body;
 
     const current = await query('SELECT id FROM machines WHERE id = ?', [id]);
     if (!current.length) return res.status(404).json({ error:'Máquina no encontrada' });
+
+    const wantsFinancialUpdate = hourly_cost !== undefined || hourly_price !== undefined;
+    if (wantsFinancialUpdate && req?.user?.role !== ROLES.MANAGEMENT) {
+      return res.status(403).json({ error:'Solo Gerencia puede actualizar costo/precio por hora' });
+    }
 
     const fields = [];
     const vals = [];
@@ -37,6 +66,16 @@ exports.updateMachine = async (req, res, next) => {
     if (daily_capacity !== undefined) {
       const cap = (daily_capacity === '' || daily_capacity === null) ? null : parseFloat(daily_capacity);
       fields.push('daily_capacity = ?'); vals.push(cap);
+    }
+    if (hourly_cost !== undefined) {
+      const cost = parseMoneyOrNull(hourly_cost);
+      if (Number.isNaN(cost)) return res.status(400).json({ error:'hourly_cost inválido' });
+      fields.push('hourly_cost = ?'); vals.push(cost);
+    }
+    if (hourly_price !== undefined) {
+      const price = parseMoneyOrNull(hourly_price);
+      if (Number.isNaN(price)) return res.status(400).json({ error:'hourly_price inválido' });
+      fields.push('hourly_price = ?'); vals.push(price);
     }
     if (is_active !== undefined) { fields.push('is_active = ?'); vals.push(is_active ? 1 : 0); }
 
