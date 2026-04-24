@@ -55,7 +55,8 @@ const LS_KEYS = {
   plannerGridConfig: 'plannerGridConfig',
   configPartsDefaultsApplied: 'configPartsDefaultsApplied',
   inactivityMinutes: 'inactivityMinutes',
-  indicatorsSelectedOperators: 'indicatorsSelectedOperators'
+  indicatorsSelectedOperators: 'indicatorsSelectedOperators',
+  financialCostedMoldsHistory: 'financialCostedMoldsHistory'
 };
 
 // Planificador: catálogos y configuración de parrilla
@@ -64,6 +65,34 @@ let plannerCatalogParts = [];    // [{id,name,is_active}]
 let plannerMachinesInGrid = [];  // [{id,name,daily_capacity}]
 let plannerPartsInGrid = [];     // [{name}]
 let plannerLoadedMold = null;    // { moldId, moldName, clientName, startDate, endDate } cuando se carga desde "Moldes planificados"
+let plannerPreviewMode = false;
+
+function applyPlannerPreviewMode(enabled) {
+  const tab = document.getElementById('tab-plan');
+  if (!tab) return;
+
+  const controls = tab.querySelectorAll('input, select, textarea, button');
+  if (enabled) {
+    controls.forEach((el) => {
+      if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement || el instanceof HTMLButtonElement)) return;
+      if (el.id === 'submitGridPlanBtn') return;
+      if (el.id === 'exitPlannedMoldEditBtnInline') return;
+      if (!el.hasAttribute('data-preview-prev-disabled')) {
+        el.setAttribute('data-preview-prev-disabled', el.disabled ? '1' : '0');
+      }
+      el.disabled = true;
+    });
+    return;
+  }
+
+  tab.querySelectorAll('[data-preview-prev-disabled]').forEach((el) => {
+    const prev = String(el.getAttribute('data-preview-prev-disabled') || '0') === '1';
+    if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement || el instanceof HTMLButtonElement) {
+      el.disabled = prev;
+    }
+    el.removeAttribute('data-preview-prev-disabled');
+  });
+}
 
 function normalizeDateInputValue(value) {
   const s = String(value || '').trim();
@@ -1069,14 +1098,20 @@ async function initPlannerTab() {
 
 function setPlannerLoadedMold(mold) {
   plannerLoadedMold = mold || null;
+  plannerPreviewMode = !!plannerLoadedMold?.previewMode;
   const banner = document.getElementById('plannerLoadedMoldBanner');
   const clientNameEl = document.getElementById('planClientName');
 
   const submitBtn = document.getElementById('submitGridPlanBtn');
-  if (submitBtn) submitBtn.textContent = plannerLoadedMold ? 'Actualizar Planificación' : 'Crear Planificación';
+  if (submitBtn) {
+    submitBtn.textContent = plannerLoadedMold
+      ? (plannerPreviewMode ? 'Salir de vista previa' : 'Actualizar Planificación')
+      : 'Crear Planificación';
+  }
 
   if (!banner) return;
   if (!plannerLoadedMold) {
+    applyPlannerPreviewMode(false);
     try { clearPlannerProgressLocks(); } catch (_) {}
     if (clientNameEl) clientNameEl.value = '';
     banner.innerHTML = '';
@@ -1087,19 +1122,31 @@ function setPlannerLoadedMold(mold) {
   const clientName = escapeHtml(String(plannerLoadedMold.clientName || ''));
   const clientText = clientName || '<span class="text-muted">(sin cliente)</span>';
   const range = `${escapeHtml(String(plannerLoadedMold.startDate || '—'))} → ${escapeHtml(String(plannerLoadedMold.endDate || '—'))}`;
+  const estimatedPrice = escapeHtml(String(document.getElementById('estimated-cost-total')?.textContent || '$ 0'));
+  const modeTitle = plannerPreviewMode ? 'Vista previa de molde planificado' : 'Editando molde planificado';
+  const modeHint = plannerPreviewMode
+    ? 'Modo solo lectura: revisa la planificación y el Precio Estimado. No se guardarán cambios.'
+    : 'Al actualizar en este modo, se elimina la planificación previa del molde y se vuelve a planificar desde la fecha de inicio seleccionada.';
+  const inlineBtnText = plannerPreviewMode ? 'Salir de vista previa' : 'Salir de edición';
+  const inlineBtnTitle = plannerPreviewMode
+    ? 'Cerrar vista previa y volver al modo normal'
+    : 'Salir del modo edición de molde planificado';
   banner.innerHTML = `
     <div style="padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg);">
       <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:baseline;">
-        <div style="font-weight:800;">Editando molde planificado</div>
+        <div style="font-weight:800;">${modeTitle}</div>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <div style="color:var(--text-muted); font-size:0.9rem;">Rango: ${range}</div>
-          <button class="btn btn-secondary btn-sm" id="exitPlannedMoldEditBtnInline" title="Salir del modo edición de molde planificado">Salir de edición</button>
+          <button class="btn btn-secondary btn-sm" id="exitPlannedMoldEditBtnInline" title="${inlineBtnTitle}">${inlineBtnText}</button>
         </div>
       </div>
       <div style="margin-top:6px;">Planificación: <strong>${name}</strong> - Cliente: <strong>${clientText}</strong></div>
-      <div style="margin-top:6px; color:var(--text-muted); font-size:0.9rem;">Al actualizar en este modo, se elimina la planificación previa del molde y se vuelve a planificar desde la fecha de inicio seleccionada.</div>
+      <div style="margin-top:6px;">Precio estimado total: <strong>${estimatedPrice}</strong></div>
+      <div style="margin-top:6px; color:var(--text-muted); font-size:0.9rem;">${modeHint}</div>
     </div>
   `;
+
+  applyPlannerPreviewMode(plannerPreviewMode);
 
   const exitInlineBtn = document.getElementById('exitPlannedMoldEditBtnInline');
   if (exitInlineBtn) {
@@ -1808,7 +1855,7 @@ function renderFixedPlanningGrid() {
           <td id="grand-total">0.00</td>
         </tr>
         <tr>
-          <td><strong>Costo Estimado</strong></td>
+          <td><strong>Precio Estimado</strong></td>
           <td></td>
           ${machines.map(m => `<td id="cost-machine-${escapeHtml(String(m.id))}">$ 0</td>`).join('')}
           <td id="estimated-cost-total">$ 0</td>
@@ -1862,11 +1909,11 @@ function updateFixedColumnTotals() {
     const cell = document.getElementById(`total-machine-${String(m.id)}`);
     if (cell) cell.textContent = colSum.toFixed(2);
 
-    const machineCost = Number(m?.hourly_cost || 0);
-    const estimatedCost = (Number.isFinite(machineCost) && machineCost > 0) ? (colSum * machineCost) : 0;
-    estimatedTotalCost += estimatedCost;
+    const machinePrice = Number(m?.hourly_price || 0);
+    const estimatedPrice = (Number.isFinite(machinePrice) && machinePrice > 0) ? (colSum * machinePrice) : 0;
+    estimatedTotalCost += estimatedPrice;
     const costCell = document.getElementById(`cost-machine-${String(m.id)}`);
-    if (costCell) costCell.textContent = formatCurrencyCOP(estimatedCost);
+    if (costCell) costCell.textContent = formatCurrencyCOP(estimatedPrice);
   });
 
   const estimatedTotalCell = document.getElementById('estimated-cost-total');
@@ -1958,6 +2005,12 @@ function getTodayISO() {
 // ================================
 async function submitGridPlan(e) {
   if (e) e.preventDefault();
+
+  if (plannerPreviewMode) {
+    setPlannerLoadedMold(null);
+    displayResponse('gridResponse', { message: 'Vista previa cerrada.' }, true);
+    return;
+  }
 
   console.clear();
   console.log('========== SUBMIT GRID PLAN ==========');
@@ -4896,10 +4949,13 @@ function renderDayDetailsView(dateISO, events, holiday) {
   })();
 }
 
-async function openMoldEditorView(moldId, moldName) {
+async function openMoldEditorView(moldId, moldName, opts = {}) {
+  const previewMode = !!opts?.previewMode;
   const body = document.getElementById('modal-body');
   const titleEl = document.getElementById('modal-title');
-  if (titleEl) titleEl.textContent = `Editar molde: ${moldName || moldId}`;
+  const modal = document.getElementById('day-details-modal');
+  if (modal) modal.classList.remove('hidden');
+  if (titleEl) titleEl.textContent = `${previewMode ? 'Vista previa del molde' : 'Editar molde'}: ${moldName || moldId}`;
   if (body) body.innerHTML = '<p>Cargando plan del molde...</p>';
 
   try {
@@ -4947,7 +5003,7 @@ async function openMoldEditorView(moldId, moldName) {
         <div>
           <div class="text-muted">Rango del molde: ${escapeHtml(startDate)} → ${escapeHtml(endDate)}</div>
         </div>
-        <button class="btn btn-secondary" id="moldEditorBackBtn">Volver al día</button>
+        <button class="btn btn-secondary" id="moldEditorBackBtn">${previewMode ? 'Salir de vista previa' : 'Volver al día'}</button>
       </div>
       ${progress?.breakdown ? `
         <div class="mold-progress-panel" style="margin-bottom:10px;">
@@ -5039,10 +5095,33 @@ async function openMoldEditorView(moldId, moldName) {
 
     const backBtn = document.getElementById('moldEditorBackBtn');
     if (backBtn) backBtn.onclick = () => {
+      if (previewMode) {
+        hideModal();
+        return;
+      }
       if (lastDayDetailsContext) {
         renderDayDetailsView(lastDayDetailsContext.dateISO, lastDayDetailsContext.events, lastDayDetailsContext.holiday);
       }
     };
+
+    if (previewMode) {
+      body.querySelectorAll('input, select, textarea').forEach((el) => {
+        if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) {
+          el.disabled = true;
+        }
+      });
+      body.querySelectorAll('.pe-save-btn, .pe-next-btn').forEach((btn) => {
+        if (btn instanceof HTMLElement) btn.classList.add('hidden');
+      });
+      const bulkPanel = document.getElementById('peBulkPanel');
+      if (bulkPanel) bulkPanel.classList.add('hidden');
+      const bulkControlIds = ['peSelectAllRowsBtn', 'peClearAllRowsBtn', 'pePushAllNextBtn', 'peBulkMoveToDateBtn', 'peBulkMoveNextBtn'];
+      bulkControlIds.forEach((id) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.add('hidden');
+      });
+      return;
+    }
 
     body.querySelectorAll('button.pe-save-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -5071,7 +5150,7 @@ async function openMoldEditorView(moldId, moldName) {
           if (resp.ok) {
             await refreshCalendarData();
             // Recargar vista del molde para reflejar cambios
-            await openMoldEditorView(moldId, moldName);
+            await openMoldEditorView(moldId, moldName, opts);
           } else {
             // Mensaje ya mostrado en moldEditorResponse
           }
@@ -5106,7 +5185,7 @@ async function openMoldEditorView(moldId, moldName) {
           displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
           if (resp.ok) {
             await refreshCalendarData();
-            await openMoldEditorView(moldId, moldName);
+            await openMoldEditorView(moldId, moldName, opts);
           } else {
             // Mensaje ya mostrado en moldEditorResponse
           }
@@ -5183,7 +5262,7 @@ async function openMoldEditorView(moldId, moldName) {
         displayResponse('moldEditorResponse', out?.message || out?.error || 'Listo', resp.ok);
         if (resp.ok) {
           await refreshCalendarData();
-          await openMoldEditorView(moldId, moldName);
+          await openMoldEditorView(moldId, moldName, opts);
         }
       } catch (e) {
         displayResponse('moldEditorResponse', { error: 'Error de conexión', details: String(e) }, false);
@@ -5245,6 +5324,70 @@ let financialMachinesCache = [];
 let financialMachinesDraft = new Map(); // id -> { hourly_cost, hourly_price }
 let financialCompletedCyclesCache = [];
 let financialSettlementData = null;
+let financialCompletedCyclesLoaded = false;
+let financialBreakdownCache = new Map(); // planning_id -> breakdown data
+
+function getSavedFinancialCostedMolds() {
+  try {
+    const raw = localStorage.getItem(LS_KEYS.financialCostedMoldsHistory);
+    const parsed = JSON.parse(raw || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && Number(item.planningId) > 0)
+      .map((item) => ({
+        planningId: Number(item.planningId),
+        moldName: String(item.moldName || ''),
+        clientName: String(item.clientName || ''),
+        startDate: String(item.startDate || ''),
+        endDate: String(item.endDate || ''),
+        laborCost: round2(Number(item.laborCost || 0)),
+        materialsCost: round2(Number(item.materialsCost || 0)),
+        externalServicesCost: round2(Number(item.externalServicesCost || 0)),
+        totalCost: round2(Number(item.totalCost || 0)),
+        breakdown: Array.isArray(item.breakdown) ? item.breakdown : [],
+        savedAt: String(item.savedAt || ''),
+      }));
+  } catch (_) {
+    return [];
+  }
+}
+
+function setSavedFinancialCostedMolds(rows) {
+  try {
+    localStorage.setItem(LS_KEYS.financialCostedMoldsHistory, JSON.stringify(Array.isArray(rows) ? rows : []));
+  } catch (_) {
+    // Si falla localStorage (cuota/permisos), no romper flujo de la UI.
+  }
+}
+
+function upsertSavedFinancialCostedMold(settlement) {
+  const id = Number(settlement?.planningId || 0);
+  if (!Number.isFinite(id) || id <= 0) return;
+
+  const rows = getSavedFinancialCostedMolds();
+  const payload = {
+    planningId: id,
+    moldName: String(settlement?.moldName || ''),
+    clientName: String(settlement?.clientName || ''),
+    startDate: String(settlement?.startDate || ''),
+    endDate: String(settlement?.endDate || ''),
+    laborCost: round2(Number(settlement?.laborCost || 0)),
+    materialsCost: round2(Number(settlement?.materialsCost || 0)),
+    externalServicesCost: round2(Number(settlement?.externalServicesCost || 0)),
+    totalCost: round2(Number(settlement?.totalCost || 0)),
+    breakdown: Array.isArray(settlement?.breakdown) ? settlement.breakdown : [],
+    savedAt: new Date().toISOString(),
+  };
+
+  const idx = rows.findIndex((row) => Number(row?.planningId) === id);
+  if (idx >= 0) {
+    rows[idx] = payload;
+  } else {
+    rows.push(payload);
+  }
+
+  setSavedFinancialCostedMolds(rows);
+}
 
 function isManagementRole() {
   return String(currentUser?.role || '').toLowerCase() === 'management';
@@ -5265,6 +5408,172 @@ function normalizeFinancialComparable(m) {
     hourly_cost: cost == null ? null : Number(cost),
     hourly_price: price == null ? null : Number(price),
   };
+}
+
+function buildFinancialSettlementFromBreakdown(data, opts = {}) {
+  const laborCost = round2(Number(data?.labor_cost_total || 0));
+  const materialsCost = round2(Number(opts?.materialsCost || 0));
+  const externalServicesCost = round2(Number(opts?.externalServicesCost || 0));
+  return {
+    planningId: Number(data?.planning_id || opts?.planningId || 0),
+    moldName: String(opts?.moldName ?? data?.mold_name ?? ''),
+    clientName: String(opts?.clientName ?? data?.client_name ?? ''),
+    startDate: String(opts?.startDate ?? data?.start_date ?? ''),
+    endDate: String(opts?.endDate ?? data?.end_date ?? ''),
+    laborCost,
+    materialsCost,
+    externalServicesCost,
+    totalCost: round2(laborCost + materialsCost + externalServicesCost),
+    breakdown: Array.isArray(data?.machine_breakdown) ? data.machine_breakdown : [],
+  };
+}
+
+async function fetchMoldCostBreakdownData(planningId, opts = {}) {
+  const id = Number.parseInt(String(planningId || ''), 10);
+  if (!Number.isFinite(id) || id <= 0) throw new Error('planning_id inválido');
+
+  const key = String(id);
+  const forceRefresh = !!opts?.forceRefresh;
+  if (!forceRefresh && financialBreakdownCache.has(key)) {
+    return financialBreakdownCache.get(key);
+  }
+
+  const res = await fetch(`${API_URL}/management/mold-cost-breakdown/${encodeURIComponent(key)}`, {
+    headers: { 'Authorization': `Bearer ${authToken}` },
+    cache: 'no-store'
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || 'No se pudo cargar el costo real');
+
+  financialBreakdownCache.set(key, data);
+  return data;
+}
+
+function downloadFinancialSettlementPdf(settlement, responseBoxId = 'financialLiquidationResponse') {
+  const printableRows = settlement.breakdown.length
+    ? settlement.breakdown.map((row) => `
+      <tr>
+        <td>${escapeHtml(String(row?.machine_name || ''))}</td>
+        <td style="text-align:right;">${Number(row?.total_hours || 0).toFixed(2)}</td>
+        <td style="text-align:right;">${escapeHtml(formatCurrencyCOP(Number(row?.partial_cost || 0)))}</td>
+      </tr>
+    `).join('')
+    : '<tr><td colspan="3" style="color:#666;">Sin datos de mano de obra para este ciclo.</td></tr>';
+
+  const range = [settlement.startDate, settlement.endDate]
+    .filter(Boolean)
+    .map((d) => formatDateDisplay(d))
+    .join(' - ');
+
+  const html = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Liquidacion de Costos - Molde ${escapeHtml(settlement.moldName)}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; color: #1a1a1a; }
+    h1, h2 { margin: 0 0 8px 0; }
+    .muted { color: #555; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #ccc; padding: 8px; font-size: 13px; }
+    th { background: #f2f2f2; text-align: left; }
+    .totals { margin-top: 16px; }
+    .totals div { margin: 4px 0; }
+    .strong { font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Liquidacion y Cierre de Moldes</h1>
+  <div class="muted">
+    Molde: <strong>${escapeHtml(settlement.moldName)}</strong><br>
+    Cliente: <strong>${escapeHtml(settlement.clientName || '—')}</strong><br>
+    Planning ID: <strong>#${escapeHtml(String(settlement.planningId))}</strong>${range ? `<br>Rango: <strong>${escapeHtml(range)}</strong>` : ''}
+  </div>
+
+  <h2>Desglose de Maquinas</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Maquina</th>
+        <th>Horas reales</th>
+        <th>Costo parcial (COP)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${printableRows}
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <div>Costo de Mano de Obra: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.laborCost))}</span></div>
+    <div>Costo de Materiales: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.materialsCost))}</span></div>
+    <div>Costo de Servicios Externos: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.externalServicesCost))}</span></div>
+    <div class="strong">Costo Total: ${escapeHtml(formatCurrencyCOP(settlement.totalCost))}</div>
+  </div>
+</body>
+</html>`;
+
+  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+  if (!printWindow) {
+    displayResponse(responseBoxId, { error: 'No se pudo abrir la ventana de impresion (popup bloqueado).' }, false);
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+  }, 150);
+}
+
+function downloadFinancialSettlementCsv(settlement, responseBoxId = 'financialLiquidationResponse') {
+  const delimiter = ';';
+  const rows = [
+    ['Liquidacion y Cierre de Moldes'],
+    ['Molde', settlement.moldName],
+    ['Cliente', settlement.clientName || ''],
+    ['Planning ID', settlement.planningId],
+    ['Fecha inicio', settlement.startDate || ''],
+    ['Fecha fin', settlement.endDate || ''],
+    [],
+    ['Desglose de Maquinas'],
+    ['Maquina', 'Horas reales', 'Costo parcial (COP)'],
+  ];
+
+  if (settlement.breakdown.length) {
+    settlement.breakdown.forEach((row) => {
+      rows.push([
+        row?.machine_name || '',
+        Number(row?.total_hours || 0).toFixed(2),
+        Number(row?.partial_cost || 0).toFixed(2),
+      ]);
+    });
+  } else {
+    rows.push(['Sin datos', '', '']);
+  }
+
+  rows.push([]);
+  rows.push(['Costo de Mano de Obra', settlement.laborCost.toFixed(2)]);
+  rows.push(['Costo de Materiales', settlement.materialsCost.toFixed(2)]);
+  rows.push(['Costo de Servicios Externos', settlement.externalServicesCost.toFixed(2)]);
+  rows.push(['Costo Total', settlement.totalCost.toFixed(2)]);
+
+  const csvBody = rows
+    .map((row) => (Array.isArray(row) ? row : [row]).map((cell) => escapeCsvCell(cell, delimiter)).join(delimiter))
+    .join('\r\n');
+  const csvWithBom = `\ufeff${csvBody}`;
+
+  const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `liquidacion_molde_${settlement.planningId}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  displayResponse(responseBoxId, { message: 'Archivo CSV generado correctamente.' }, true);
 }
 
 function getFinancialNumericInputValue(inputId) {
@@ -5318,11 +5627,12 @@ function renderFinancialSettlement(data) {
 
   const summary = document.getElementById('financialCycleSummary');
   if (summary) {
+    const clientText = String(data?.client_name || '').trim();
     const range = [data?.start_date, data?.end_date]
       .filter(Boolean)
       .map((d) => formatDateDisplay(d))
       .join(' - ');
-    summary.textContent = `Molde: ${String(data?.mold_name || 'N/A')} | Ciclo: #${String(data?.planning_id || '')}${range ? ` | Fechas: ${range}` : ''}`;
+    summary.textContent = `Molde: ${String(data?.mold_name || 'N/A')} | Cliente: ${clientText || '—'} | Ciclo: #${String(data?.planning_id || '')}${range ? ` | Fechas: ${range}` : ''}`;
   }
 
   const tbody = document.querySelector('#financialBreakdownTable tbody');
@@ -5365,14 +5675,11 @@ async function loadMoldCostBreakdown(planningId) {
 
   displayResponse('financialLiquidationResponse', { message: 'Calculando costo real...' }, true);
   try {
-    const res = await fetch(`${API_URL}/management/mold-cost-breakdown/${encodeURIComponent(String(id))}`, {
-      headers: { 'Authorization': `Bearer ${authToken}` }
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error || 'No se pudo calcular la liquidacion');
+    const data = await fetchMoldCostBreakdownData(id, { forceRefresh: true });
 
     financialSettlementData = data;
     renderFinancialSettlement(data);
+    try { await renderCostingHistory(); } catch (_) {}
     displayResponse('financialLiquidationResponse', { message: 'Liquidacion cargada.' }, true);
   } catch (e) {
     resetFinancialSettlementView('No se pudo cargar la liquidacion del ciclo seleccionado.');
@@ -5387,7 +5694,10 @@ async function loadCompletedCycles() {
   if (!isManagementRole()) {
     select.innerHTML = '<option value="">Acceso solo para Gerencia</option>';
     select.disabled = true;
+    financialCompletedCyclesCache = [];
+    financialCompletedCyclesLoaded = true;
     resetFinancialSettlementView('Solo Gerencia puede acceder a liquidacion de moldes.');
+    await renderCostingHistory();
     return;
   }
 
@@ -5404,9 +5714,11 @@ async function loadCompletedCycles() {
     if (!res.ok) throw new Error(data?.error || 'No se pudieron cargar ciclos terminados');
 
     financialCompletedCyclesCache = Array.isArray(data) ? data : [];
+    financialCompletedCyclesLoaded = true;
     if (!financialCompletedCyclesCache.length) {
       select.innerHTML = '<option value="">(sin ciclos terminados)</option>';
       resetFinancialSettlementView('No hay ciclos terminados para liquidar.');
+      await renderCostingHistory();
       return;
     }
 
@@ -5427,10 +5739,110 @@ async function loadCompletedCycles() {
     } else {
       resetFinancialSettlementView('Selecciona un ciclo para ver la liquidacion.');
     }
+
+    await renderCostingHistory();
   } catch (e) {
+    financialCompletedCyclesLoaded = false;
     select.innerHTML = '<option value="">Error cargando ciclos</option>';
     resetFinancialSettlementView('No se pudieron obtener ciclos terminados.');
     displayResponse('financialLiquidationResponse', { error: 'Error cargando ciclos terminados', details: String(e) }, false);
+    await renderCostingHistory();
+  }
+}
+
+async function renderCostingHistory() {
+  const tbody = document.querySelector('#financialCostingHistoryTable tbody');
+  if (!tbody) return;
+
+  if (!isManagementRole()) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Solo Gerencia puede ver este historial.</td></tr>';
+    const details = document.getElementById('financialCostingHistoryDetails');
+    if (details) details.open = false;
+    return;
+  }
+
+  try {
+    const savedRows = getSavedFinancialCostedMolds()
+      .sort((a, b) => String(b?.savedAt || '').localeCompare(String(a?.savedAt || '')));
+
+    if (!savedRows.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-muted">(sin moldes costeados guardados)</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = savedRows.map((row) => {
+      const planningId = String(row?.planningId || '');
+      const moldName = escapeHtml(String(row?.moldName || ''));
+      const clientName = escapeHtml(String(row?.clientName || '—'));
+      const totalCost = Number(row?.totalCost || 0);
+      return `
+        <tr>
+          <td><span class="text-green-500" title="Liquidación guardada">&#10003;</span> ${moldName}</td>
+          <td>${clientName}</td>
+          <td>${escapeHtml(formatCurrencyCOP(totalCost))}</td>
+          <td style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:0.78rem;" data-history-export="excel" data-planning-id="${escapeHtml(planningId)}" title="Descargar Excel">Excel</button>
+            <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:0.78rem;" data-history-export="pdf" data-planning-id="${escapeHtml(planningId)}" title="Descargar PDF">PDF</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Error cargando historial</td></tr>';
+    displayResponse('financialHistoryResponse', { error: 'Error cargando historial de moldes costeados', details: String(e) }, false);
+  }
+}
+
+async function exportCostingHistoryByPlanning(planningId, format) {
+  if (!isManagementRole()) {
+    displayResponse('financialHistoryResponse', { error: 'Solo Gerencia puede exportar historial de costos.' }, false);
+    return;
+  }
+
+  const id = Number.parseInt(String(planningId || ''), 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    displayResponse('financialHistoryResponse', { error: 'planning_id inválido para exportación.' }, false);
+    return;
+  }
+
+  try {
+    const saved = getSavedFinancialCostedMolds().find((row) => Number(row?.planningId) === id);
+    let settlement = null;
+
+    if (saved) {
+      settlement = {
+        planningId: Number(saved.planningId),
+        moldName: String(saved.moldName || ''),
+        clientName: String(saved.clientName || ''),
+        startDate: String(saved.startDate || ''),
+        endDate: String(saved.endDate || ''),
+        laborCost: round2(Number(saved.laborCost || 0)),
+        materialsCost: round2(Number(saved.materialsCost || 0)),
+        externalServicesCost: round2(Number(saved.externalServicesCost || 0)),
+        totalCost: round2(Number(saved.totalCost || 0)),
+        breakdown: Array.isArray(saved.breakdown) ? saved.breakdown : [],
+      };
+    } else {
+      const data = await fetchMoldCostBreakdownData(id);
+      const cycle = financialCompletedCyclesCache.find((c) => Number(c?.planning_id) === id) || {};
+      settlement = buildFinancialSettlementFromBreakdown(data, {
+        planningId: id,
+        moldName: cycle?.mold_name,
+        clientName: cycle?.client_name || data?.client_name,
+        startDate: cycle?.start_date || data?.start_date,
+        endDate: cycle?.end_date || data?.end_date,
+        materialsCost: 0,
+        externalServicesCost: 0,
+      });
+    }
+
+    if (String(format).toLowerCase() === 'pdf') {
+      downloadFinancialSettlementPdf(settlement, 'financialHistoryResponse');
+    } else {
+      downloadFinancialSettlementCsv(settlement, 'financialHistoryResponse');
+    }
+  } catch (e) {
+    displayResponse('financialHistoryResponse', { error: 'Error exportando liquidacion histórica', details: String(e) }, false);
   }
 }
 
@@ -5447,22 +5859,29 @@ function getFinancialSettlementSnapshot() {
     return null;
   }
 
-  const labor = Number(financialSettlementData?.labor_cost_total || 0);
-  const total = round2(labor + materials + external);
+  return buildFinancialSettlementFromBreakdown(financialSettlementData, {
+    planningId: financialSettlementData?.planning_id,
+    moldName: financialSettlementData?.mold_name,
+    clientName: financialSettlementData?.client_name,
+    startDate: financialSettlementData?.start_date,
+    endDate: financialSettlementData?.end_date,
+    materialsCost: materials,
+    externalServicesCost: external,
+  });
+}
 
-  return {
-    planningId: Number(financialSettlementData.planning_id),
-    moldName: String(financialSettlementData?.mold_name || ''),
-    startDate: financialSettlementData?.start_date || '',
-    endDate: financialSettlementData?.end_date || '',
-    laborCost: round2(labor),
-    materialsCost: round2(materials),
-    externalServicesCost: round2(external),
-    totalCost: total,
-    breakdown: Array.isArray(financialSettlementData?.machine_breakdown)
-      ? financialSettlementData.machine_breakdown
-      : [],
-  };
+function saveFinancialSettlement() {
+  if (!isManagementRole()) {
+    displayResponse('financialLiquidationResponse', { error: 'Solo Gerencia puede guardar liquidaciones.' }, false);
+    return;
+  }
+
+  const settlement = getFinancialSettlementSnapshot();
+  if (!settlement) return;
+
+  upsertSavedFinancialCostedMold(settlement);
+  renderCostingHistory().catch(() => {});
+  displayResponse('financialLiquidationResponse', { message: 'Liquidación guardada en el historial de moldes costeados.' }, true);
 }
 
 function exportFinancialSettlementPdf() {
@@ -5473,82 +5892,7 @@ function exportFinancialSettlementPdf() {
 
   const settlement = getFinancialSettlementSnapshot();
   if (!settlement) return;
-
-  const printableRows = settlement.breakdown.length
-    ? settlement.breakdown.map((row) => `
-      <tr>
-        <td>${escapeHtml(String(row?.machine_name || ''))}</td>
-        <td style="text-align:right;">${Number(row?.total_hours || 0).toFixed(2)}</td>
-        <td style="text-align:right;">${escapeHtml(formatCurrencyCOP(Number(row?.partial_cost || 0)))}</td>
-      </tr>
-    `).join('')
-    : '<tr><td colspan="3" style="color:#666;">Sin datos de mano de obra para este ciclo.</td></tr>';
-
-  const range = [settlement.startDate, settlement.endDate]
-    .filter(Boolean)
-    .map((d) => formatDateDisplay(d))
-    .join(' - ');
-
-  const html = `<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>Liquidacion de Costos - Molde ${escapeHtml(settlement.moldName)}</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 24px; color: #1a1a1a; }
-    h1, h2 { margin: 0 0 8px 0; }
-    .muted { color: #555; margin-bottom: 16px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { border: 1px solid #ccc; padding: 8px; font-size: 13px; }
-    th { background: #f2f2f2; text-align: left; }
-    .totals { margin-top: 16px; }
-    .totals div { margin: 4px 0; }
-    .strong { font-weight: 700; }
-  </style>
-</head>
-<body>
-  <h1>Liquidacion y Cierre de Moldes</h1>
-  <div class="muted">
-    Molde: <strong>${escapeHtml(settlement.moldName)}</strong><br>
-    Planning ID: <strong>#${escapeHtml(String(settlement.planningId))}</strong>${range ? `<br>Rango: <strong>${escapeHtml(range)}</strong>` : ''}
-  </div>
-
-  <h2>Desglose de Maquinas</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Maquina</th>
-        <th>Horas reales</th>
-        <th>Costo parcial (COP)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${printableRows}
-    </tbody>
-  </table>
-
-  <div class="totals">
-    <div>Costo de Mano de Obra: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.laborCost))}</span></div>
-    <div>Costo de Materiales: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.materialsCost))}</span></div>
-    <div>Costo de Servicios Externos: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.externalServicesCost))}</span></div>
-    <div class="strong">Costo Total: ${escapeHtml(formatCurrencyCOP(settlement.totalCost))}</div>
-  </div>
-</body>
-</html>`;
-
-  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-  if (!printWindow) {
-    displayResponse('financialLiquidationResponse', { error: 'No se pudo abrir la ventana de impresion (popup bloqueado).' }, false);
-    return;
-  }
-
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.focus();
-  setTimeout(() => {
-    printWindow.print();
-  }, 150);
+  downloadFinancialSettlementPdf(settlement, 'financialLiquidationResponse');
 }
 
 function escapeCsvCell(value, delimiter) {
@@ -5566,51 +5910,7 @@ function exportFinancialSettlementExcel() {
 
   const settlement = getFinancialSettlementSnapshot();
   if (!settlement) return;
-
-  const delimiter = ';';
-  const rows = [
-    ['Liquidacion y Cierre de Moldes'],
-    ['Molde', settlement.moldName],
-    ['Planning ID', settlement.planningId],
-    ['Fecha inicio', settlement.startDate || ''],
-    ['Fecha fin', settlement.endDate || ''],
-    [],
-    ['Desglose de Maquinas'],
-    ['Maquina', 'Horas reales', 'Costo parcial (COP)'],
-  ];
-
-  if (settlement.breakdown.length) {
-    settlement.breakdown.forEach((row) => {
-      rows.push([
-        row?.machine_name || '',
-        Number(row?.total_hours || 0).toFixed(2),
-        Number(row?.partial_cost || 0).toFixed(2),
-      ]);
-    });
-  } else {
-    rows.push(['Sin datos', '', '']);
-  }
-
-  rows.push([]);
-  rows.push(['Costo de Mano de Obra', settlement.laborCost.toFixed(2)]);
-  rows.push(['Costo de Materiales', settlement.materialsCost.toFixed(2)]);
-  rows.push(['Costo de Servicios Externos', settlement.externalServicesCost.toFixed(2)]);
-  rows.push(['Costo Total', settlement.totalCost.toFixed(2)]);
-
-  const csvBody = rows
-    .map((row) => (Array.isArray(row) ? row : [row]).map((cell) => escapeCsvCell(cell, delimiter)).join(delimiter))
-    .join('\r\n');
-  const csvWithBom = `\ufeff${csvBody}`;
-
-  const blob = new Blob([csvWithBom], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `liquidacion_molde_${settlement.planningId}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
-
-  displayResponse('financialLiquidationResponse', { message: 'Archivo CSV generado correctamente.' }, true);
+  downloadFinancialSettlementCsv(settlement, 'financialLiquidationResponse');
 }
 
 async function loadFinancialMachines() {
@@ -5747,8 +6047,14 @@ async function saveFinancialRates() {
     displayResponse('financialResponse', { message: 'Tarifas financieras guardadas.' }, true);
   }
 
+  financialBreakdownCache.clear();
   financialMachinesDraft.clear();
   try { await loadFinancialMachines(); } catch (_) {}
+  try {
+    const selectedPlanningId = String(document.getElementById('financialCompletedCycleSelect')?.value || '').trim();
+    if (selectedPlanningId) await loadMoldCostBreakdown(selectedPlanningId);
+  } catch (_) {}
+  try { await renderCostingHistory(); } catch (_) {}
 }
 
 async function loadMachinesList() {
@@ -7162,11 +7468,24 @@ function setupEventListeners() {
   const financialReloadBtn = document.getElementById('financialReloadBtn'); if (financialReloadBtn) financialReloadBtn.addEventListener('click', (e) => { e.preventDefault(); loadFinancialMachines(); });
   const financialSaveBtn = document.getElementById('financialSaveBtn'); if (financialSaveBtn) financialSaveBtn.addEventListener('click', (e) => { e.preventDefault(); saveFinancialRates(); });
   const financialReloadCyclesBtn = document.getElementById('financialReloadCyclesBtn'); if (financialReloadCyclesBtn) financialReloadCyclesBtn.addEventListener('click', (e) => { e.preventDefault(); loadCompletedCycles(); });
+  const financialSaveLiquidationBtn = document.getElementById('financialSaveLiquidationBtn'); if (financialSaveLiquidationBtn) financialSaveLiquidationBtn.addEventListener('click', (e) => { e.preventDefault(); saveFinancialSettlement(); });
   const financialExportPdfBtn = document.getElementById('financialExportPdfBtn'); if (financialExportPdfBtn) financialExportPdfBtn.addEventListener('click', (e) => { e.preventDefault(); exportFinancialSettlementPdf(); });
   const financialExportExcelBtn = document.getElementById('financialExportExcelBtn'); if (financialExportExcelBtn) financialExportExcelBtn.addEventListener('click', (e) => { e.preventDefault(); exportFinancialSettlementExcel(); });
   const financialCompletedCycleSelect = document.getElementById('financialCompletedCycleSelect'); if (financialCompletedCycleSelect) financialCompletedCycleSelect.addEventListener('change', (e) => { loadMoldCostBreakdown(e.target?.value); });
   const financialMaterialsCost = document.getElementById('financialMaterialsCost'); if (financialMaterialsCost) financialMaterialsCost.addEventListener('input', () => { recalculateFinancialTotalCost(); });
   const financialExternalServicesCost = document.getElementById('financialExternalServicesCost'); if (financialExternalServicesCost) financialExternalServicesCost.addEventListener('input', () => { recalculateFinancialTotalCost(); });
+  const financialCostingHistoryTable = document.getElementById('financialCostingHistoryTable');
+  if (financialCostingHistoryTable) {
+    financialCostingHistoryTable.addEventListener('click', (ev) => {
+      const target = ev.target;
+      if (!(target instanceof HTMLElement)) return;
+      const btn = target.closest('[data-history-export][data-planning-id]');
+      if (!btn) return;
+      const fmt = btn.getAttribute('data-history-export');
+      const planningId = btn.getAttribute('data-planning-id');
+      exportCostingHistoryByPlanning(planningId, fmt);
+    });
+  }
 
   // Capturar cambios sin guardar inmediatamente
   const machinesTable = document.getElementById('machinesTable');
@@ -7295,7 +7614,7 @@ function setupEventListeners() {
       if (!moldId) return;
 
       const responseBox = document.getElementById('gridResponse');
-      if (responseBox) responseBox.textContent = 'Cargando planificación del molde...';
+      if (responseBox) responseBox.textContent = 'Cargando planificación del molde en vista previa...';
 
       try {
         const res = await fetch(`${API_URL}/tasks/plan/mold/${encodeURIComponent(moldId)}`, {
@@ -7308,14 +7627,10 @@ function setupEventListeners() {
           return;
         }
 
-        // Intentar cargar snapshot exacto primero
         let loadedFromSnapshot = false;
         try {
-          // 1) Por molde (último snapshot) para no depender de MIN(date)
           let snap = await tryLoadPlannerSnapshot(moldId, null);
-          // 2) Si no hay, intentar por startDate visible
           if (!snap) snap = await tryLoadPlannerSnapshot(moldId, itemStartDate || data?.startDate);
-
           if (snap) {
             loadedFromSnapshot = fillPlannerGridFromSnapshot(snap);
             const startDateEl = document.getElementById('gridStartDate');
@@ -7323,7 +7638,6 @@ function setupEventListeners() {
           }
         } catch (_) {}
 
-        // Selección + fecha sugerida
         if (moldName) {
           plannerPendingMoldName = moldName;
           selectPlannerMoldByName(moldName);
@@ -7334,21 +7648,10 @@ function setupEventListeners() {
           if (preferred) startDateEl.value = preferred;
         }
 
-        setPlannerLoadedMold({
-          moldId: Number(moldId),
-          moldName: data?.moldName || moldName,
-          clientName: data?.clientName || itemClientName || '',
-          startDate: data?.startDate,
-          endDate: data?.endDate
-        });
         if (!loadedFromSnapshot) {
           fillPlannerGridFromMoldPlanTotals(data);
-          displayResponse('gridResponse', { message: 'Plan cargado en parrilla (modo totales).' }, true);
-        } else {
-          displayResponse('gridResponse', { message: 'Plan cargado en parrilla (snapshot exacto).' }, true);
         }
 
-        // Bloquear partes/celdas ya completadas según registros (progreso)
         try {
           clearPlannerProgressLocks();
           const progress = await fetchMoldProgressDetail(moldId);
@@ -7356,8 +7659,19 @@ function setupEventListeners() {
             applyPlannerProgressLocksFromBreakdown(progress.breakdown);
           }
         } catch (_) {}
+
+        setPlannerLoadedMold({
+          moldId: Number(moldId),
+          moldName: data?.moldName || moldName,
+          clientName: data?.clientName || itemClientName || '',
+          startDate: data?.startDate,
+          endDate: data?.endDate,
+          previewMode: true,
+        });
+
+        displayResponse('gridResponse', { message: 'Vista previa abierta.' }, true);
       } catch (e) {
-        displayResponse('gridResponse', { error: 'Error de conexión cargando el molde', details: String(e) }, false);
+        displayResponse('gridResponse', { error: 'Error de conexión abriendo vista previa', details: String(e) }, false);
       }
     });
   }

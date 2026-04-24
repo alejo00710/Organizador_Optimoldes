@@ -23,6 +23,7 @@ describe('Management financial liquidation endpoints', () => {
   const operatorName = `jest_operator_fin_${suffix}`;
   const machineAName = `jest_machine_fin_a_${suffix}`;
   const machineBName = `jest_machine_fin_b_${suffix}`;
+  const clientName = `Cliente_${suffix}`;
 
   beforeAll(async () => {
     managementCtx = await createUserAndToken({ role: ROLES.MANAGEMENT });
@@ -54,11 +55,12 @@ describe('Management financial liquidation endpoints', () => {
          mold_id,
          event_type,
          status,
+         client_name,
          to_start_date,
          to_end_date,
          created_by
-       ) VALUES (?, ?, 'COMPLETED', ?, ?, ?) RETURNING id`,
-      [moldId, 'BLOCK_PLAN', '2026-03-01', '2026-03-10', managementCtx.userId]
+       ) VALUES (?, ?, 'COMPLETED', ?, ?, ?, ?) RETURNING id`,
+      [moldId, 'BLOCK_PLAN', clientName, '2026-03-01', '2026-03-10', managementCtx.userId]
     );
     planningId = planningIns.insertId;
     if (!planningId) {
@@ -143,6 +145,7 @@ describe('Management financial liquidation endpoints', () => {
     const hit = res.body.find((r) => Number(r?.planning_id) === Number(planningId));
     expect(hit).toBeTruthy();
     expect(hit.mold_name).toBe(moldName);
+    expect(hit.client_name).toBe(clientName);
     expect(hit.start_date).toBe('2026-03-01');
     expect(hit.end_date).toBe('2026-03-10');
   });
@@ -155,6 +158,7 @@ describe('Management financial liquidation endpoints', () => {
 
     expect(Number(res.body?.planning_id)).toBe(Number(planningId));
     expect(res.body?.mold_name).toBe(moldName);
+    expect(res.body?.client_name).toBe(clientName);
     expect(res.body?.start_date).toBe('2026-03-01');
     expect(res.body?.end_date).toBe('2026-03-10');
 

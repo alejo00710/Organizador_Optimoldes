@@ -1718,6 +1718,10 @@
       display: none !important;
     }
 
+    .text-green-500 {
+      color: var(--success) !important;
+    }
+
     /* ========== APP FOOTER (LEGAL) ========== */
     .app-footer {
       position: fixed;

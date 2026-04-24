@@ -759,6 +759,7 @@
               </select>
             </div>
             <button class="btn" id="financialReloadCyclesBtn">Refrescar ciclos</button>
+            <button class="btn btn-secondary" id="financialSaveLiquidationBtn">Guardar</button>
             <button class="btn" id="financialExportPdfBtn">Exportar PDF</button>
             <button class="btn btn-secondary" id="financialExportExcelBtn">Exportar Excel</button>
           </div>
@@ -803,6 +804,26 @@
           </div>
 
           <div class="response-box" id="financialLiquidationResponse" style="margin-top: 12px;"></div>
+
+          <details id="financialCostingHistoryDetails" class="mold-progress-panel" style="margin-top: 12px;">
+            <summary style="cursor:pointer; font-weight: 700;">Historial de moldes costeados</summary>
+            <div style="margin-top: 10px;" class="table-container">
+              <table id="financialCostingHistoryTable">
+                <thead>
+                  <tr>
+                    <th>Nombre del Molde</th>
+                    <th>Cliente</th>
+                    <th>Costo Total (Real)</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td colspan="4" class="text-muted">Sin datos</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="response-box" id="financialHistoryResponse" style="margin-top: 10px;"></div>
+          </details>
 
           <div class="mold-progress-panel" style="margin-top: 12px;">
             <h3 style="margin:0 0 8px 0;">Tarifas por Maquina</h3>
