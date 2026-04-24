@@ -431,8 +431,13 @@ const updateWorkLog = async (req, res, next) => {
                 });
             }
 
-            // El operario solo puede editar hasta N días atrás (preferimos work_date si existe)
-            const baseISO = toISODateOnly(log.work_date) || toISODateOnly(log.recorded_at);
+            // El operario solo puede editar hasta N días atrás usando estrictamente work_date.
+            const baseISO = toISODateOnly(log.work_date);
+            if (!baseISO) {
+                return res.status(403).json({
+                    error: 'No puedes editar este registro porque no tiene work_date válido',
+                });
+            }
             const todayISO = getColombiaTodayISO();
             const daysDiff = diffDaysISO(todayISO, baseISO);
 

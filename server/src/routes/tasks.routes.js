@@ -16,7 +16,7 @@ router.post(
 router.get(
   '/plan/molds',
   authenticateToken,
-  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER, ROLES.OPERATOR),
   tasksController.listPlannedMolds
 );
 
@@ -24,7 +24,7 @@ router.get(
 router.get(
   '/plan/snapshot',
   authenticateToken,
-  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER, ROLES.OPERATOR),
   tasksController.getPlannerSnapshot
 );
 
@@ -56,7 +56,7 @@ router.post(
 router.get(
   '/plan/mold/:moldId',
   authenticateToken,
-  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER),
+  authorizeRoles(ROLES.ADMIN, ROLES.PLANNER, ROLES.OPERATOR),
   tasksController.getMoldPlan
 );
 

@@ -15,6 +15,7 @@ exports.getCompletedCycles = async (req, res, next) => {
       `SELECT
          ph.id AS planning_id,
          m.name AS mold_name,
+        ph.client_name,
          to_char(ph.to_start_date, 'YYYY-MM-DD') AS start_date,
          to_char(ph.to_end_date, 'YYYY-MM-DD') AS end_date
        FROM planning_history ph
@@ -41,6 +42,7 @@ exports.getMoldCostBreakdown = async (req, res, next) => {
       `SELECT
          ph.id AS planning_id,
          m.name AS mold_name,
+        ph.client_name,
          to_char(ph.to_start_date, 'YYYY-MM-DD') AS start_date,
          to_char(ph.to_end_date, 'YYYY-MM-DD') AS end_date,
          ph.status AS status
@@ -85,6 +87,7 @@ exports.getMoldCostBreakdown = async (req, res, next) => {
     res.json({
       planning_id: Number(planning.planning_id),
       mold_name: planning.mold_name,
+      client_name: planning.client_name || null,
       start_date: planning.start_date,
       end_date: planning.end_date,
       status: planning.status,

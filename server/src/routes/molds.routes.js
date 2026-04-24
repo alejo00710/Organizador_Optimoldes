@@ -9,10 +9,10 @@ router.get('/', authenticateToken, moldsController.getMolds);
 router.post('/', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER), moldsController.createMold);
 
 // Moldes en curso (avance plan vs real)
-router.get('/in-progress', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER), moldsController.getMoldsInProgress);
+router.get('/in-progress', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER, ROLES.OPERATOR), moldsController.getMoldsInProgress);
 
 // Moldes terminados (avance plan vs real)
-router.get('/completed', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER), moldsController.getMoldsCompleted);
+router.get('/completed', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER, ROLES.OPERATOR), moldsController.getMoldsCompleted);
 
 // Avance plan vs real por molde (usado por calendario/planificador para mostrar progreso por parte/máquina)
 router.get('/:moldId/progress', authenticateToken, authorizeRoles(ROLES.ADMIN, ROLES.PLANNER, ROLES.OPERATOR), moldsController.getMoldProgress);
