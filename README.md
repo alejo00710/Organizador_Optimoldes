@@ -1,315 +1,156 @@
-# Sistema de Planificación y Registro de Producción de Moldes
+# 🏭 Organizador de Taller Industrial
 
-Aplicación web para planificar producción por molde/parte/máquina, registrar horas reales de ejecución, visualizar calendario operativo y consultar avance, desvíos e indicadores.
+Sistema integral para planificar, ejecutar y auditar la produccion de moldes en un entorno industrial.
 
-Este README describe el estado actual del proyecto (abril 2026) según el código activo.
+Combina planificacion operativa por ciclos, registro de trabajo real en planta y control financiero por molde para transformar la gestion del taller en un flujo trazable de punta a punta.
 
-## 1) Qué hace el sistema
+## 🎯 Descripcion Ejecutiva
 
-- Planifica carga por ciclo de molde usando una parrilla por partes y máquinas.
-- Mantiene historial de ciclos (`planning_history`) y detalle diario (`plan_entries`).
-- Registra trabajo real (`work_logs`) con control por rol y validaciones de negocio.
-- Muestra calendario mensual con ocupación por máquina, festivos y capacidad.
-- Calcula avance planeado vs real por molde y parte.
-- Incluye módulo financiero para liquidación de costos reales de ciclos terminados (rol Gerencia).
-- Permite exportar liquidaciones (PDF/CSV).
-- Incluye importación de datos y módulo de indicadores anuales.
+El sistema resuelve tres necesidades de negocio en una sola plataforma:
 
-## 2) Stack tecnológico
+- Planificar capacidad de maquinas y partes por molde con reglas de dias habiles.
+- Registrar horas reales de ejecucion con control por rol y validaciones de consistencia.
+- Liquidar costos finales para gerencia, separando claramente estimacion comercial vs costo real de produccion.
+
+La interfaz es una SPA por pestanas orientada a operacion diaria (planificador, calendario, tiempos, registros, indicadores, financiero, importacion y configuracion).
+
+## 🧱 Stack Tecnologico
 
 ### Frontend
 
-- HTML + CSS + JavaScript Vanilla.
-- SPA servida como estáticos desde `public/`.
-- Sin framework UI externo para calendario (implementación propia en frontend).
+- JavaScript Puro (Vanilla JS)
+- HTML5
+- CSS3
+- Arquitectura SPA basada en pestanas (sin framework front principal)
 
 ### Backend
 
-- Node.js + Express 5.
-- Seguridad y middleware: `helmet`, `cors`, `jsonwebtoken`.
-- Validación y utilidades: `express-validator`, `date-fns`.
-- Carga de archivos para importación: `multer`.
+- Node.js
+- Express
+- Middleware de seguridad y API: helmet, cors, jsonwebtoken, express-validator
 
 ### Base de datos
 
-- PostgreSQL (`pg`).
-- Esquema principal en `server/schema.sql`.
-- Inicialización/migraciones seguras en `server/src/config/setupDatabase.js`.
+- PostgreSQL (modelo relacional)
+- Esquema principal en `server/schema.sql`
+- Soporte de snapshots para preservar estado de planificacion (`planner_grid_snapshots`)
 
-### Testing
+## 🧠 Arquitectura y Logica de Negocio
 
-- Unit/integration: Jest + Supertest.
-- E2E: Playwright.
+### 1) Ciclos independientes (`planning_id`)
 
-### Tooling
+Concepto clave del dominio:
 
-- Formato: Prettier.
-- Desarrollo: Nodemon.
-- Contenedores: Docker + Docker Compose.
+- Cada planificacion genera o reutiliza un ciclo identificado por `planning_id` (tabla `planning_history`).
+- Cada ciclo funciona como un snapshot historico independiente; no se mezcla con otros ciclos del mismo molde.
+- El detalle operativo de ese ciclo vive en `plan_entries` (horas planificadas por fecha, parte y maquina).
+- El trabajo ejecutado en planta vive en `work_logs`, tambien vinculado al `planning_id`.
 
-## 3) Arquitectura y estructura
+Beneficios:
 
-```text
-public/                  Frontend estático (SPA)
-  index.html
-  app.js
-  styles.css
+- Trazabilidad completa por ciclo (inicio, fin, cliente, estado).
+- Reprogramaciones controladas sin perder contexto historico.
+- Cierre tecnico del ciclo por reglas de negocio (`IN_PROGRESS` -> `COMPLETED`) segun cierres finales y pares planificados.
 
-server/
-  src/
-    app.js               Boot de Express + registro de rutas
-    controllers/         Lógica de negocio por módulo
-    routes/              Endpoints y permisos
-    services/            Servicios de dominio (días hábiles, etc.)
-    middleware/          Auth, autorización, manejo de errores
-    config/              DB, env, setup
-  schema.sql
-  package.json
+Persistencia de snapshot de UI:
 
-tests/                   Pruebas de integración (Jest)
-README.md
-Dockerfile
-docker-compose.yml
-```
+- `planner_grid_snapshots` almacena exactamente lo digitado en la parrilla para poder reabrirlo sin distorsion.
+- Esto permite auditoria funcional y continuidad al editar/revisar moldes planificados.
 
-## 4) Conceptos de dominio y lógica principal
+### 2) Precio Estimado vs Costo Real
 
-### 4.1 Ciclo de planificación
+El sistema separa explicitamente dos dimensiones economicas:
 
-- La unidad principal es el ciclo (`planning_id`) almacenado en `planning_history`.
-- Cada ciclo representa una planificación completa de un molde en un rango de fechas.
-- El detalle de distribución diaria/por máquina vive en `plan_entries`.
-- El trabajo real asociado al ciclo vive en `work_logs`.
+- Precio Estimado (cotizacion): usa `machines.hourly_price` sobre horas planificadas en el Planificador.
+- Costo Real (liquidacion): usa `machines.hourly_cost` sobre horas reales (`work_logs.hours_worked`) en modulo financiero.
 
-Regla clave:
+Regla de negocio:
 
-- Para un mismo molde, no se crea un ciclo nuevo si existe uno activo incompleto.
-- Si el ciclo activo está completo, sí puede crearse uno nuevo.
+- Nunca se debe usar `hourly_price` para liquidacion real.
+- Nunca se debe usar `hourly_cost` como base de presupuesto comercial.
 
-Compatibilidad legacy:
+### 3) Automatizaciones (n8n + Google Cloud)
 
-- El sistema contempla datos históricos con `planning_id` nulo en algunos registros legacy usando reglas por fecha cuando aplica.
+Estado actual del repositorio:
 
-### 4.2 Planificador
+- No existe, en este codigo, una integracion activa directa con n8n o Google Cloud.
 
-Soporta varios modos:
+Punto de integracion recomendado (si aplica en su despliegue):
 
-- Planificación normal en bloque.
-- Planificación con prioridad (reacomodo global).
-- Reemplazo de planificación de un molde desde fecha base.
-- Planificación consecutiva.
-- Movimientos masivos de filas/partes.
+- n8n como orquestador para disparos por eventos (cierres de ciclo, alertas de desvio, reportes periodicos).
+- Google Cloud para hosting de workflows, almacenamiento de reportes y/o integracion con servicios corporativos.
 
-Además:
+## 🧩 Funcionalidades por Modulo
 
-- Guarda y consulta snapshot de parrilla para reabrir exactamente lo digitado.
-- Puede abrir moldes planificados en vista previa desde la UI.
-- Usa precio por hora (`hourly_price`) para el cálculo de "Precio Estimado" en la parrilla.
+### 📋 Planificador
 
-### 4.3 Work logs (registro real)
+- Planificacion por molde, parte y maquina con fecha de inicio.
+- Modos operativos: bloque normal, prioridad global, reemplazo de plan y consecutivo.
+- Visualizacion de moldes ya planificados.
+- Vista previa en modo solo lectura para moldes cargados desde historial de planificacion.
+- Reglas de no mezcla, capacidad por maquina y dias habiles.
+- Calculo de Precio Estimado total en la parrilla usando `hourly_price`.
 
-Validaciones de negocio importantes:
+### ⏱️ Registro de Tiempos
 
-- `planning_id` obligatorio y válido.
-- La combinación `planning_id + moldId + partId + machineId` debe corresponder a una celda planificada válida.
-- `hours_worked` debe ser mayor que 0.
-- `work_date`, si se envía, debe ser formato `YYYY-MM-DD`.
-- Se permite marcar cierre manual por tarea (`is_final_log`) con restricción de unicidad (solo un cierre final por parte/máquina/ciclo).
+- Registro de horas reales por operario, parte y maquina.
+- Validacion estricta de celda planificada por combinacion:
+  `planning_id + moldId + partId + machineId`.
+- Requiere `planning_id` valido para garantizar integridad del ciclo.
+- Soporta cierre manual por tarea (`is_final_log`) con control de unicidad.
+- Permite logica de adelanto de trabajo dentro del ciclo activo (sin romper consistencia del ciclo), siempre que la celda pertenezca al plan del `planning_id`.
+- Recalculo de estado del ciclo tras crear/editar/eliminar registros reales.
 
-Restricciones por rol operario:
+Restriccion operario:
 
-- Solo puede crear/editar registros propios (`operatorId` del token).
-- No puede editar registros de otros operarios.
-- No puede cambiar el `operatorId` del registro.
-- Ventana de edición limitada a 2 días hacia atrás (`OPERATOR_EDIT_DAYS_LIMIT = 2`), calculada estrictamente sobre `work_date` en zona horaria Colombia.
+- El rol Operario solo puede editar registros propios y hasta 2 dias hacia atras (`OPERATOR_EDIT_DAYS_LIMIT = 2`).
 
-Al crear/editar/eliminar work logs:
+### 💼 Gerencia / Financiero
 
-- Se recalcula coherencia/estado del ciclo (`reconcilePlanningStatus`).
+- Consulta de ciclos completados (`COMPLETED`) para liquidacion.
+- Desglose de costo real por maquina (`hours_worked * hourly_cost`).
+- Consolidado de mano de obra + adicionales (materiales y servicios).
+- Historial de moldes costeados desde la UI.
+- Gestion de tarifas de maquina (`hourly_cost` y `hourly_price`) con control por rol.
 
-### 4.4 Calendario y días hábiles
+## 🔐 Sistema de Roles y Permisos
 
-- Vista mensual de ocupación por máquina y eventos planificados.
-- Considera festivos y overrides de días laborables.
-- La lógica de negocio de días hábiles se centraliza en servicios del backend.
+Roles del sistema:
 
-### 4.5 Avance de moldes
+- `management` (Gerencia)
+- `planner` (Jefe)
+- `operator` (Operario)
+- `admin` (Administracion tecnica)
 
-- Moldes en curso y terminados consultan avance plan vs real.
-- Avance por molde (`/molds/:moldId/progress`) alimenta UI de calendario/planificador.
+### Politica funcional de negocio
 
-### 4.6 Módulo financiero (liquidación de moldes)
+- Gerencia (Management): auditor total, acceso a financiero e informes, y perfil rector para decisiones de cierre economico/historico.
+- Jefe (Planner): gestion de la parrilla de produccion y carga/reprogramacion de moldes.
+- Operario (Operator): registro de trabajo diario con restriccion de edicion de 2 dias.
 
-Rol objetivo: `management` (Gerencia).
+### Implementacion tecnica actual (abril 2026)
 
-Flujo:
+- Gerencia tiene acceso exclusivo al modulo `management` y puede actualizar tarifas financieras de maquinas (`hourly_cost/hourly_price`).
+- Planner/Admin operan endpoints de planificacion y mantenimiento operativo.
+- Operario queda restringido a sus propios registros y ventana temporal de edicion.
 
-- Consulta ciclos terminados (`COMPLETED`) con cliente y rango de fechas.
-- Obtiene desglose de costo real por máquina sumando `hours_worked * hourly_cost`.
-- Muestra costo total de mano de obra y permite agregar costos adicionales (materiales/servicios).
-- Exporta liquidación a PDF o CSV.
-- Permite guardar liquidaciones desde UI y mantener historial de "moldes costeados" (persistencia local en navegador).
+## ⚙️ Instalacion y Configuracion
 
-Notas:
-
-- El cálculo de costo real usa `hourly_cost`.
-- El cálculo de "Precio Estimado" del planificador usa `hourly_price`.
-
-### 4.7 Indicadores
-
-- Resumen anual de indicadores para Admin/Jefe.
-- Carga/actualización manual de días hábiles por operario y mes.
-
-### 4.8 Importación
-
-- Importación de datos vía archivo (`multipart/form-data`) con seguimiento de errores por lote.
-
-## 5) Roles y permisos
-
-Roles definidos en el sistema:
-
-- `admin`
-- `planner` (UI: Jefe)
-- `operator` (UI: Operario)
-- `management` (UI: Gerencia)
-
-Resumen funcional:
-
-- `admin`: control total de configuración y operación.
-- `planner`: planificación, operación y mantenimiento funcional (similar a admin en muchas rutas operativas).
-- `operator`: foco en ejecución real (work logs propios) y consultas operativas habilitadas.
-- `management`: foco financiero y consulta/edición de tarifas financieras en endpoints permitidos.
-
-## 6) API actual (base `/api`)
-
-### 6.1 Auth
-
-- `POST /auth/login`
-- `GET /auth/operators`
-- `GET /auth/bootstrap/status`
-- `POST /auth/bootstrap`
-- `GET /auth/verify` (token)
-- `POST /auth/logout` (token)
-- `GET /auth/sessions` (admin/planner)
-
-### 6.2 Planificación (`/tasks`)
-
-Escritura (admin/planner):
-
-- `POST /tasks/plan/block`
-- `POST /tasks/plan/replace`
-- `POST /tasks/plan/consecutive`
-- `POST /tasks/plan/priority`
-- `DELETE /tasks/plan/mold/:moldId`
-- `PATCH /tasks/plan/entry/:entryId`
-- `PATCH /tasks/plan/entry/:entryId/next-available`
-- `POST /tasks/plan/mold/:moldId/move-parts`
-- `POST /tasks/plan/entries/bulk-move`
-
-Lectura (admin/planner/operator):
-
-- `GET /tasks/plan/molds`
-- `GET /tasks/plan/snapshot`
-- `GET /tasks/plan/mold/:moldId`
-
-### 6.3 Work logs
-
-- `POST /work_logs` (token)
-- `GET /work_logs` (token)
-- `PUT /work_logs/:id` (token)
-- `DELETE /work_logs/:id` (admin/planner)
-
-### 6.4 Calendario
-
-- `GET /calendar/month-view` (token)
-- `GET /calendar/month-view-legacy` (token)
-
-### 6.5 Reportes
-
-- `GET /reports/planned-vs-actual` (admin/planner)
-- `GET /reports/detailed-deviations` (admin/planner)
-
-### 6.6 Máquinas
-
-- `GET /machines` (token)
-- `GET /machines/:id` (token)
-- `POST /machines` (admin)
-- `PUT /machines/:id` (admin)
-- `DELETE /machines/:id` (admin)
-
-### 6.7 Moldes / Partes
-
-- `GET /molds` (token)
-- `POST /molds` (admin/planner)
-- `GET /molds/parts` (token)
-- `POST /molds/parts` (admin/planner)
-- `GET /molds/in-progress` (admin/planner/operator)
-- `GET /molds/completed` (admin/planner/operator)
-- `GET /molds/:moldId/progress` (admin/planner/operator)
-
-### 6.8 Recetas de molde
-
-- `GET /molds/:moldId/recipe` (token)
-- `POST /molds/:moldId/recipe` (token)
-
-### 6.9 Festivos y días laborables
-
-- `GET /holidays` (token)
-- `POST /holidays` (admin)
-- `DELETE /holidays/:date` (admin)
-- `GET /working/check` (token)
-- `POST /working/override` (admin/planner)
-
-### 6.10 Datos
-
-- `GET /datos` (token)
-- `POST /datos` (admin/planner/operator)
-- `PUT /datos/:id` (admin/planner)
-- `DELETE /datos/:id` (admin)
-- `GET /datos/hours-options` (token)
-- `GET /datos/meta` (token)
-
-### 6.11 Importación
-
-- `POST /import/datos` (multipart/form-data, campo `file`, token)
-- `GET /import/datos/:batchId/errors` (token)
-
-### 6.12 Catálogos
-
-- `GET /catalogs/meta` (token)
-- `POST /catalogs/sync` (token)
-
-### 6.13 Configuración (`/api/config/*`)
-
-- `GET /config/machines` (admin/planner/management)
-- `POST /config/machines` (admin/planner)
-- `PUT /config/machines/:id` (admin/planner/management)
-- `POST /config/molds` (admin/planner)
-- `POST /config/parts` (admin/planner)
-- `GET /config/parts` (admin/planner)
-- `PUT /config/parts/:id` (admin/planner)
-- `POST /config/operators` (admin/planner)
-- `GET /config/operators` (admin/planner)
-- `PUT /config/operators/:id` (admin/planner)
-
-### 6.14 Indicadores
-
-- `GET /indicators/summary` (admin/planner)
-- `POST /indicators/working-days` (admin/planner)
-
-### 6.15 Financiero (Gerencia)
-
-- `GET /management/completed-cycles` (management)
-- `GET /management/mold-cost-breakdown/:planning_id` (management)
-
-## 7) Requisitos
+### Requisitos
 
 - Node.js 18+
 - PostgreSQL 14+
 
-## 8) Configuración de entorno (`server/.env`)
+### 1) Instalar dependencias
 
-Ejemplo:
+```bash
+cd server
+npm install
+```
+
+### 2) Configurar variables de entorno
+
+Crear `server/.env` (puede partir de `server/.env.example`):
 
 ```env
 PORT=3000
@@ -321,82 +162,135 @@ DB_USER=postgres
 DB_PASSWORD=tu_password
 DB_NAME=organizador_taller
 
-JWT_SECRET=cambia_este_secreto
+JWT_SECRET=define_un_secreto_largo_y_seguro
 JWT_EXPIRES_IN=8h
 ```
 
-Notas:
+Nota:
 
-- El backend carga variables desde `server/.env`.
-- En desarrollo, al iniciar verifica/crea esquema y aplica migraciones seguras.
+- El proyecto usa PostgreSQL. Si ve `3306` en algun ejemplo historico, ajustelo a `5432` para Postgres local.
 
-## 9) Ejecución local
+### 3) Ejecutar en desarrollo
 
 ```bash
 cd server
-npm install
 npm run dev
 ```
 
-Abrir:
+Aplicacion:
 
-- UI: `http://localhost:3000`
-- Health: `http://localhost:3000/health`
+- UI + API: `http://localhost:3000`
+- Health check: `http://localhost:3000/health`
 
-## 10) Ejecución con Docker
+### 4) Bootstrap inicial de usuarios (Admin, Jefe, Gerencia)
+
+El sistema incluye bootstrap de seguridad para inicializar credenciales una sola vez.
+
+Flujo:
+
+1. Consultar estado:
+
+```bash
+curl -X GET http://localhost:3000/api/auth/bootstrap/status
+```
+
+2. Crear cuentas faltantes:
+
+```bash
+curl -X POST http://localhost:3000/api/auth/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{
+    "adminPassword": "Admin#2026",
+    "jefePassword": "Jefe#2026",
+    "gerenciaPassword": "Gerencia#2026"
+  }'
+```
+
+Resultado esperado:
+
+- Se crean usuarios base (`admin`, `jefe`, `gerente`) segun lo faltante.
+- Cuando ya existen los tres perfiles, `canBootstrap` pasa a `false` y el bootstrap se bloquea.
+
+## 🐳 Ejecucion con Docker (Opcional)
 
 ```bash
 docker compose up --build
 ```
 
-Por defecto:
+Servicios por defecto:
 
 - Backend: `http://localhost:3000`
-- Postgres: `localhost:5433`
+- PostgreSQL host: `localhost:5433` (mapeado al `5432` del contenedor)
 
-## 11) Scripts útiles (`server/package.json`)
+## 🗂️ Estructura del Proyecto
 
-- `npm run dev` inicia backend con nodemon.
-- `npm start` inicia backend en modo normal.
-- `npm test` ejecuta Jest con cobertura.
-- `npm run test:e2e` ejecuta Playwright.
-- `npm run test:e2e:headed` ejecuta E2E en modo visible.
-- `npm run test:e2e:ui` runner UI de Playwright.
-- `npm run format` aplica Prettier.
-- `npm run check-format` verifica formato.
-- `npm run reset:password` utilidad de reseteo de contraseña.
+```text
+Organizador_Taller/
+├─ public/
+│  ├─ index.html
+│  ├─ app.js
+│  ├─ styles.css
+│  └─ assets/
+├─ server/
+│  ├─ src/
+│  │  ├─ app.js
+│  │  ├─ config/
+│  │  ├─ controllers/
+│  │  ├─ middleware/
+│  │  ├─ models/
+│  │  ├─ routes/
+│  │  ├─ services/
+│  │  └─ utils/
+│  ├─ schema.sql
+│  ├─ package.json
+│  ├─ e2e/
+│  └─ tests/
+├─ tests/
+│  ├─ integration/
+│  ├─ unit/
+│  └─ helpers/
+├─ Dockerfile
+├─ docker-compose.yml
+└─ README.md
+```
 
-## 12) Pruebas
+## 🧪 Pruebas y Calidad
 
-Suite completa:
+Desde `server/`:
 
 ```bash
-cd server
 npm test
 ```
 
-Prueba puntual de integración:
+E2E:
 
 ```bash
-npm test -- --runInBand tests/integration/planner-smoke.test.js
+npm run test:e2e
 ```
 
-## 13) Estado actual y notas operativas
+Formato:
 
-- La aplicación está orientada al trabajo por ciclos de planificación (`planning_id`).
-- La UI de calendario es implementación propia (sin librería visual externa).
-- Existen controles por rol en backend y también en frontend para visibilidad/acciones.
-- El historial financiero de "moldes costeados" en UI se persiste localmente en el navegador (no en tabla dedicada aún).
+```bash
+npm run format
+npm run check-format
+```
 
-## 14) Roadmap sugerido (próximos incrementos)
+## 📡 Endpoints Clave
 
-1. Persistencia backend del historial de liquidaciones (actualmente local en frontend).
-2. Reportes financieros consolidados por rango y cliente.
-3. Endpoint dedicado para partes por molde (`/molds/:id/parts`) para filtrar parrilla con más precisión.
-4. Mejoras UX en calendario (tooltips avanzados, botón "Hoy", filtros más finos).
-5. Export/import adicional de configuraciones del grid.
+- Auth: `/api/auth/*`
+- Planificacion: `/api/tasks/plan/*`
+- Registro de tiempos: `/api/work_logs/*`
+- Calendario: `/api/calendar/*`
+- Configuracion: `/api/config/*`
+- Financiero gerencial: `/api/management/*`
 
-## 15) Autor
+## 📌 Notas de Operacion
+
+- La separacion `planning_id` + snapshots evita mezclar ciclos y preserva trazabilidad historica.
+- La distincion `hourly_price` vs `hourly_cost` es central para evitar errores financieros.
+- La UI persiste ciertos estados de trabajo en navegador (por ejemplo historial de moldes costeados), mientras el nucleo operativo vive en PostgreSQL.
+
+## 👤 Autor
 
 - Alejandro (@alejo00710)
 - GitHub: https://github.com/alejo00710
