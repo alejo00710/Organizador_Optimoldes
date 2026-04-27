@@ -95,8 +95,14 @@ const login = async (req, res, next) => {
                 { expiresIn: jwtConfig.expiresIn }
             );
 
+            res.cookie('jwt', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 8 * 60 * 60 * 1000 // 8h en ms
+            });
+
             return res.json({
-                token,
                 sessionId,
                 user: {
                     id: row.userId,
@@ -187,8 +193,14 @@ const login = async (req, res, next) => {
         );
         const sessionId = sessionRes.insertId;
 
+        res.cookie('jwt', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 8 * 60 * 60 * 1000 // 8h en ms
+        });
+
         res.json({
-            token,
             sessionId,
             user: {
                 id: user.id,
@@ -216,6 +228,7 @@ const logout = async (req, res, next) => {
             'UPDATE user_sessions SET logout_at = NOW() WHERE id = ? AND user_id = ? AND logout_at IS NULL',
             [sessionId, req.user.id]
         );
+        res.clearCookie('jwt');
         res.json({ message: 'Sesión finalizada', updated: result.affectedRows || 0 });
     } catch (e) {
         next(e);

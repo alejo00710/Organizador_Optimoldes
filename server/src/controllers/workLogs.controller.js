@@ -263,6 +263,8 @@ const createWorkLog = async (req, res, next) => {
 
         await reconcilePlanningStatus(planningIdNum);
 
+        req.app.get('io').emit('workLog_updated');
+
         res.status(201).json({
             message: 'Registro de trabajo creado exitosamente',
             data: {
@@ -572,6 +574,8 @@ const updateWorkLog = async (req, res, next) => {
 
         await reconcilePlanningStatus(planningIdNum);
 
+        req.app.get('io').emit('workLog_updated');
+
         res.json({
             message: 'Registro actualizado exitosamente',
             data: {
@@ -650,6 +654,8 @@ const deleteWorkLog = async (req, res, next) => {
             }
             await reconcilePlanningStatus(planningIdNum);
         }
+
+        req.app.get('io').emit('workLog_updated');
 
         res.json({ message: 'Registro eliminado exitosamente' });
     } catch (error) {

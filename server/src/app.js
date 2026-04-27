@@ -24,7 +24,21 @@ const catalogRoutes = require('./routes/catalog.routes');
 const indicatorsRoutes = require('./routes/indicators.routes');
 const managementRoutes = require('./routes/management.routes');
 
+const cookieParser = require('cookie-parser');
+const http = require('http');
+const { Server } = require('socket.io');
+
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: true,
+        credentials: true
+    }
+});
+
+// Adjuntar io a la app para inyección en controladores
+app.set('io', io);
 
 // Middleware - CONFIGURAR HELMET CORRECTAMENTE
 app.use(
@@ -39,6 +53,7 @@ app.use(
                 connectSrc: [
                     "'self'",
                     'http://127.0.0.1:5500',
+                    'http://localhost:5173', // Vite default port
                     'https://*.ngrok-free.app'
                 ],
                 fontSrc: ["'self'"],
@@ -51,7 +66,8 @@ app.use(
     })
 );
 
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -132,7 +148,7 @@ async function startServer() {
     await initializeDatabase();
     await loadHolidays();
 
-    const server = app.listen(port, () => {
+    const httpServer = server.listen(port, () => {
         console.log('='.repeat(50));
         console.log('🚀 Servidor de Producción de Moldes iniciado');
         console.log('='.repeat(50));
@@ -174,7 +190,7 @@ async function startServer() {
     // Manejo de cierre graceful
     process.on('SIGTERM', () => {
         console.log('\n⚠️  SIGTERM recibido.  Cerrando servidor...');
-        server.close(() => {
+        httpServer.close(() => {
             console.log('✅ Servidor cerrado correctamente');
             process.exit(0);
         });
@@ -182,7 +198,7 @@ async function startServer() {
 
     process.on('SIGINT', () => {
         console.log('\n⚠️  SIGINT recibido (Ctrl+C). Cerrando servidor...');
-        server.close(() => {
+        httpServer.close(() => {
             console.log('✅ Servidor cerrado correctamente');
             process.exit(0);
         });

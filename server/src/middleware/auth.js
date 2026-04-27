@@ -32,11 +32,10 @@ function normalizeUserPayload(payload) {
  * Middleware para verificar JWT
  */
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+  const token = req.cookies.jwt;
 
   if (!token) {
-    return res.status(401).json({ error: 'Token de autenticación requerido' });
+    return res.status(401).json({ error: 'Sesión expirada o no válida' });
   }
 
   jwt.verify(token, jwtConfig.secret, (err, payload) => {
