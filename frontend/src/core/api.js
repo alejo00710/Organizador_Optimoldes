@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { showToast, displayResponse } from '../ui/ui.js';
+import { logout } from '../features/auth.js';
 import { io } from 'socket.io-client';
 
 export const socket = io(state.API_URL.replace('/api', ''), {
@@ -30,7 +31,7 @@ export async function apiFetch(endpoint, options = {}) {
     
     // Auto-logout on 401
     if (response.status === 401) {
-      if (typeof window.logout === 'function') window.logout();
+      logout();
       throw new Error('Sesión expirada o no autorizada');
     }
 

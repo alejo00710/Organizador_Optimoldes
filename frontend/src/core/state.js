@@ -77,5 +77,6 @@ export const state = {
   isDeletingMold: false,
   currentCalendarRequestId: 0,
   calendarLoadingCount: 0,
-  currentDayDetailsRequestId: 0
+  currentDayDetailsRequestId: 0,
+  sharedDays: JSON.parse(localStorage.getItem('sharedDays') || '{}')
 };

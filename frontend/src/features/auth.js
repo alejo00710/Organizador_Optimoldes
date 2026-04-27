@@ -1,5 +1,9 @@
 import { state } from '../core/state.js';
-import { displayResponse, openTab, escapeHtml } from '../ui/ui.js';
+import * as api from '../core/api.js';
+import { showToast, displayResponse, setupStickyTabsOffset, setupFixedTabsBar, openTab } from '../ui/ui.js';
+import { resetInactivityTimer, startInactivityTimer } from './worklogs.js';
+import { preloadMoldsForSearch } from './planner.js';
+import { loadCalendar } from './calendar.js';
 
 export function updateConnectionStatus(connected) {
   const el = document.getElementById('status');

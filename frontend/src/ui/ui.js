@@ -1,5 +1,12 @@
 import { state } from '../core/state.js';
 
+export const UI_VERBOSE_RESPONSES = false;
+
+export function setPendingSave(row, changed) {
+  if (changed) row.classList.add('pending-save');
+  else row.classList.remove('pending-save');
+}
+
 export function getOrCreateToastHost() {
   let host = document.getElementById('toastHost');
   if (host) return host;
@@ -114,39 +121,55 @@ export function openTab(tabName) {
     tabContent.classList.remove('hidden');
   }
 
-  if (tabName === 'calendar') try { loadCalendar(); } catch (e) {}
+  if (tabName === 'calendar') {
+    import('../features/calendar.js').then(m => m.loadCalendar()).catch(() => {});
+  }
   if (tabName === 'terminados') {
-    try { wireCompletedMoldsViewControls(); } catch (_) {}
-    try { renderCompletedMoldList(); } catch (_) {}
+    import('../features/calendar.js').then(m => {
+      m.wireCompletedMoldsViewControls();
+      m.renderCompletedMoldList();
+    }).catch(() => {});
   }
   if (tabName === 'plan') {
-    try { initPlannerTab(); } catch (e) {}
+    import('../features/planner.js').then(m => m.initPlannerTab()).catch(() => {});
   }
   if (tabName === 'tiempos') {
-    try { loadHoursOptions(); } catch (e) {}
-    try { loadTiemposMeta(); } catch (e) {}
+    import('../features/worklogs.js').then(m => {
+      m.loadHoursOptions();
+      m.loadTiemposMeta();
+    }).catch(() => {});
   }
   if (tabName === 'registros') {
-    try { ensureWorkLogsMeta(); } catch (e) {}
-    try { loadWorkLogsHistory(true); } catch (e) {}
+    import('../features/worklogs.js').then(m => {
+      m.ensureWorkLogsMeta();
+      m.loadWorkLogsHistory(true);
+    }).catch(() => {});
   }
-  if (tabName === 'datos') try { loadDatos(true); } catch (e) {}
+  if (tabName === 'datos') {
+    import('../features/worklogs.js').then(m => m.loadDatos(true)).catch(() => {});
+  }
   if (tabName === 'config') {
-    try { loadMachinesList(); } catch (e) {}
-    try { loadConfigPartsChecklist(); } catch (e) {}
-    try { loadOperatorsList(); } catch (e) {}
-    try { loadHolidaysList(); } catch (e) {}
+    import('../features/config.js').then(m => {
+      m.loadMachinesList();
+      m.loadConfigPartsChecklist();
+      m.loadOperatorsList();
+      m.loadHolidaysList();
+    }).catch(() => {});
   }
   if (tabName === 'indicators') {
-    try { defaultYearForIndicators(); } catch (e) {}
-    try { loadOperatorsForIndicators(); } catch (e) {}
+    import('../features/indicators.js').then(m => {
+      m.defaultYearForIndicators();
+      m.loadOperatorsForIndicators();
+    }).catch(() => {});
   }
   if (tabName === 'financial') {
-    try { loadFinancialMachines(); } catch (e) {}
-    try { loadCompletedCycles(); } catch (e) {}
+    import('../features/financial.js').then(m => {
+      m.loadFinancialMachines();
+      m.loadCompletedCycles();
+    }).catch(() => {});
   }
   if (tabName === 'sesiones') {
-    try { loadSessionsHistory(); } catch (e) {}
+    import('../features/worklogs.js').then(m => m.loadSessionsHistory()).catch(() => {});
   }
 }
 

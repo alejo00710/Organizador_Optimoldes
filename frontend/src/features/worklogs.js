@@ -1,6 +1,8 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO } from '../ui/ui.js';
+import { safeCssEscape } from './planner.js';
+import { getBogotaTodayISO } from './calendar.js';
 
 export function getTiemposSelectedYMD() {
   const diaSel = document.getElementById('tmDia');
@@ -515,9 +517,9 @@ export async function saveTiempoMolde() {
     }
 
     let eventsByDay = null;
-    const state = state.calendarMonthState || {};
-    if (Number(state.year) === Number(year) && Number(state.month) === Number(monthNo - 1)) {
-      const monthData = state.monthData;
+    const monthState = state.calendarMonthState || {};
+    if (Number(monthState.year) === Number(year) && Number(monthState.month) === Number(monthNo - 1)) {
+      const monthData = monthState.monthData;
       eventsByDay = (monthData && typeof monthData === 'object' && monthData.events && typeof monthData.events === 'object')
         ? monthData.events
         : null;

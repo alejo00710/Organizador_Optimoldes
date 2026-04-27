@@ -1,7 +1,10 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab } from '../ui/ui.js';
-import { loadIndicatorsSelectedOperatorIds, saveIndicatorsSelectedOperatorIds } from './indicators.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, setPendingSave } from '../ui/ui.js';
+import { loadDatosMeta, findRowByDataId } from './worklogs.js';
+import { preloadMoldsForSearch } from './planner.js';
+import { loadOperatorsForIndicators, loadIndicatorsSelectedOperatorIds, saveIndicatorsSelectedOperatorIds } from './indicators.js';
+import { loadCalendar } from './calendar.js';
 
 // --- VARIABLES DE CONFIGURACIÓN ---
 let machinesCache = [];
@@ -720,6 +723,17 @@ export function initConfigEvents() {
     });
   }
 
+  const holidaysTable = document.getElementById('holidaysTable');
+  if (holidaysTable) {
+    holidaysTable.addEventListener('change', (e) => {
+      const cb = e.target.closest('input[type="checkbox"]');
+      if (cb) {
+        const tr = cb.closest('tr');
+        if (tr) tr.classList.toggle('selected', cb.checked);
+      }
+    });
+  }
+
   const machinesTable = document.getElementById('machinesTable');
   if (machinesTable) {
     machinesTable.addEventListener('input', (e) => {
@@ -745,4 +759,20 @@ export function initConfigEvents() {
       }
     });
   }
+}
+
+export function capturePartDraftFromCheckbox(cb) {
+  const tr = cb.closest('tr');
+  if (!tr) return;
+  const id = cb.getAttribute('data-config-part-id');
+  const checked = cb.checked;
+  const parts = state.configPartsDraft || [];
+  const idx = parts.findIndex(p => String(p.id) === String(id));
+  if (idx >= 0) {
+    parts[idx].isSelected = checked;
+  } else {
+    parts.push({ id, isSelected: checked });
+  }
+  state.configPartsDraft = parts;
+  setPendingSave(tr, true);
 }

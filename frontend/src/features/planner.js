@@ -1,7 +1,9 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
 import { socket } from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, parseLocaleNumber } from '../ui/ui.js';
+import { populateSelectWithFilter, setupFilterListener } from './worklogs.js';
+import { getBogotaTodayISO, fetchMoldProgressDetail } from './calendar.js';
 
 export async function initPlannerTab() {
   await initPlannerGridFromCatalogs();
@@ -118,7 +120,7 @@ export async function loadPlannedMoldsList() {
 export function buildPlannerNameToMachineIdMap() {
   const machines = (state.plannerMachinesInGrid && state.plannerMachinesInGrid.length)
     ? state.plannerMachinesInGrid
-    : (window.FIXED_MACHINES || state.FIXED_MACHINES || []);
+    : (state.FIXED_MACHINES || []);
   const map = new Map();
   machines.forEach(m => {
     const name = String(m?.name || '').trim().toLowerCase();
@@ -1031,7 +1033,7 @@ export async function submitGridPlan(e) {
       const machineId = inp.getAttribute('data-machine-id');
       const machinesForPlan = (state.plannerMachinesInGrid && state.plannerMachinesInGrid.length)
         ? state.plannerMachinesInGrid
-        : (window.FIXED_MACHINES || state.FIXED_MACHINES || []);
+        : (state.FIXED_MACHINES || []);
       const machineName =
         machinesForPlan.find(m => String(m.id) === String(machineId))?.name
         || machineId;

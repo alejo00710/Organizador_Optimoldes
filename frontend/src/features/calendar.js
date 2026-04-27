@@ -1,6 +1,8 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, formatCurrencyCOP, openTab, formatNumberCOP } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, capitalize } from '../ui/ui.js';
+import { renderInProgressMoldList, isDateLaborable } from './planner.js';
+import { isWeekendISO } from './worklogs.js';
 
 // --- FUNCIONES EXTRAÍDAS DE APP.JS ---
 export function changeMonth(delta) {
@@ -669,7 +671,7 @@ export function renderCalendar(year, month, events = {}, holidays = {}, override
 }
 
 export function getMachineOptionsHtml(selectedName) {
-  const base = (window.FIXED_MACHINES || state.FIXED_MACHINES || []).map(m => m.name);
+  const base = (state.FIXED_MACHINES || []).map(m => m.name);
   const names = Array.from(new Set([selectedName, ...base].filter(Boolean)));
   return names.map(n => `<option value="${escapeHtml(n)}" ${n === selectedName ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
 }
@@ -789,7 +791,7 @@ export function renderDayDetailsView(dateISO, events, holiday) {
   html += `
     <div style="margin-top:8px;">
       <label style="display:inline-flex; align-items:center; gap:8px; font-size:0.9rem; color:var(--text-muted);">
-        <input type="checkbox" id="dayAllowOverlap" />
+        <input type="checkbox" id="dayAllowOverlap" ${state.sharedDays[dateISO] ? 'checked' : ''} />
         Permitir compartir día (Ignorar exclusividad, usar solo capacidad)
       </label>
     </div>
@@ -798,6 +800,15 @@ export function renderDayDetailsView(dateISO, events, holiday) {
   html += `<div class="response-box" id="dayDetailsResponse"></div>`;
 
   if (body) body.innerHTML = html;
+
+  // Persistencia de Compartir Día
+  const dayAllowOverlapCb = document.getElementById('dayAllowOverlap');
+  if (dayAllowOverlapCb) {
+    dayAllowOverlapCb.addEventListener('change', () => {
+      state.sharedDays[dateISO] = dayAllowOverlapCb.checked;
+      localStorage.setItem('sharedDays', JSON.stringify(state.sharedDays));
+    });
+  }
 
   const addDaysISO = (iso, delta) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
@@ -1176,6 +1187,14 @@ export async function openMoldEditorView(moldId, moldName, opts = {}) {
         }
         if (!newDate || !newMachineName) return;
 
+        // Validaciones Estrictas para el Movimiento Manual
+        const val = await validateManualMove(newDate, newMachineName, !!document.getElementById('peAllowOverlap')?.checked);
+        if (!val.ok) {
+          showToast(val.error, 'error');
+          displayResponse('moldEditorResponse', { error: val.error }, false);
+          return;
+        }
+
         try {
           const allowOverlap = !!document.getElementById('peAllowOverlap')?.checked;
           const resp = await fetch(`${state.API_URL}/tasks/plan/entry/${encodeURIComponent(entryId)}`,
@@ -1295,6 +1314,17 @@ export async function openMoldEditorView(moldId, moldName, opts = {}) {
       displayResponse('moldEditorResponse', { message: 'Reprogramando filas...' }, true);
       try {
         const allowOverlap = !!document.getElementById('peAllowOverlap')?.checked;
+        
+        // Validación para la fecha destino en bloque
+        if (mode === 'date') {
+           const val = await validateManualMove(date, null, allowOverlap, { skipMachineCheck: true });
+           if (!val.ok) {
+             showToast(val.error, 'error');
+             displayResponse('moldEditorResponse', { error: val.error }, false);
+             return;
+           }
+        }
+
         const resp = await fetch(`${state.API_URL}/tasks/plan/entries/bulk-move`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1342,6 +1372,46 @@ export function showDayDetails(dateISO, events, holiday) {
   lastDayDetailsContext = { dateISO: String(dateISO || '').trim(), events, holiday };
   renderDayDetailsView(dateISO, events, holiday);
   if (modal) modal.classList.remove('hidden');
+}
+
+/**
+ * Valida reglas de negocio para movimiento manual de planificación.
+ */
+async function validateManualMove(date, machineName, forceAllowOverlap = false, opts = {}) {
+  const iso = normalizeToISODate(date);
+  if (!iso) return { ok: false, error: 'Fecha inválida.' };
+
+  // 1. Día Laborable
+  const laborable = await isDateLaborable(iso);
+  if (!laborable) {
+    return { ok: false, error: 'Día no laborable (fin de semana o feriado).' };
+  }
+
+  // 2. Capacidad de Máquina (si aplica)
+  if (!opts.skipMachineCheck && machineName) {
+    const isShared = !!state.sharedDays[iso] || forceAllowOverlap;
+    
+    // Si no está permitido compartir el día, validamos exclusividad (carga > 0)
+    if (!isShared) {
+      const day = getDayFromISO(iso);
+      if (day) {
+        const isoParts = iso.split('-');
+        const y = parseInt(isoParts[0], 10);
+        const m = parseInt(isoParts[1], 10) - 1;
+        
+        // Solo podemos validar si el mes coincide con el cargado en el calendario
+        if (state.calendarMonthState?.year === y && state.calendarMonthState?.month === m) {
+          const dayEvents = buildDayEventsFromMonthState(iso);
+          const usage = dayEvents?.machineUsage?.[machineName] || 0;
+          if (usage > 1e-6) {
+            return { ok: false, error: 'Día sin capacidad. Active "Compartir Día" en la fecha destino o elija otra.' };
+          }
+        }
+      }
+    }
+  }
+
+  return { ok: true };
 }
 // Extracted hideModal to ui.js
 
