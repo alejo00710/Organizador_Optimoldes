@@ -100,7 +100,7 @@ export async function loadPlannedMoldsList() {
       const name = escapeHtml(String(m.moldName || ''));
       const clientName = escapeHtml(String(m.clientName || ''));
       const range = `${escapeHtml(String(m.startDate || '—'))} → ${escapeHtml(String(m.endDate || '—'))}`;
-      const hours = (m.totalHours != null) ? `${Number(m.totalHours).toFixed(1)}h` : '';
+      const hours = (m.totalHours != null) ? `${formatNumberCOP(m.totalHours, 1)}h` : '';
       return `
         <div class="planned-mold-item" data-action="loadPlannedMold" data-mold-id="${mid}" data-mold-name="${name}" data-client-name="${clientName}" data-start-date="${escapeHtml(String(m.startDate || ''))}" data-end-date="${escapeHtml(String(m.endDate || ''))}" style="padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg); margin-bottom:8px; cursor:pointer;">
           <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
@@ -470,7 +470,7 @@ export function buildMoldProgressContent(data, fallbackMoldName, opts) {
           <div class="label">Desviación (real - plan)</div>
           <div class="value" style="color:${varianceTotalHours > 0.01 ? 'var(--danger)' : (varianceTotalHours < -0.01 ? 'var(--success)' : 'var(--text)')}">
             ${Number.isFinite(varianceTotalHours) ? `${varianceTotalHours >= 0 ? '+' : ''}${fmtHours(varianceTotalHours)}h` : '—'}
-            ${Number.isFinite(varianceTotalPct) ? ` <span style="color:var(--text-muted); font-weight:600; font-size:0.95rem;">(${varianceTotalPct >= 0 ? '+' : ''}${varianceTotalPct.toFixed(2)}%)</span>` : ''}
+            ${Number.isFinite(varianceTotalPct) ? ` <span style="color:var(--text-muted); font-weight:600; font-size:0.95rem;">(${varianceTotalPct >= 0 ? '+' : ''}${formatNumberCOP(varianceTotalPct, 2)}%)</span>` : ''}
           </div>
         </div>
       ` : `
@@ -807,7 +807,7 @@ export function updateFixedRowTotal(row) {
   });
   const total = qty * sumBase;
   const cell = row.querySelector('.total-hours-cell');
-  if (cell) cell.textContent = total.toFixed(2);
+  if (cell) cell.textContent = formatNumberCOP(total, 2);
 }
 export function updateFixedColumnTotals() {
   const grid = document.getElementById('planningGridFixed');
@@ -823,7 +823,7 @@ export function updateFixedColumnTotals() {
       colSum += (isNaN(v) ? 0 : v) * qty;
     });
     const cell = document.getElementById(`total-machine-${String(m.id)}`);
-    if (cell) cell.textContent = colSum.toFixed(2);
+    if (cell) cell.textContent = formatNumberCOP(colSum, 2);
 
     const machinePrice = Number(m?.hourly_price || 0);
     const estimatedPrice = (Number.isFinite(machinePrice) && machinePrice > 0) ? (colSum * machinePrice) : 0;
@@ -840,11 +840,11 @@ export function updateFixedGrandTotal() {
   if (!grid) return;
   let grand = 0;
   grid.querySelectorAll('tbody .total-hours-cell').forEach(cell => {
-    const v = parseFloat(cell.textContent);
+    const v = parseLocaleNumber(cell.textContent);
     grand += isNaN(v) ? 0 : v;
   });
   const totalEl = document.getElementById('grand-total');
-  if (totalEl) totalEl.textContent = grand.toFixed(2);
+  if (totalEl) totalEl.textContent = formatNumberCOP(grand, 2);
 }
 
 // Persistencia local

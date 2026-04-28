@@ -1,6 +1,6 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, formatNumberCOP } from '../ui/ui.js';
 
 let indicatorsCache = null;
 let indicatorsOperatorsCache = null;
@@ -238,24 +238,10 @@ const IND_MONTHS_ES = [
 export function formatIndicatorPercentForUI(value, decimals = 1) {
   const n = Number(value || 0);
   const safe = Number.isFinite(n) ? n : 0;
-
-  // Backend calcula indicador como razón: horas / (días * 8).
-  // Para mostrar porcentaje, multiplicamos por 100 (sin limitar > 100).
   const pct = safe * 100;
-
   const sign = pct < 0 ? '-' : '';
   const abs = Math.abs(pct);
-
-  // Redondeo explícito para evitar casos tipo 28.249999999 -> 28.2 por precisión flotante.
-  const factor = Math.pow(10, decimals);
-  const eps = 1e-12 * Math.max(1, abs);
-  const roundedAbs = Math.round((abs + eps) * factor) / factor;
-  const fixed = roundedAbs.toFixed(decimals);
-  const parts = fixed.split('.');
-  const intPart = String(Number(parts[0] || 0)).padStart(3, '0');
-  const fracPart = (parts[1] != null) ? parts[1] : '0'.repeat(decimals);
-
-  return `${sign}${intPart}.${fracPart}%`;
+  return `${sign}${formatNumberCOP(abs, decimals)}%`;
 }
 
 export function formatIndicatorPercentForExport(value, decimals = 1) {
@@ -308,7 +294,7 @@ export function renderMonthlyTable(tableId, tableDef, options){
   const renderCell = (v) => {
     const n = Number(v || 0);
     if (isIndicator) return formatIndicatorPercentForUI(n, decimals);
-    return (Number.isFinite(n) ? n : 0).toFixed(decimals);
+    return formatNumberCOP(n, decimals);
   };
 
   tbody.innerHTML = [
@@ -456,6 +442,74 @@ export async function saveWorkingDays(){
     displayResponse('indicatorsResponse', { error:'Error guardando días', details:String(e) }, false);
   }
 }
+export function exportIndicatorsPDF() {
+  if (!indicatorsCache) {
+    return displayResponse('indicatorsResponse', { error: 'Genera indicadores antes de exportar' }, false);
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('l', 'mm', 'a4'); // Paisaje para tablas anchas
+  const y = indicatorsCache.year || '';
+  const filtered = filterTablesBySelectedOperators(indicatorsCache) || {};
+
+  doc.setFontSize(18);
+  doc.text(`Reporte de Indicadores - Año ${y}`, 14, 20);
+
+  const pushTableToPdf = (title, tableDef, opts, startY) => {
+    doc.setFontSize(14);
+    doc.text(title, 14, startY);
+
+    const isIndicator = Boolean(opts?.isIndicator);
+    const decimals = Number.isFinite(opts?.decimals) ? opts.decimals : (isIndicator ? 1 : 2);
+    
+    const head = [[opts?.firstLabel || 'OPERARIO', ...IND_MONTHS_ES, opts?.lastLabel || 'Total']];
+    const body = (tableDef?.rows || []).map(r => {
+      const m = Array.isArray(r.months) ? r.months : [];
+      const endVal = isIndicator ? r.average : r.total;
+      const cells = IND_MONTHS_ES.map((_, idx) => {
+        const v = Number(m[idx] || 0);
+        return isIndicator ? formatIndicatorPercentForExport(v, decimals) : formatNumberCOP(v, decimals);
+      });
+      const endCell = isIndicator ? formatIndicatorPercentForExport(endVal, decimals) : formatNumberCOP(endVal, decimals);
+      return [r.operatorName || '', ...cells, endCell];
+    });
+
+    if (tableDef?.totalsRow) {
+      const t = tableDef.totalsRow;
+      const m = Array.isArray(t.months) ? t.months : [];
+      const endVal = isIndicator ? t.average : t.total;
+      const cells = IND_MONTHS_ES.map((_, idx) => {
+        const v = Number(m[idx] || 0);
+        return isIndicator ? formatIndicatorPercentForExport(v, decimals) : formatNumberCOP(v, decimals);
+      });
+      const endCell = isIndicator ? formatIndicatorPercentForExport(endVal, decimals) : formatNumberCOP(endVal, decimals);
+      body.push([{ content: t.operatorName || 'Total general', styles: { fontStyle: 'bold' } }, ...cells.map(c => ({ content: c, styles: { fontStyle: 'bold' } })), { content: endCell, styles: { fontStyle: 'bold' } }]);
+    }
+
+    doc.autoTable({
+      startY: startY + 5,
+      head,
+      body,
+      theme: 'grid',
+      headStyles: { fillColor: [242, 242, 242], textColor: [0, 0, 0], fontStyle: 'bold' },
+      styles: { fontSize: 7, cellPadding: 2 },
+      margin: { left: 14, right: 14 }
+    });
+
+    return doc.lastAutoTable.finalY + 15;
+  };
+
+  let currentY = 30;
+  currentY = pushTableToPdf('1. Indicador de Eficiencia (Razón Horas / Capacidad)', filtered.indicator, { firstLabel: 'COLABORADOR', lastLabel: 'Promedio', isIndicator: true, decimals: 1 }, currentY);
+  
+  if (currentY > 150) { doc.addPage(); currentY = 20; }
+  currentY = pushTableToPdf('2. Suma de Horas Reales Trabajadas', filtered.hours, { firstLabel: 'OPERARIO', lastLabel: 'Total general', isIndicator: false, decimals: 1 }, currentY);
+  
+  if (currentY > 150) { doc.addPage(); currentY = 20; }
+  pushTableToPdf('3. Días Hábiles Trabajados (Base Manual)', filtered.days, { firstLabel: 'OPERARIO', lastLabel: 'Total general', isIndicator: false, decimals: 0 }, currentY);
+
+  doc.save(`Indicadores_${y}_${new Date().toLocaleDateString().replace(/\//g, '-')}.pdf`);
+}
+
 export function exportIndicatorsCSV(){
   if (!indicatorsCache) {
     return displayResponse('indicatorsResponse', { error:'Genera indicadores antes de exportar' }, false);
@@ -482,12 +536,12 @@ export function exportIndicatorsCSV(){
       const cells = months.map((_, idx) => {
         const v = Number(m[idx] || 0);
         if (isIndicator) return formatIndicatorPercentForExport(v, decimals);
-        return (Number.isFinite(v) ? v : 0).toFixed(decimals);
+        return formatNumberCOP(v, decimals);
       });
       const endCell = (() => {
         const v = Number(endVal || 0);
         if (isIndicator) return formatIndicatorPercentForExport(v, decimals);
-        return (Number.isFinite(v) ? v : 0).toFixed(decimals);
+        return formatNumberCOP(v, decimals);
       })();
       sections.push([r.operatorName || '', ...cells, endCell]);
     });
@@ -499,12 +553,12 @@ export function exportIndicatorsCSV(){
       const cells = months.map((_, idx) => {
         const v = Number(m[idx] || 0);
         if (isIndicator) return formatIndicatorPercentForExport(v, decimals);
-        return (Number.isFinite(v) ? v : 0).toFixed(decimals);
+        return formatNumberCOP(v, decimals);
       });
       const endCell = (() => {
         const v = Number(endVal || 0);
         if (isIndicator) return formatIndicatorPercentForExport(v, decimals);
-        return (Number.isFinite(v) ? v : 0).toFixed(decimals);
+        return formatNumberCOP(v, decimals);
       })();
       sections.push([t.operatorName || 'Total general', ...cells, endCell]);
     }
@@ -547,6 +601,7 @@ export function initIndicatorsEvents() {
   
   wire('loadIndicatorsBtn', 'click', () => loadIndicators());
   wire('exportIndicatorsBtn', 'click', () => exportIndicatorsCSV());
+  wire('exportIndicatorsPdfBtn', 'click', () => exportIndicatorsPDF());
   wire('saveWorkingDaysBtn', 'click', (e) => {
     e.preventDefault();
     saveWorkingDays();

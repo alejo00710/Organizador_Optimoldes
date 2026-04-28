@@ -54,9 +54,10 @@ app.use(
                     "'self'",
                     'http://127.0.0.1:5500',
                     'http://localhost:5173', // Vite default port
-                    'https://*.ngrok-free.app'
+                    'https://*.ngrok-free.app',
+                    'https://cdn.jsdelivr.net'
                 ],
-                fontSrc: ["'self'"],
+                fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
                 objectSrc: ["'none'"],
                 mediaSrc: ["'self'"],
                 frameSrc: ["'none'"],

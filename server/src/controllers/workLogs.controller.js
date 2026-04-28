@@ -610,7 +610,7 @@ const deleteWorkLog = async (req, res, next) => {
         const { id } = req.params;
 
         const role = String(req?.user?.role || '').toLowerCase();
-        const canDelete = role === ROLES.ADMIN || role === ROLES.PLANNER;
+        const canDelete = [ROLES.ADMIN, ROLES.PLANNER, ROLES.MANAGEMENT].includes(role);
         if (!canDelete) {
             return res.status(403).json({ error: 'No autorizado' });
         }

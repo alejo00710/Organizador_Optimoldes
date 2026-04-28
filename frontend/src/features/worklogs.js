@@ -1,7 +1,7 @@
-import { logout } from './auth.js';
+import { logout, hasAdminPrivileges } from './auth.js';
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO, fmtDateTime, parseLocaleNumber } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO, fmtDateTime, parseLocaleNumber, formatTimeHM } from '../ui/ui.js';
 import { safeCssEscape } from './planner.js';
 import { getBogotaTodayISO } from './calendar.js';
 
@@ -744,14 +744,14 @@ export function applyWorkLogsFiltersToDom() {
     }
     if (ok) {
       shown += 1;
-      const h = parseFloat(String(tr.querySelector('input.wl-hours')?.value ?? '').trim());
+      const h = parseLocaleNumber(tr.querySelector('input.wl-hours')?.value);
       if (Number.isFinite(h)) totalHours += h;
     }
   }
   updateWorkLogsFilterButtons();
   const totalEl = document.getElementById('workLogsTotalHours');
-  if (totalEl) totalEl.textContent = Number(totalHours).toFixed(2);
-  displayResponse('workLogsResponse', { total: workLogsHistoryCache.length, visibles: shown, horas_reales_visibles: Number(totalHours).toFixed(2) }, true);
+  if (totalEl) totalEl.textContent = formatNumberCOP(totalHours, 2);
+  displayResponse('workLogsResponse', { total: workLogsHistoryCache.length, visibles: shown, horas_reales_visibles: formatNumberCOP(totalHours, 2) }, true);
 }
 
 export function ensureWorkLogsTotalsLiveUpdate() {
@@ -1130,7 +1130,7 @@ export function startEditWorkLogRow(id) {
       displayResponse('workLogsResponse', { error: 'No se encontró el registro para editar' }, false);
       return;
     }
-    const canEdit = row.getAttribute('data-can-edit') === '1';
+    const canEdit = row.getAttribute('data-can-edit') === '1' || hasAdminPrivileges(state.currentUser?.role);
     if (!canEdit) {
       displayResponse('workLogsResponse', { error: 'No tienes permiso para editar este registro' }, false);
       return;
@@ -1146,10 +1146,10 @@ export function renderWorkLogsTable(rows) {
   if (!tbody) return;
 
   const role = String(state.currentUser?.role || '').toLowerCase();
+  const isAdmin = hasAdminPrivileges(role);
   const isOperator = role === 'operator';
-  const isManagement = role === 'management';
-  const canEditAll = isManagement;
-  const canDeleteAll = false;
+  const canEditAll = isAdmin;
+  const canDeleteAll = isAdmin;
 
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="13" class="text-muted">(sin registros)</td></tr>';
@@ -1176,16 +1176,15 @@ export function renderWorkLogsTable(rows) {
     const updatedTime = formatTimeHM(r.updated_at);
 
     const po = parseProcesoOperacion(r.note);
-    const planned = (r.planned_hours == null) ? '' : Number(r.planned_hours).toFixed(2);
     const plannedNum = (r.planned_hours == null) ? NaN : Number(r.planned_hours);
+    const planned = Number.isFinite(plannedNum) ? formatNumberCOP(plannedNum, 2) : '';
     const diffNum = (r.diff_hours == null) ? NaN : Number(r.diff_hours);
     const deviation = (() => {
       if (!Number.isFinite(plannedNum) || plannedNum <= 0) return '';
       if (!Number.isFinite(diffNum)) return '';
       const pct = (diffNum / plannedNum) * 100;
       const sign = pct > 0.0000001 ? '+' : '';
-      // Si es negativo, toFixed ya incluye el '-'.
-      return `${sign}${pct.toFixed(2)}%`;
+      return `${sign}${formatNumberCOP(pct, 2)}%`;
     })();
     const isAlert = Number(r.is_alert) === 1 || String(r.is_alert).toLowerCase() === 'true';
     const isFinalLog = r.is_final_log === true || Number(r.is_final_log) === 1 || String(r.is_final_log) === 'true';
@@ -1744,7 +1743,7 @@ export function initWorkLogsEvents() {
 
 export function normalizeHoursOptions(items) {
   if (!items || !items.length) return [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12];
-  const nums = items.map(v => parseFloat(v)).filter(n => !isNaN(n) && n > 0);
+  const nums = items.map(v => parseLocaleNumber(v)).filter(n => !isNaN(n) && n > 0);
   if (!nums.length) return [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5, 12];
   return [...new Set(nums)].sort((a, b) => a - b);
 }

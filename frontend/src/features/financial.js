@@ -127,82 +127,62 @@ export async function fetchMoldCostBreakdownData(planningId, opts = {}) {
 }
 
 export function downloadFinancialSettlementPdf(settlement, responseBoxId = 'financialLiquidationResponse') {
-  const printableRows = settlement.breakdown.length
-    ? settlement.breakdown.map((row) => `
-      <tr>
-        <td>${escapeHtml(String(row?.machine_name || ''))}</td>
-        <td style="text-align:right;">${Number(row?.total_hours || 0).toFixed(2)}</td>
-        <td style="text-align:right;">${escapeHtml(formatCurrencyCOP(Number(row?.partial_cost || 0)))}</td>
-      </tr>
-    `).join('')
-    : '<tr><td colspan="3" style="color:#666;">Sin datos de mano de obra para este ciclo.</td></tr>';
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  // Encabezado
+  doc.setFontSize(18);
+  doc.setTextColor(0);
+  doc.text('Liquidación y Cierre de Moldes', 14, 22);
+
+  // Información General
+  doc.setFontSize(10);
+  doc.setTextColor(80);
+  doc.text(`Molde: ${settlement.moldName}`, 14, 32);
+  doc.text(`Cliente: ${settlement.clientName || '—'}`, 14, 37);
+  doc.text(`Planning ID: #${settlement.planningId}`, 14, 42);
 
   const range = [settlement.startDate, settlement.endDate]
     .filter(Boolean)
     .map((d) => formatDateDisplay(d))
     .join(' - ');
+  if (range) doc.text(`Rango: ${range}`, 14, 47);
 
-  const html = `<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>Liquidacion de Costos - Molde ${escapeHtml(settlement.moldName)}</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 24px; color: #1a1a1a; }
-    h1, h2 { margin: 0 0 8px 0; }
-    .muted { color: #555; margin-bottom: 16px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { border: 1px solid #ccc; padding: 8px; font-size: 13px; }
-    th { background: #f2f2f2; text-align: left; }
-    .totals { margin-top: 16px; }
-    .totals div { margin: 4px 0; }
-    .strong { font-weight: 700; }
-  </style>
-</head>
-<body>
-  <h1>Liquidacion y Cierre de Moldes</h1>
-  <div class="muted">
-    Molde: <strong>${escapeHtml(settlement.moldName)}</strong><br>
-    Cliente: <strong>${escapeHtml(settlement.clientName || '—')}</strong><br>
-    Planning ID: <strong>#${escapeHtml(String(settlement.planningId))}</strong>${range ? `<br>Rango: <strong>${escapeHtml(range)}</strong>` : ''}
-  </div>
+  // Tabla de Máquinas
+  const tableRows = (settlement.breakdown || []).map((row) => [
+    String(row?.machine_name || ''),
+    Number(row?.total_hours || 0).toFixed(2),
+    formatCurrencyCOP(Number(row?.partial_cost || 0)),
+  ]);
 
-  <h2>Desglose de Maquinas</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Maquina</th>
-        <th>Horas reales</th>
-        <th>Costo parcial (COP)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${printableRows}
-    </tbody>
-  </table>
-
-  <div class="totals">
-    <div>Costo de Mano de Obra: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.laborCost))}</span></div>
-    <div>Costo de Materiales: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.materialsCost))}</span></div>
-    <div>Costo de Servicios Externos: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.externalServicesCost))}</span></div>
-    <div class="strong">Costo Total: ${escapeHtml(formatCurrencyCOP(settlement.totalCost))}</div>
-  </div>
-</body>
-</html>`;
-
-  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-  if (!printWindow) {
-    displayResponse(responseBoxId, { error: 'No se pudo abrir la ventana de impresion (popup bloqueado).' }, false);
-    return;
+  if (tableRows.length === 0) {
+    tableRows.push([{ content: 'Sin datos de mano de obra para este ciclo.', colSpan: 3, styles: { halign: 'center', textColor: 150 } }]);
   }
 
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.focus();
-  setTimeout(() => {
-    printWindow.print();
-  }, 150);
+  doc.autoTable({
+    startY: 55,
+    head: [['Máquina', 'Horas reales', 'Costo parcial (COP)']],
+    body: tableRows,
+    theme: 'grid',
+    headStyles: { fillColor: [242, 242, 242], textColor: [0, 0, 0], fontStyle: 'bold' },
+    styles: { fontSize: 9 },
+  });
+
+  const finalY = doc.lastAutoTable.finalY + 10;
+
+  // Totales
+  doc.setFontSize(11);
+  doc.setTextColor(0);
+  doc.text(`Costo de Mano de Obra: ${formatCurrencyCOP(settlement.laborCost)}`, 14, finalY);
+  doc.text(`Costo de Materiales: ${formatCurrencyCOP(settlement.materialsCost)}`, 14, finalY + 6);
+  doc.text(`Costo de Servicios Externos: ${formatCurrencyCOP(settlement.externalServicesCost)}`, 14, finalY + 12);
+
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(12);
+  doc.text(`Costo Total: ${formatCurrencyCOP(settlement.totalCost)}`, 14, finalY + 22);
+
+  // Descarga directa
+  doc.save(`Liquidacion_Molde_${settlement.planningId}_${new Date().toLocaleDateString().replace(/\//g, '-')}.pdf`);
 }
 
 export function downloadFinancialSettlementCsv(settlement, responseBoxId = 'financialLiquidationResponse') {
@@ -223,8 +203,8 @@ export function downloadFinancialSettlementCsv(settlement, responseBoxId = 'fina
     settlement.breakdown.forEach((row) => {
       rows.push([
         row?.machine_name || '',
-        Number(row?.total_hours || 0).toFixed(2),
-        Number(row?.partial_cost || 0).toFixed(2),
+        formatNumberCOP(Number(row?.total_hours || 0), 2),
+        formatNumberCOP(Number(row?.partial_cost || 0), 2),
       ]);
     });
   } else {
@@ -232,10 +212,10 @@ export function downloadFinancialSettlementCsv(settlement, responseBoxId = 'fina
   }
 
   rows.push([]);
-  rows.push(['Costo de Mano de Obra', settlement.laborCost.toFixed(2)]);
-  rows.push(['Costo de Materiales', settlement.materialsCost.toFixed(2)]);
-  rows.push(['Costo de Servicios Externos', settlement.externalServicesCost.toFixed(2)]);
-  rows.push(['Costo Total', settlement.totalCost.toFixed(2)]);
+  rows.push(['Costo de Mano de Obra', formatNumberCOP(settlement.laborCost, 2)]);
+  rows.push(['Costo de Materiales', formatNumberCOP(settlement.materialsCost, 2)]);
+  rows.push(['Costo de Servicios Externos', formatNumberCOP(settlement.externalServicesCost, 2)]);
+  rows.push(['Costo Total', formatNumberCOP(settlement.totalCost, 2)]);
 
   const csvBody = rows
     .map((row) => (Array.isArray(row) ? row : [row]).map((cell) => escapeCsvCell(cell, delimiter)).join(delimiter))
@@ -319,7 +299,7 @@ export function renderFinancialSettlement(data) {
     } else {
       tbody.innerHTML = breakdown.map((row) => {
         const machineName = escapeHtml(String(row?.machine_name || ''));
-        const hours = Number(row?.total_hours || 0).toFixed(2);
+        const hours = formatNumberCOP(Number(row?.total_hours || 0), 2);
         const partialCost = formatCurrencyCOP(Number(row?.partial_cost || 0));
         return `
           <tr>

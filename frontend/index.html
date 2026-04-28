@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws: http://localhost:3000 http://localhost:5173 http://127.0.0.1:5173;">
   <title>Planificador de Moldes</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/main.min.css">
   <link rel="icon" href="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png">
@@ -364,7 +365,7 @@
         <!-- Registros (historial editable de Tiempos) -->
         <div class="tab-content" id="tab-registros">
           <h2>Registros (Tiempos)</h2>
-          <p class="text-muted" style="font-size: 0.9rem;">Solo Gerencia puede editar registros. Alertas &gt; 5% se marcan en rojo.</p>
+          <p class="text-muted" style="font-size: 0.9rem;">Solo el grupo directivo puede editar registros. Alertas > 5% se marcan en rojo.</p>
 
           <div class="mold-progress-panel" style="margin: 10px 0 12px 0;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
@@ -420,7 +421,7 @@
         <!-- Sesiones (auditoría) -->
         <div class="tab-content" id="tab-sesiones">
           <h2>Historial de Sesiones</h2>
-          <p class="text-muted" style="font-size: 0.9rem;">Solo Admin/Jefe. Muestra entradas/salidas.</p>
+          <p class="text-muted" style="font-size: 0.9rem;">Solo el grupo directivo. Muestra entradas/salidas.</p>
 
           <div class="table-container">
             <table id="sessionsTable">
@@ -550,7 +551,7 @@
           <div class="form-grid-2-col" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
             <div class="form-column">
               <h3>Operarios</h3>
-              <p class="text-muted" style="font-size: 0.9rem;">Solo Admin/Jefe pueden crear/restablecer contraseña.</p>
+              <p class="text-muted" style="font-size: 0.9rem;">Solo el grupo directivo puede crear/restablecer contraseña.</p>
               <div class="form-group"><label>Nombre Operario</label><input type="text" id="newOperatorName"
                   placeholder="Ej: Juan Pérez"></div>
               <div class="form-group"><label>ID Operario</label><input type="text" id="newOperatorId" readonly
@@ -684,6 +685,7 @@
             <div class="form-group" style="display:flex; gap:8px; align-items:end;">
               <button class="btn btn-secondary" id="loadIndicatorsBtn">Cargar</button>
               <button class="btn" id="exportIndicatorsBtn">Exportar CSV</button>
+              <button class="btn btn-secondary" id="exportIndicatorsPdfBtn">Exportar PDF</button>
             </div>
           </div>
 
@@ -889,6 +891,8 @@
     </footer>
 
       <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js" defer></script>
+      <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
       <script type="module" src="/src/main.js"></script>
   </div>
 </body>

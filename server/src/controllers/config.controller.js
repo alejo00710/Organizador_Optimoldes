@@ -54,9 +54,10 @@ exports.updateMachine = async (req, res, next) => {
     const current = await query('SELECT id FROM machines WHERE id = ?', [id]);
     if (!current.length) return res.status(404).json({ error:'Máquina no encontrada' });
 
+    const isDirectivo = [ROLES.ADMIN, ROLES.PLANNER, ROLES.MANAGEMENT].includes(req.user.role);
     const wantsFinancialUpdate = hourly_cost !== undefined || hourly_price !== undefined;
-    if (wantsFinancialUpdate && req?.user?.role !== ROLES.MANAGEMENT) {
-      return res.status(403).json({ error:'Solo Gerencia puede actualizar costo/precio por hora' });
+    if (wantsFinancialUpdate && !isDirectivo) {
+      return res.status(403).json({ error:'Solo el grupo directivo puede actualizar costo/precio por hora' });
     }
 
     const fields = [];
@@ -208,8 +209,9 @@ exports.updateOperator = async (req, res, next) => {
     // Password reset/update (admin/planner)
     let createdUsername = null;
     if (password !== undefined) {
-      if (!req.user || ![ROLES.ADMIN, ROLES.PLANNER].includes(req.user.role)) {
-        return res.status(403).json({ error: 'Solo admin/jefe puede establecer/restablecer contraseña' });
+      const isDirectivo = [ROLES.ADMIN, ROLES.PLANNER, ROLES.MANAGEMENT].includes(req.user.role);
+      if (!req.user || !isDirectivo) {
+        return res.status(403).json({ error: 'Solo el grupo directivo puede establecer/restablecer contraseña' });
       }
       if (!password) return res.status(400).json({ error: 'Contraseña requerida' });
 

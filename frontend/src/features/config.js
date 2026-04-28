@@ -1,6 +1,6 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, setPendingSave } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, setPendingSave, parseLocaleNumber, formatNumberCOP } from '../ui/ui.js';
 import { loadDatosMeta, findRowByDataId } from './worklogs.js';
 import { preloadMoldsForSearch } from './planner.js';
 import { loadOperatorsForIndicators, loadIndicatorsSelectedOperatorIds, saveIndicatorsSelectedOperatorIds } from './indicators.js';
@@ -49,7 +49,7 @@ export function captureMachineDraftFromRow(row) {
   const name = String(row.querySelector('.mc-name')?.value ?? '').trim();
   const capStr = String(row.querySelector('.mc-cap')?.value ?? '').trim();
   const is_active = row.querySelector('.mc-active')?.checked ? 1 : 0;
-  const daily_capacity = capStr === '' ? null : parseFloat(capStr);
+  const daily_capacity = parseLocaleNumber(capStr);
 
   const base = machinesCache.find(m => String(m.id) === String(id));
   const draft = normalizeMachineComparable({ name, daily_capacity, is_active });
@@ -137,7 +137,7 @@ export async function saveMachineRow(id) {
   const name = row.querySelector('.mc-name')?.value.trim();
   const capStr = row.querySelector('.mc-cap')?.value.trim();
   const is_active = row.querySelector('.mc-active')?.checked ? 1 : 0;
-  const daily_capacity = capStr === '' ? null : parseFloat(capStr);
+  const daily_capacity = parseLocaleNumber(capStr);
   if (!name) return displayResponse('configResponse', { error:'Nombre requerido' }, false);
   try {
     const res = await fetch(`${state.API_URL}/config/machines/${id}`, {
@@ -158,7 +158,7 @@ export async function saveMachineRow(id) {
 export async function createMachine(){
   const name = document.getElementById('newMachineName')?.value.trim();
   const capStr = document.getElementById('newMachineCapacity')?.value.trim();
-  const daily_capacity = capStr ? parseFloat(capStr) : null;
+  const daily_capacity = parseLocaleNumber(capStr);
   if (!name) return displayResponse('configResponse', { error:'Nombre de máquina requerido' }, false);
   try{
     const res = await fetch(`${state.API_URL}/config/machines`, {

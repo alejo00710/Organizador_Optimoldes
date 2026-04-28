@@ -75,21 +75,28 @@ export function capitalize(s) { return s ? (s.charAt(0).toUpperCase() + s.slice(
 export function parseLocaleNumber(raw) {
   const s = String(raw ?? '').trim();
   if (!s) return NaN;
+  
+  // Reemplazo agresivo: si tiene comas y puntos, asumimos punto miles, coma decimal.
+  // Si solo tiene coma, es decimal.
   const hasComma = s.includes(',');
   const hasDot = s.includes('.');
   let normalized = s;
+  
   if (hasComma && hasDot) {
-    // Asumimos formato miles con punto y decimales con coma: 1.234,56
+    // 1.234,56 -> 1234.56
     normalized = s.replace(/\./g, '').replace(/,/g, '.');
   } else if (hasComma) {
+    // 12,5 -> 12.5
     normalized = s.replace(/,/g, '.');
   }
+  
   const n = Number.parseFloat(normalized);
   return Number.isFinite(n) ? n : NaN;
 }
 
 export function round2(n) {
-  return Math.round(Number(n) * 100) / 100;
+  const num = Number(n);
+  return Number.isFinite(num) ? Math.round(num * 100) / 100 : 0;
 }
 
 export function formatCurrencyCOP(raw) {
@@ -107,13 +114,13 @@ export function formatCurrencyCOP(raw) {
   }
 }
 
-export function formatNumberCOP(raw) {
-  const n = Number(raw || 0);
+export function formatNumberCOP(raw, decimals = 2) {
+  const n = Number(raw);
   if (!Number.isFinite(n)) return '0';
   try {
     return new Intl.NumberFormat('es-CO', {
       minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: decimals,
     }).format(n);
   } catch (_) {
     return n.toLocaleString('es-CO');
@@ -503,17 +510,11 @@ export function parseUiDateToISO(value) {
   return check ? iso : '';
 }
 
-export function formatTimeHM(v) {
-  if (!v) return '';
-  try {
-    const d = new Date(v);
-    if (Number.isNaN(d.getTime())) return '';
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    return `${hh}:${mm}`;
-  } catch {
-    return '';
-  }
+export function formatTimeHM(timeStr) {
+    if (!timeStr) return '';
+    const parts = String(timeStr).split(':');
+    if (parts.length >= 2) return `${parts[0]}:${parts[1]}`;
+    return timeStr;
 }
 
 

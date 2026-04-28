@@ -68,21 +68,24 @@ const authorizeRoles = (...roles) => {
       return res.status(401).json({ error: 'Usuario no autenticado' });
     }
 
-    // Compatibilidad: el usuario "jefe" debe tener permisos equivalentes a ADMIN.
-    // En la BD "jefe" existe como usuario (role=planner), así que lo elevamos aquí
-    // para que pase en endpoints que exigen explícitamente ROLES.ADMIN.
+    const role = req.user.role;
+    const method = String(req.method || '').toUpperCase();
+
+    // El grupo directivo (admin, gerencia, jefe/planner) tiene acceso total
+    // a cualquier ruta que requiera privilegios administrativos o de planificación.
+    const isDirectivo = [ROLES.ADMIN, ROLES.PLANNER, ROLES.MANAGEMENT].includes(role);
+    const requiresDirectivo = roles.some(r => [ROLES.ADMIN, ROLES.PLANNER, ROLES.MANAGEMENT].includes(r));
+
+    if (isDirectivo && requiresDirectivo) {
+      return next();
+    }
+
+    // Caso especial para "jefe" (username) que puede estar mapeado a roles específicos
     if (roles.includes(ROLES.ADMIN) && isJefeUser(req.user)) {
       return next();
     }
 
-    // Gerencia: solo privilegios de lectura (GET) equivalentes a admin/planner.
-    const method = String(req.method || '').toUpperCase();
-    const allowsAdminOrPlanner = roles.includes(ROLES.ADMIN) || roles.includes(ROLES.PLANNER);
-    if (method === 'GET' && req.user.role === ROLES.MANAGEMENT && allowsAdminOrPlanner) {
-      return next();
-    }
-
-    if (!roles.includes(req.user.role)) {
+    if (!roles.includes(role)) {
       return res.status(403).json({
         error: 'No tienes permisos para realizar esta acción',
       });

@@ -4,6 +4,10 @@ import { showToast, displayResponse, setupStickyTabsOffset, setupFixedTabsBar, o
 import { resetInactivityTimer, startInactivityTimer } from './worklogs.js';
 import { preloadMoldsForSearch } from './planner.js';
 import { loadCalendar } from './calendar.js';
+ 
+ export function hasAdminPrivileges(role) {
+   return ['admin', 'management', 'planner'].includes(String(role || '').toLowerCase());
+ }
 
 export function updateConnectionStatus(connected) {
   const el = document.getElementById('status');
@@ -151,7 +155,8 @@ export function showMainApp(user) {
   if (opRowEl) opRowEl.classList.toggle('hidden', !isOperator);
 
   // Tabs por rol
-  const canSeeAll = role === 'admin' || role === 'planner' || role === 'management';
+  const isAdmin = hasAdminPrivileges(role);
+  const canSeeAll = isAdmin;
 
   // Por defecto, mostramos todo a admin/planner y limitamos al operario solo a "tiempos"
   document.querySelectorAll('.tabs .tab').forEach(btn => {

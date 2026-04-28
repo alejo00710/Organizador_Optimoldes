@@ -5450,82 +5450,62 @@ async function fetchMoldCostBreakdownData(planningId, opts = {}) {
 }
 
 function downloadFinancialSettlementPdf(settlement, responseBoxId = 'financialLiquidationResponse') {
-  const printableRows = settlement.breakdown.length
-    ? settlement.breakdown.map((row) => `
-      <tr>
-        <td>${escapeHtml(String(row?.machine_name || ''))}</td>
-        <td style="text-align:right;">${Number(row?.total_hours || 0).toFixed(2)}</td>
-        <td style="text-align:right;">${escapeHtml(formatCurrencyCOP(Number(row?.partial_cost || 0)))}</td>
-      </tr>
-    `).join('')
-    : '<tr><td colspan="3" style="color:#666;">Sin datos de mano de obra para este ciclo.</td></tr>';
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  // Encabezado
+  doc.setFontSize(18);
+  doc.setTextColor(0);
+  doc.text('Liquidación y Cierre de Moldes', 14, 22);
+
+  // Información General
+  doc.setFontSize(10);
+  doc.setTextColor(80);
+  doc.text(`Molde: ${settlement.moldName}`, 14, 32);
+  doc.text(`Cliente: ${settlement.clientName || '—'}`, 14, 37);
+  doc.text(`Planning ID: #${settlement.planningId}`, 14, 42);
 
   const range = [settlement.startDate, settlement.endDate]
     .filter(Boolean)
     .map((d) => formatDateDisplay(d))
     .join(' - ');
+  if (range) doc.text(`Rango: ${range}`, 14, 47);
 
-  const html = `<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>Liquidacion de Costos - Molde ${escapeHtml(settlement.moldName)}</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 24px; color: #1a1a1a; }
-    h1, h2 { margin: 0 0 8px 0; }
-    .muted { color: #555; margin-bottom: 16px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { border: 1px solid #ccc; padding: 8px; font-size: 13px; }
-    th { background: #f2f2f2; text-align: left; }
-    .totals { margin-top: 16px; }
-    .totals div { margin: 4px 0; }
-    .strong { font-weight: 700; }
-  </style>
-</head>
-<body>
-  <h1>Liquidacion y Cierre de Moldes</h1>
-  <div class="muted">
-    Molde: <strong>${escapeHtml(settlement.moldName)}</strong><br>
-    Cliente: <strong>${escapeHtml(settlement.clientName || '—')}</strong><br>
-    Planning ID: <strong>#${escapeHtml(String(settlement.planningId))}</strong>${range ? `<br>Rango: <strong>${escapeHtml(range)}</strong>` : ''}
-  </div>
+  // Tabla de Máquinas
+  const tableRows = (settlement.breakdown || []).map((row) => [
+    String(row?.machine_name || ''),
+    Number(row?.total_hours || 0).toFixed(2),
+    formatCurrencyCOP(Number(row?.partial_cost || 0)),
+  ]);
 
-  <h2>Desglose de Maquinas</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Maquina</th>
-        <th>Horas reales</th>
-        <th>Costo parcial (COP)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${printableRows}
-    </tbody>
-  </table>
-
-  <div class="totals">
-    <div>Costo de Mano de Obra: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.laborCost))}</span></div>
-    <div>Costo de Materiales: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.materialsCost))}</span></div>
-    <div>Costo de Servicios Externos: <span class="strong">${escapeHtml(formatCurrencyCOP(settlement.externalServicesCost))}</span></div>
-    <div class="strong">Costo Total: ${escapeHtml(formatCurrencyCOP(settlement.totalCost))}</div>
-  </div>
-</body>
-</html>`;
-
-  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-  if (!printWindow) {
-    displayResponse(responseBoxId, { error: 'No se pudo abrir la ventana de impresion (popup bloqueado).' }, false);
-    return;
+  if (tableRows.length === 0) {
+    tableRows.push([{ content: 'Sin datos de mano de obra para este ciclo.', colSpan: 3, styles: { halign: 'center', textColor: 150 } }]);
   }
 
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.focus();
-  setTimeout(() => {
-    printWindow.print();
-  }, 150);
+  doc.autoTable({
+    startY: 55,
+    head: [['Máquina', 'Horas reales', 'Costo parcial (COP)']],
+    body: tableRows,
+    theme: 'grid',
+    headStyles: { fillColor: [242, 242, 242], textColor: [0, 0, 0], fontStyle: 'bold' },
+    styles: { fontSize: 9 },
+  });
+
+  const finalY = doc.lastAutoTable.finalY + 10;
+
+  // Totales
+  doc.setFontSize(11);
+  doc.setTextColor(0);
+  doc.text(`Costo de Mano de Obra: ${formatCurrencyCOP(settlement.laborCost)}`, 14, finalY);
+  doc.text(`Costo de Materiales: ${formatCurrencyCOP(settlement.materialsCost)}`, 14, finalY + 6);
+  doc.text(`Costo de Servicios Externos: ${formatCurrencyCOP(settlement.externalServicesCost)}`, 14, finalY + 12);
+
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(12);
+  doc.text(`Costo Total: ${formatCurrencyCOP(settlement.totalCost)}`, 14, finalY + 22);
+
+  // Descarga directa
+  doc.save(`Liquidacion_Molde_${settlement.planningId}_${new Date().toLocaleDateString().replace(/\//g, '-')}.pdf`);
 }
 
 function downloadFinancialSettlementCsv(settlement, responseBoxId = 'financialLiquidationResponse') {
@@ -7064,6 +7044,74 @@ async function saveWorkingDays(){
     displayResponse('indicatorsResponse', { error:'Error guardando días', details:String(e) }, false);
   }
 }
+function exportIndicatorsPDF() {
+  if (!indicatorsCache) {
+    return displayResponse('indicatorsResponse', { error: 'Genera indicadores antes de exportar' }, false);
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('l', 'mm', 'a4'); 
+  const y = indicatorsCache.year || '';
+  const filtered = filterTablesBySelectedOperators(indicatorsCache) || {};
+
+  doc.setFontSize(18);
+  doc.text(`Reporte de Indicadores - Año ${y}`, 14, 20);
+
+  const pushTableToPdf = (title, tableDef, opts, startY) => {
+    doc.setFontSize(14);
+    doc.text(title, 14, startY);
+
+    const isIndicator = Boolean(opts?.isIndicator);
+    const decimals = Number.isFinite(opts?.decimals) ? opts.decimals : (isIndicator ? 1 : 2);
+    
+    const head = [[opts?.firstLabel || 'OPERARIO', ...IND_MONTHS_ES, opts?.lastLabel || 'Total']];
+    const body = (tableDef?.rows || []).map(r => {
+      const m = Array.isArray(r.months) ? r.months : [];
+      const endVal = isIndicator ? r.average : r.total;
+      const cells = IND_MONTHS_ES.map((_, idx) => {
+        const v = Number(m[idx] || 0);
+        return isIndicator ? formatIndicatorPercentForExport(v, decimals) : (Number.isFinite(v) ? v : 0).toFixed(decimals);
+      });
+      const endCell = isIndicator ? formatIndicatorPercentForExport(endVal, decimals) : (Number.isFinite(endVal) ? endVal : 0).toFixed(decimals);
+      return [r.operatorName || '', ...cells, endCell];
+    });
+
+    if (tableDef?.totalsRow) {
+      const t = tableDef.totalsRow;
+      const m = Array.isArray(t.months) ? t.months : [];
+      const endVal = isIndicator ? t.average : t.total;
+      const cells = IND_MONTHS_ES.map((_, idx) => {
+        const v = Number(m[idx] || 0);
+        return isIndicator ? formatIndicatorPercentForExport(v, decimals) : (Number.isFinite(v) ? v : 0).toFixed(decimals);
+      });
+      const endCell = isIndicator ? formatIndicatorPercentForExport(endVal, decimals) : (Number.isFinite(endVal) ? endVal : 0).toFixed(decimals);
+      body.push([{ content: t.operatorName || 'Total general', styles: { fontStyle: 'bold' } }, ...cells.map(c => ({ content: c, styles: { fontStyle: 'bold' } })), { content: endCell, styles: { fontStyle: 'bold' } }]);
+    }
+
+    doc.autoTable({
+      startY: startY + 5,
+      head,
+      body,
+      theme: 'grid',
+      headStyles: { fillColor: [242, 242, 242], textColor: [0, 0, 0], fontStyle: 'bold' },
+      styles: { fontSize: 7, cellPadding: 2 },
+      margin: { left: 14, right: 14 }
+    });
+
+    return doc.lastAutoTable.finalY + 15;
+  };
+
+  let currentY = 30;
+  currentY = pushTableToPdf('1. Indicador de Eficiencia (Razón Horas / Capacidad)', filtered.indicator, { firstLabel: 'COLABORADOR', lastLabel: 'Promedio', isIndicator: true, decimals: 1 }, currentY);
+  
+  if (currentY > 150) { doc.addPage(); currentY = 20; }
+  currentY = pushTableToPdf('2. Suma de Horas Reales Trabajadas', filtered.hours, { firstLabel: 'OPERARIO', lastLabel: 'Total general', isIndicator: false, decimals: 1 }, currentY);
+  
+  if (currentY > 150) { doc.addPage(); currentY = 20; }
+  pushTableToPdf('3. Días Hábiles Trabajados (Base Manual)', filtered.days, { firstLabel: 'OPERARIO', lastLabel: 'Total general', isIndicator: false, decimals: 0 }, currentY);
+
+  doc.save(`Indicadores_${y}_${new Date().toLocaleDateString().replace(/\//g, '-')}.pdf`);
+}
+
 function exportIndicatorsCSV(){
   if (!indicatorsCache) {
     return displayResponse('indicatorsResponse', { error:'Genera indicadores antes de exportar' }, false);
@@ -7735,6 +7783,7 @@ function setupEventListeners() {
   // Indicadores
   const btnLoadInd = document.getElementById('loadIndicatorsBtn'); if (btnLoadInd) btnLoadInd.addEventListener('click', loadIndicators);
   const btnExportInd = document.getElementById('exportIndicatorsBtn'); if (btnExportInd) btnExportInd.addEventListener('click', exportIndicatorsCSV);
+  const btnExportIndPdf = document.getElementById('exportIndicatorsPdfBtn'); if (btnExportIndPdf) btnExportIndPdf.addEventListener('click', exportIndicatorsPDF);
   const btnSaveWD = document.getElementById('saveWorkingDaysBtn'); if (btnSaveWD) btnSaveWD.addEventListener('click', (e) => { e.preventDefault(); saveWorkingDays(); });
   const opFilterContainer = document.getElementById('indOperatorFilter');
   if (opFilterContainer) opFilterContainer.addEventListener('change', () => {
