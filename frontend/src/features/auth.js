@@ -1,6 +1,6 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, setupStickyTabsOffset, setupFixedTabsBar, openTab } from '../ui/ui.js';
+import { showToast, displayResponse, setupStickyTabsOffset, setupFixedTabsBar, openTab, escapeHtml } from '../ui/ui.js';
 import { resetInactivityTimer, startInactivityTimer } from './worklogs.js';
 import { preloadMoldsForSearch } from './planner.js';
 import { loadCalendar } from './calendar.js';
@@ -241,27 +241,37 @@ export async function login(e) {
     if (res.ok) {
       displayResponse('loginResponse', 'Sesión iniciada', true);
       if (data.sessionId) localStorage.setItem('sessionId', String(data.sessionId));
-      verifySession();
+      showMainApp(data.user); // Usar datos directamente
     }
     else {
       displayResponse('loginResponse', data.error || 'Error login', false);
       updateConnectionStatus(false);
     }
   } catch (e) {
+    console.error('[AUTH] Login Error:', e);
     displayResponse('loginResponse', 'Error conexión', false);
     updateConnectionStatus(false);
   }
 }
 export async function verifySession() {
   try {
-    const res = await fetch(`${state.API_URL}/auth/verify`, { credentials: 'include' });
+    const res = await fetch(`${state.API_URL}/auth/verify`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
     if (res.ok) {
       const data = await res.json();
       showMainApp(data.user);
     } else {
       showLoginScreen('Sesión inválida');
     }
-  } catch (e) { showLoginScreen('Error conexión'); }
+  } catch (e) {
+    console.error('[AUTH] VerifySession Error:', e);
+    showLoginScreen('Error conexión');
+  }
 }
 export async function logout() {
   try {

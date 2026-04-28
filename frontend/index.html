@@ -23,31 +23,33 @@
           <span>Control Industrial de Moldes</span>
         </p>
 
-        <div class="form-group">
-          <label>Usuario</label>
-          <select id="username">
-            <option value="admin">Administrador</option>
-            <option value="jefe" selected>Jefe</option>
-            <option value="gerente">Gerencia</option>
-            <option value="operarios">Operarios</option>
-          </select>
-        </div>
+        <form id="loginForm">
+          <div class="form-group">
+            <label>Usuario</label>
+            <select id="username">
+              <option value="admin">Administrador</option>
+              <option value="jefe" selected>Jefe</option>
+              <option value="gerente">Gerencia</option>
+              <option value="operarios">Operarios</option>
+            </select>
+          </div>
 
-        <div class="form-group">
-          <label>Contraseña</label>
-          <input type="password" id="password" placeholder="Ingrese su contraseña">
-        </div>
+          <div class="form-group">
+            <label>Contraseña</label>
+            <input type="password" id="password" placeholder="Ingrese su contraseña">
+          </div>
 
-        <div class="form-group hidden" id="operatorSelectGroup">
-          <label>Seleccionar Operario</label>
-          <select id="operatorId">
-            <option value="">Cargando...</option>
-          </select>
-        </div>
+          <div class="form-group hidden" id="operatorSelectGroup">
+            <label>Seleccionar Operario</label>
+            <select id="operatorId">
+              <option value="">Cargando...</option>
+            </select>
+          </div>
 
-        <button class="btn btn-primary" id="loginBtn" style="width: 100%; margin-top: 1rem;">
-          Iniciar Sesión
-        </button>
+          <button type="submit" class="btn btn-primary" id="loginBtn" style="width: 100%; margin-top: 1rem;">
+            Iniciar Sesión
+          </button>
+        </form>
 
         <div class="response-box" id="loginResponse"></div>
 

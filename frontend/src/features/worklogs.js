@@ -1,6 +1,7 @@
+import { logout } from './auth.js';
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO, fmtDateTime, parseLocaleNumber } from '../ui/ui.js';
 import { safeCssEscape } from './planner.js';
 import { getBogotaTodayISO } from './calendar.js';
 
@@ -1764,10 +1765,10 @@ export function fillHoursOptionsSelect(options) {
 export async function loadHoursOptions() {
   if (state.hoursOptionsCache) return state.hoursOptionsCache;
   try {
-    const res = await fetch(`${state.API_URL}/catalogs/hours`, { credentials: 'include' });
+    const res = await fetch(`${state.API_URL}/datos/hours-options`, { credentials: 'include' });
     if (!res.ok) throw new Error('Error loading hours');
     const data = await res.json();
-    const options = normalizeHoursOptions(data);
+    const options = normalizeHoursOptions(data?.hours || []);
     state.hoursOptionsCache = options;
     fillHoursOptionsDatalist(options);
     fillHoursOptionsSelect(options);

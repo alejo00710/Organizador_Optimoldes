@@ -32,20 +32,27 @@ function normalizeUserPayload(payload) {
  * Middleware para verificar JWT
  */
 const authenticateToken = (req, res, next) => {
-  const token = req.cookies.jwt;
-
+  const token = req.cookies.jwt || req.headers.authorization?.split(' ')[1];
   if (!token) {
+    console.warn(`[AUTH] 401 - No token found for ${req.method} ${req.originalUrl}`);
     return res.status(401).json({ error: 'Sesión expirada o no válida' });
   }
 
   jwt.verify(token, jwtConfig.secret, (err, payload) => {
     if (err) {
+      console.warn(`[AUTH] 403 - Invalid token: ${err.message}`);
       return res.status(403).json({ error: 'Token inválido o expirado' });
     }
 
     const user = normalizeUserPayload(payload);
-    if (!user.id || !user.role) return res.status(403).json({ error: 'Token sin id/role válidos' });
-    if (!Object.values(ROLES).includes(user.role)) return res.status(403).json({ error: 'Rol no válido' });
+    if (!user.id || !user.role) {
+      console.warn(`[AUTH] 403 - Malformed payload`);
+      return res.status(403).json({ error: 'Token sin id/role válidos' });
+    }
+    if (!Object.values(ROLES).includes(user.role)) {
+      console.warn(`[AUTH] 403 - Invalid role: ${user.role}`);
+      return res.status(403).json({ error: 'Rol no válido' });
+    }
 
     req.user = user;
     next();

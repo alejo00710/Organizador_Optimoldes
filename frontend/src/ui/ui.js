@@ -107,6 +107,19 @@ export function formatCurrencyCOP(raw) {
   }
 }
 
+export function formatNumberCOP(raw) {
+  const n = Number(raw || 0);
+  if (!Number.isFinite(n)) return '0';
+  try {
+    return new Intl.NumberFormat('es-CO', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch (_) {
+    return n.toLocaleString('es-CO');
+  }
+}
+
 export function openTab(tabName) {
   document.querySelectorAll('.tab').forEach(btn => btn.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(content => {
@@ -125,7 +138,7 @@ export function openTab(tabName) {
     import('../features/calendar.js').then(m => m.loadCalendar()).catch(() => {});
   }
   if (tabName === 'terminados') {
-    import('../features/calendar.js').then(m => {
+    import('../features/planner.js').then(m => {
       m.wireCompletedMoldsViewControls();
       m.renderCompletedMoldList();
     }).catch(() => {});
