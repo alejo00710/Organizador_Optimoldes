@@ -3,7 +3,7 @@ import * as api from '../core/api.js';
 import { socket } from '../core/api.js';
 import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, parseLocaleNumber } from '../ui/ui.js';
 import { populateSelectWithFilter, setupFilterListener } from './worklogs.js';
-import { getBogotaTodayISO, fetchMoldProgressDetail } from './calendar.js';
+import { getBogotaTodayISO, fetchMoldProgressDetail, loadCalendar } from './calendar.js';
 
 export async function initPlannerTab() {
   await initPlannerGridFromCatalogs();

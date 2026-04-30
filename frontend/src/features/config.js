@@ -704,6 +704,7 @@ export function initConfigEvents() {
   const wire = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
   
   wire('saveMachinesBtn', saveMachinesBulk);
+  wire('reloadMachinesBtn', loadMachinesList);
   wire('createMachineBtn', createMachine);
   wire('createMoldBtn', createMold);
   wire('createPartBtn', createPart);

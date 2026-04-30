@@ -4,9 +4,7 @@ import { state } from './core/state.js';
 // Exponemos el estado globalmente temporalmente si hay scripts que dependan de window (ej: onclicks de HTML)
 window.state = state;
 
-// Importar el app.js modificado para que se ejecute la lógica principal
-import '../app.js';
-import './features/calendar.js';
+import { initCalendarEvents } from './features/calendar.js';
 import { initFinancialEvents } from './features/financial.js';
 import { initConfigEvents } from './features/config.js';
 import { initPlannerEvents } from './features/planner.js';
@@ -22,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initNavigationEvents();
   setupAuthListeners();
   initAuth();
+  initCalendarEvents();
   initConfigEvents();
   initWorkLogsEvents();
   initFinancialEvents();

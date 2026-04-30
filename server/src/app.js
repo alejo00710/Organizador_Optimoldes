@@ -102,7 +102,7 @@ app.use((req, res, next) => {
 });
 
 // Servir archivos estáticos ANTES de las rutas API
-const publicDir = path.join(__dirname, '..', '..', 'public');
+const publicDir = path.join(__dirname, '..', '..', 'frontend', 'dist');
 app.use(express.static(publicDir));
 
 

@@ -1413,7 +1413,18 @@ async function validateManualMove(date, machineName, forceAllowOverlap = false, 
 
   return { ok: true };
 }
-// Extracted hideModal to ui.js
 
+export function initCalendarEvents() {
+  const wire = (id, event, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(event, fn); };
 
+  wire('prev-month-btn', 'click', () => changeMonth(-1));
+  wire('next-month-btn', 'click', () => changeMonth(1));
+  wire('today-btn', 'click', () => {
+    const now = new Date();
+    state.currentYear = now.getFullYear();
+    state.currentMonth = now.getMonth();
+    loadCalendar();
+  });
 
+  wire('modal-close-btn', 'click', hideModal);
+}
