@@ -1213,165 +1213,214 @@
     #calendar-fullcalendar {
       background: var(--card-bg);
       border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 10px;
-      min-height: 560px;
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
-    }
-
-    #calendar-fullcalendar .fc {
-      color: var(--text-primary);
-      background: var(--card-bg) !important;
-    }
-
-    #calendar-fullcalendar .fc .fc-scrollgrid,
-    #calendar-fullcalendar .fc .fc-scroller,
-    #calendar-fullcalendar .fc .fc-view-harness,
-    #calendar-fullcalendar .fc .fc-daygrid-body,
-    #calendar-fullcalendar .fc .fc-daygrid-body-natural {
-      background: var(--card-bg) !important;
-    }
-
-    #calendar-fullcalendar .fc-theme-standard td,
-    #calendar-fullcalendar .fc-theme-standard th,
-    #calendar-fullcalendar .fc-theme-standard .fc-scrollgrid {
-      border-color: var(--border-color) !important;
-      background: var(--card-bg) !important;
-    }
-
-    #calendar-fullcalendar .fc-theme-standard th {
-      background: color-mix(in srgb, var(--card-bg-light) 70%, var(--card-bg) 30%) !important;
-      border-bottom: 1px solid var(--border-color) !important;
-    }
-
-    #calendar-fullcalendar .fc .fc-daygrid-day,
-    #calendar-fullcalendar .fc .fc-daygrid-day-frame,
-    #calendar-fullcalendar .fc .fc-daygrid-day-events,
-    #calendar-fullcalendar .fc .fc-daygrid-day-bg {
-      background: var(--card-bg) !important;
-    }
-
-    #calendar-fullcalendar .fc .fc-day-other .fc-daygrid-day-frame {
-      background: color-mix(in srgb, var(--darker-bg) 78%, var(--card-bg) 22%) !important;
-    }
-
-    #calendar-fullcalendar .fc .fc-daygrid-day-number,
-    #calendar-fullcalendar .fc .fc-col-header-cell-cushion {
-      color: var(--text-muted);
-      font-weight: 600;
-    }
-
-    #calendar-fullcalendar .fc .fc-event {
-      background: color-mix(in srgb, var(--primary-blue-light) 22%, transparent) !important;
-      border: 1px solid color-mix(in srgb, var(--primary-blue-light) 40%, var(--border-color) 60%) !important;
-      border-left: 3px solid var(--primary-blue-light) !important;
-      border-radius: 6px !important;
-      color: var(--text-primary);
-      box-shadow: none;
-      padding: 1px 2px;
-    }
-
-    #calendar-fullcalendar .fc-mold-event.status-pending {
-      background: color-mix(in srgb, var(--primary-blue-dark) 42%, transparent) !important;
-      border-color: color-mix(in srgb, var(--primary-blue-light) 42%, var(--border-color) 58%) !important;
-      border-left-color: var(--primary-blue-light) !important;
-      color: var(--text-primary) !important;
-    }
-
-    #calendar-fullcalendar .fc-mold-event.status-completed {
-      background: color-mix(in srgb, var(--success) 20%, transparent) !important;
-      border-color: color-mix(in srgb, var(--success) 45%, var(--border-color) 55%) !important;
-      border-left-color: var(--success) !important;
-      color: var(--text-primary) !important;
-    }
-
-    #calendar-fullcalendar .fc-daygrid-day.fc-day-weekend,
-    #calendar-fullcalendar .fc-daygrid-day.fc-day-weekend .fc-daygrid-day-frame {
-      background-color: color-mix(in srgb, var(--primary-blue-dark) 12%, var(--card-bg) 88%) !important;
-    }
-
-    #calendar-fullcalendar .fc-daygrid-day.fc-day-holiday,
-    #calendar-fullcalendar .fc-daygrid-day.fc-day-holiday .fc-daygrid-day-frame {
-      background-color: color-mix(in srgb, var(--accent-orange) 10%, var(--card-bg) 90%) !important;
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-orange) 35%, var(--border-color) 65%);
-    }
-
-    #calendar-fullcalendar .fc-daygrid-day.fc-day-non-working,
-    #calendar-fullcalendar .fc-daygrid-day.fc-day-non-working .fc-daygrid-day-frame {
-      background-color: color-mix(in srgb, var(--darker-bg) 84%, var(--card-bg) 16%) !important;
-      opacity: 0.92;
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 70%, transparent);
-    }
-
-    #calendar-fullcalendar .fc-day-enabled-override {
-      background: color-mix(in srgb, var(--success) 16%, var(--card-bg) 84%) !important;
-      box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--success) 58%, transparent);
-    }
-
-    #calendar-fullcalendar .fc-day-disabled-override {
-      background: color-mix(in srgb, var(--danger) 14%, var(--card-bg) 86%) !important;
-      box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--danger) 55%, transparent);
-    }
-
-    #calendar-fullcalendar .fc-event-rich {
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-      line-height: 1.15;
-    }
-
-    #calendar-fullcalendar .fc-event-rich-title {
-      font-size: 0.72rem;
-      font-weight: 700;
-      white-space: nowrap;
+      border-radius: 8px;
+      padding: 0;
+      min-height: 600px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
       overflow: hidden;
-      text-overflow: ellipsis;
     }
 
-    #calendar-fullcalendar .fc-event-rich-row {
-      font-size: 0.7rem;
-      opacity: 0.95;
-      color: var(--text-secondary);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    /* Estética General FullCalendar */
+    .fc {
+      font-family: inherit;
+      --fc-border-color: var(--border-color);
+      --fc-daygrid-event-dot-width: 5px;
+      color: var(--text-primary);
     }
 
-    #calendar-fullcalendar .fc-event-rich-status {
-      width: fit-content;
-      font-size: 0.62rem;
+    .fc-theme-standard td, .fc-theme-standard th {
+      border: 0.5px solid var(--border-color) !important;
+    }
+
+    /* Cabecera de días (Mon, Tue...) */
+    .fc-col-header-cell {
+      padding: 12px 0 !important;
+      background: var(--card-bg-light) !important;
+      border-top: none !important;
+      border-left: none !important;
+      border-right: none !important;
+      border-bottom: 2px solid var(--border-color) !important;
+    }
+
+    .fc-col-header-cell-cushion {
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      text-transform: uppercase;
+      color: var(--text-muted) !important;
+      text-decoration: none !important;
+      letter-spacing: 0.5px;
+    }
+
+    /* Sábados y Domingos en cabecera */
+    .fc-day-sat .fc-col-header-cell-cushion,
+    .fc-day-sun .fc-col-header-cell-cushion {
+      color: var(--danger) !important;
+      opacity: 0.8;
+    }
+
+    /* Celdas de días */
+    .fc-daygrid-day {
+      background: var(--card-bg) !important;
+      transition: background-color 0.2s;
+    }
+
+    .fc-daygrid-day-number {
+      font-size: 13px !important;
+      font-weight: 500 !important;
+      color: var(--text-secondary) !important;
+      padding: 8px !important;
+      text-decoration: none !important;
+    }
+
+    /* Día Actual (Today) */
+    .fc-day-today {
+      background-color: color-mix(in srgb, var(--primary-blue-light) 15%, var(--card-bg)) !important;
+    }
+
+    .fc-day-today .fc-daygrid-day-number {
+      color: var(--text-primary) !important;
+      font-weight: 800 !important;
+      text-shadow: 0 0 10px var(--shadow-glow);
+    }
+
+    /* Quitar círculo azul por defecto de FullCalendar */
+    .fc-daygrid-day-number {
+      background: transparent !important;
+    }
+
+    /* Fines de semana */
+    .fc-day-sat, .fc-day-sun {
+      background-color: color-mix(in srgb, var(--card-bg-light) 40%, var(--card-bg)) !important;
+    }
+
+    .fc-day-sat .fc-daygrid-day-number,
+    .fc-day-sun .fc-daygrid-day-number {
+      color: var(--danger) !important;
+      opacity: 0.7;
+    }
+
+    /* Días Festivos (clase personalizada fc-day-holiday) */
+    .fc-daygrid-day.fc-day-holiday {
+      background-color: color-mix(in srgb, var(--accent-orange) 12%, var(--card-bg)) !important;
+    }
+
+    .fc-daygrid-day.fc-day-holiday .fc-daygrid-day-number {
+      color: var(--accent-orange) !important;
+      font-weight: 700 !important;
+    }
+
+    /* Chip de Festivo */
+    .holiday-chip {
+      display: inline-block;
+      font-size: 9px;
+      background: var(--accent-orange);
+      color: var(--darker-bg);
+      padding: 1px 4px;
+      border-radius: 3px;
+      margin-left: 4px;
+      vertical-align: middle;
       font-weight: 800;
-      letter-spacing: 0.2px;
-      border-radius: 10px;
-      padding: 1px 6px;
-      margin-top: 2px;
-      background: color-mix(in srgb, var(--card-bg-light) 65%, transparent);
+      max-width: 60px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Días de otro mes */
+    .fc-day-other {
+      opacity: 0.25 !important;
+    }
+
+    /* Eventos / Chips de moldes */
+    .fc-v-event, .fc-h-event {
+      border: none !important;
+      padding: 3px 5px !important;
+      margin: 1px 3px !important;
+      border-radius: 4px !important;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+      transition: all 0.2s;
+    }
+
+    .fc-event-main {
+      padding: 0 !important;
+      color: #FFFFFF !important; /* Texto siempre blanco en los chips */
+    }
+
+    .fc-event:hover {
+      filter: brightness(1.1);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3) !important;
+      cursor: pointer;
+    }
+
+    .fc-event-rich-title {
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+
+    /* Leyenda personalizada */
+    .calendar-legend {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+      background: var(--card-bg-light);
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .legend-dot.today { background: var(--primary-blue-light); border: 1px solid var(--text-primary); }
+    .legend-dot.holiday { background: var(--accent-orange); border: 1px solid var(--darker-bg); }
+    .legend-dot.weekend { background: var(--danger); opacity: 0.7; }
+
+    /* Estilos para los botones de navegación manual */
+    #calendar-nav button {
+      background: var(--input-bg);
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    #calendar-nav button:hover {
+      background: var(--card-bg-light);
+      border-color: var(--primary-blue-light);
       color: var(--text-primary);
     }
 
-    #calendar-fullcalendar .fc-event-rich-status.in_progress {
-      background: color-mix(in srgb, var(--primary-blue-dark) 40%, transparent);
+    #calendar-nav button#today-btn {
+      background: var(--card-bg-light);
+      border-color: var(--border-color);
       color: var(--text-primary);
     }
 
-    #calendar-fullcalendar .fc-event-rich-status.completed {
-      background: color-mix(in srgb, var(--success) 28%, var(--card-bg) 72%);
-      color: var(--text-primary);
-    }
-
-    @media (max-width: 768px) {
-      #calendar-fullcalendar .fc-event-rich-title {
-        font-size: 0.68rem;
-      }
-
-      #calendar-fullcalendar .fc-event-rich-row {
-        font-size: 0.62rem;
-      }
-
-      #calendar-fullcalendar .fc-event-rich-status {
-        font-size: 0.58rem;
-        padding: 1px 5px;
-      }
+    #calendar-nav button#today-btn:hover {
+      background: var(--primary-blue-light);
+      border-color: var(--primary-blue-light);
     }
 
     .calendar-day {

@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Planificador de Moldes</title>
-  <link rel="stylesheet" href="styles.css?v=20260428">
+  <link rel="stylesheet" href="styles.css?v=20260429">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/main.min.css">
   <link rel="icon" href="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png">
 </head>
@@ -606,10 +606,14 @@
             <div class="calendar-header">
               <h2 id="calendar-month-year"></h2>
               <div id="calendar-nav">
+                <button id="today-btn">Hoy</button>
                 <button id="prev-month-btn">&larr; Anterior</button>
                 <button id="next-month-btn">Siguiente &rarr;</button>
               </div>
             </div>
+
+            <!-- Leyenda del Calendario -->
+            <div id="calendarLegendHost" class="calendar-legend"></div>
             <div class="calendar-grid-header">
               <div class="calendar-day-name">Dom</div>
               <div class="calendar-day-name">Lun</div>
@@ -890,7 +894,7 @@
       <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js" defer></script>
       <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
-      <script src="app.js?v=20260428" defer></script>
+      <script src="app.js?v=20260429" defer></script>
   </div>
 </body>
 

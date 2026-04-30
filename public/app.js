@@ -4300,6 +4300,38 @@ function extractFullCalendarResources(data) {
     .filter(r => r.id && r.title);
 }
 
+function updateCalendarLegend(data) {
+  const host = document.getElementById('calendarLegendHost');
+  if (!host) return;
+
+  const baseItems = [
+    { label: 'Hoy', class: 'today' },
+    { label: 'Festivo', class: 'holiday' },
+    { label: 'Fin de semana', class: 'weekend' },
+  ];
+
+  let html = baseItems.map(item => `
+    <div class="legend-item">
+      <div class="legend-dot ${item.class}"></div>
+      <span>${item.label}</span>
+    </div>
+  `).join('');
+
+  // Agregar máquinas si existen en los datos
+  const resources = extractFullCalendarResources(data);
+  if (resources.length > 0) {
+    html += '<div style="width: 1px; height: 12px; background: #e2e8f0; margin: 0 8px;"></div>';
+    html += resources.map(r => `
+      <div class="legend-item">
+        <div class="legend-dot" style="background: #64748b; border: 1px solid #475569;"></div>
+        <span>${r.title}</span>
+      </div>
+    `).join('');
+  }
+
+  host.innerHTML = html;
+}
+
 function ensureFullCalendarInstance() {
   if (!hasFullCalendarSupport()) return null;
   if (fullCalendarInstance) return fullCalendarInstance;
@@ -4317,12 +4349,6 @@ function ensureFullCalendarInstance() {
     editable: false,
     eventStartEditable: false,
     eventDurationEditable: false,
-    // Base para futuro drag & drop:
-    // editable: true,
-    // eventDrop: async (info) => { ... }
-    // TODO: no activar eventDrop/eventResize todavía.
-    // Los eventos actuales son agregados por (mold, planning, machine, day)
-    // y no representan un plan_entry único para actualización directa.
     dateClick: (info) => {
       openDayDetailsFromCalendar(info?.dateStr || '');
     },
@@ -4343,11 +4369,29 @@ function ensureFullCalendarInstance() {
     dayCellClassNames: (arg) => {
       return getFullCalendarDayCellClasses(arg?.date);
     },
+    dayCellDidMount: (arg) => {
+      const iso = normalizeToISODate(arg.date);
+      const holidayName = calendarHolidaysCache[iso];
+      if (holidayName) {
+        const numberEl = arg.el.querySelector('.fc-daygrid-day-number');
+        if (numberEl) {
+          const chip = document.createElement('span');
+          chip.className = 'holiday-chip';
+          chip.title = holidayName;
+          chip.textContent = holidayName;
+          numberEl.appendChild(chip);
+        }
+      }
+    },
     eventContent: renderFullCalendarEventContent,
     eventDidMount: (info) => {
       const ex = info?.event?.extendedProps || {};
       const title = String(ex.mold || '').trim();
       if (title) info.el.setAttribute('title', title);
+      // Aplicar color de fondo desde los datos si existe
+      if (info.event.backgroundColor) {
+        info.el.style.backgroundColor = info.event.backgroundColor;
+      }
     },
   });
 
@@ -4379,6 +4423,8 @@ function renderFullCalendarMonth(data, { year, month, hideCompleted = false } = 
     calendar.removeAllEvents();
     calendar.addEventSource(events);
   });
+
+  updateCalendarLegend(data);
 
   return true;
 }
@@ -7767,6 +7813,12 @@ function setupEventListeners() {
   // Calendario
   const prevMonthBtn = document.getElementById('prev-month-btn'); if (prevMonthBtn) prevMonthBtn.addEventListener('click', () => changeMonth(-1));
   const nextMonthBtn = document.getElementById('next-month-btn'); if (nextMonthBtn) nextMonthBtn.addEventListener('click', () => changeMonth(1));
+  const todayBtn = document.getElementById('today-btn'); if (todayBtn) todayBtn.addEventListener('click', () => {
+    const now = new Date();
+    currentYear = now.getFullYear();
+    currentMonth = now.getMonth();
+    loadCalendar();
+  });
   const modalCloseBtn = document.getElementById('modal-close-btn'); if (modalCloseBtn) modalCloseBtn.addEventListener('click', hideModal);
 
   // Datos
