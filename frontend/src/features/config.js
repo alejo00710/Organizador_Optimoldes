@@ -724,6 +724,22 @@ export function initConfigEvents() {
     });
   }
 
+  const machineFilter = document.getElementById('machineFilter');
+  if (machineFilter) {
+    machineFilter.addEventListener('input', () => {
+      const q = machineFilter.value.toLowerCase().trim();
+      const sel = document.getElementById('newOperatorMachine');
+      if (sel) {
+        const all = Array.from(sel.options);
+        all.forEach(opt => {
+          if (!opt.value) return;
+          const match = opt.textContent.toLowerCase().includes(q);
+          opt.style.display = match ? '' : 'none';
+        });
+      }
+    });
+  }
+
   const holidaysTable = document.getElementById('holidaysTable');
   if (holidaysTable) {
     holidaysTable.addEventListener('change', (e) => {
@@ -763,17 +779,16 @@ export function initConfigEvents() {
 }
 
 export function capturePartDraftFromCheckbox(cb) {
-  const tr = cb.closest('tr');
-  if (!tr) return;
+  const container = cb.closest('#configPartsChecklist');
+  if (!container) return;
+  const label = cb.closest('label'); // Highlight the label
   const id = cb.getAttribute('data-config-part-id');
   const checked = cb.checked;
-  const parts = state.configPartsDraft || [];
-  const idx = parts.findIndex(p => String(p.id) === String(id));
-  if (idx >= 0) {
-    parts[idx].isSelected = checked;
-  } else {
-    parts.push({ id, isSelected: checked });
-  }
-  state.configPartsDraft = parts;
-  setPendingSave(tr, true);
+  
+  if (label) label.classList.toggle('pending-save', true);
+
+  partsDraft.set(id, checked);
+  
+  // Also set a global pending save flag if needed
+  setPendingSave(document.getElementById('savePartsBtn'), true);
 }

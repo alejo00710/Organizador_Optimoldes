@@ -984,6 +984,7 @@
       transition: all 0.2s ease;
     }
 
+
     #workLogsTable input:focus,
     #workLogsTable select:focus {
       outline: none;
@@ -1203,6 +1204,7 @@
       letter-spacing: 1px;
       font-size: 0.85rem;
     }
+
 
     .calendar-grid {
       display: grid;
@@ -1898,226 +1900,548 @@
       margin-top: 1.5rem;
     }
 
-    /* ========== TIEMPOS UX REDESIGN ========== */
+    /* ========== TIEMPOS WIZARD (wz-*) ========== */
+    .wz-scroll-container {
+      max-height: 450px;
+      overflow-y: auto;
+      padding-right: 8px;
+      margin-bottom: 1rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--primary-blue-light) transparent;
+    }
+
+    .wz-scroll-container::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .wz-scroll-container::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .wz-scroll-container::-webkit-scrollbar-thumb {
+      background-color: var(--primary-blue-light);
+      border-radius: 20px;
+    }
+
+    .wz-search-wrapper {
+      position: relative;
+      margin-bottom: 1rem;
+    }
+
+    .wz-search-input {
+      width: 100%;
+      padding: 10px 12px 10px 38px;
+      background: var(--input-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 0.95rem;
+      transition: all 0.2s;
+    }
+
+    .wz-search-input:focus {
+      border-color: var(--primary-blue-light);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-blue-light) 25%, transparent);
+      outline: none;
+    }
+
+    .wz-search-icon {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+      font-style: normal;
+    }
+
+    .wz-input--large {
+      font-size: 2.5rem;
+      font-weight: 800;
+      text-align: center;
+      padding: 1.5rem;
+      color: var(--primary-blue-light);
+      border-width: 2px;
+      height: auto;
+    }
     #tab-tiempos {
-      max-width: 1160px;
+      max-width: 640px;
       margin: 0 auto;
     }
 
-    #tab-tiempos .tiempos-ux-subtitle {
-      margin-bottom: 1.25rem;
-      color: var(--text-secondary);
-      font-size: 1rem;
-      font-weight: 500;
-    }
-
-    #tab-tiempos .tiempos-ux-layout {
-      display: grid;
-      grid-template-columns: 1.1fr 1fr;
-      gap: 1rem;
-      align-items: start;
-    }
-
-    #tab-tiempos .tiempos-ux-card {
-      background: linear-gradient(180deg, rgba(20, 27, 61, 0.94), rgba(20, 27, 61, 0.78));
+    /* Shell & body */
+    .wz-shell {
+      background: var(--card-bg);
       border: 1px solid var(--border-color);
-      border-radius: 14px;
-      padding: 1rem;
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.35);
     }
 
-    #tab-tiempos .tiempos-ux-card-context,
-    #tab-tiempos .tiempos-ux-card-entry,
-    #tab-tiempos .tiempos-ux-card-action {
-      grid-column: 1;
-    }
-
-    #tab-tiempos .tiempos-ux-card-selection {
-      grid-column: 2;
-      grid-row: 1 / span 3;
-      position: sticky;
-      top: calc(var(--tabs-sticky-top, 0px) + 16px);
-    }
-
-    #tab-tiempos .tiempos-ux-card-head {
+    /* ---- Stepper bar ---- */
+    .wz-stepper {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      margin-bottom: 0.9rem;
-      padding-bottom: 0.7rem;
-      border-bottom: 1px solid rgba(107, 122, 153, 0.25);
+      padding: 0.85rem 1.25rem;
+      background: var(--darker-bg);
+      border-bottom: 1px solid var(--border-color);
+      gap: 0;
     }
 
-    #tab-tiempos .tiempos-ux-card-head h3 {
-      margin: 0;
-      font-size: 1.05rem;
-      color: var(--text-primary);
+    .wz-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      flex: 1;
+      cursor: default;
+      user-select: none;
+    }
+
+    .wz-step__num {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.82rem;
       font-weight: 800;
-      letter-spacing: 0.2px;
+      transition: background 0.25s, color 0.25s, border-color 0.25s;
     }
 
-    #tab-tiempos .tiempos-ux-step {
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: var(--text-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: 999px;
-      padding: 0.2rem 0.6rem;
-      background: rgba(15, 21, 53, 0.85);
+    .wz-step__label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-align: center;
+      transition: color 0.25s;
     }
 
-    #tab-tiempos .tiempos-ux-grid-2,
-    #tab-tiempos .tiempos-ux-grid-3 {
-      display: grid;
-      gap: 0.9rem;
-    }
-
-    #tab-tiempos .tiempos-ux-grid-2 {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    #tab-tiempos .tiempos-ux-grid-3 {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    #tab-tiempos .tiempos-ux-field {
-      margin-bottom: 0.9rem;
-    }
-
-    #tab-tiempos .tiempos-ux-field label {
-      margin-bottom: 0.45rem;
-      font-size: 0.96rem;
-      font-weight: 800;
-      color: var(--text-primary);
-      text-transform: none;
-      letter-spacing: 0.15px;
-    }
-
-    #tab-tiempos .tiempos-ux-field input,
-    #tab-tiempos .tiempos-ux-field select {
-      min-height: 48px;
-      padding: 0.9rem 0.95rem;
-      border-radius: 10px;
-      border: 1px solid var(--border-color);
-      background: var(--input-bg);
-      color: var(--text-primary);
-      font-size: 1rem;
-      line-height: 1.2;
-    }
-
-    #tab-tiempos .tiempos-ux-field input::placeholder {
+    /* pending */
+    .wz-step--pending .wz-step__num {
+      background: rgba(255,255,255,0.05);
+      border: 1.5px solid var(--border-color);
       color: var(--text-muted);
-      opacity: 0.95;
+    }
+    .wz-step--pending .wz-step__label { color: var(--text-muted); }
+
+    /* active */
+    .wz-step--active .wz-step__num {
+      background: var(--primary-blue-light);
+      border: 1.5px solid var(--primary-blue-light);
+      color: #fff;
+      box-shadow: 0 0 12px rgba(26,46,196,0.45);
+    }
+    .wz-step--active .wz-step__label { color: var(--text-primary); font-weight: 700; }
+
+    /* done */
+    .wz-step--done .wz-step__num {
+      background: rgba(0,217,163,0.18);
+      border: 1.5px solid var(--success);
+      color: var(--success);
+    }
+    .wz-step--done .wz-step__label { color: var(--success); }
+
+    /* connector line */
+    .wz-step-connector {
+      flex: 0 0 18px;
+      height: 2px;
+      background: var(--border-color);
+      border-radius: 1px;
+      margin: 0 2px;
+      margin-bottom: 14px; /* align with num circles */
     }
 
-    #tab-tiempos .tiempos-ux-field select[size] {
-      min-height: 182px;
-      padding: 0.45rem;
+    /* ---- Panel ---- */
+    .wz-body { padding: 1.6rem 1.6rem 1.2rem; }
+
+    .wz-panel--hidden { display: none !important; }
+
+    .wz-question {
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin: 0 0 0.3rem 0;
+      line-height: 1.3;
     }
 
-    #tab-tiempos .tiempos-ux-field select[size] option {
-      padding: 0.55rem 0.5rem;
-      border-radius: 6px;
+    .wz-hint {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin: 0 0 1.2rem 0;
+    }
+
+    /* ---- Card grid (operators / molds / parts) ---- */
+    .wz-card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 1rem;
+    }
+
+    .wz-item-card {
+      background: var(--card-bg-light);
+      border: 1.5px solid var(--border-color);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      cursor: pointer;
+      transition: border-color 0.18s, background 0.18s, box-shadow 0.18s;
+      user-select: none;
+    }
+
+    .wz-item-card:hover {
+      border-color: rgba(26,46,196,0.6);
+      background: rgba(26,46,196,0.08);
+    }
+
+    .wz-item-card--selected {
+      border-color: var(--primary-blue-light) !important;
+      background: rgba(26,46,196,0.18) !important;
+      box-shadow: 0 0 0 2px rgba(26,46,196,0.28);
+    }
+
+    .wz-item-card__name {
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: var(--text-primary);
       margin-bottom: 2px;
     }
 
-    #tab-tiempos .tiempos-ux-field select[size] option:checked {
-      background: rgba(26, 46, 196, 0.3);
-      color: var(--text-primary);
+    .wz-item-card__sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
     }
 
-    #tab-tiempos .tiempos-ux-info-chip {
-      margin-top: 0.2rem;
-      padding: 0.7rem 0.8rem;
-      border-radius: 10px;
-      border: 1px dashed rgba(107, 122, 153, 0.45);
-      background: rgba(10, 14, 39, 0.55);
-      color: var(--text-secondary);
+    .wz-empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      color: var(--text-muted);
+      padding: 1.5rem 1rem;
       font-size: 0.9rem;
     }
 
-    #tab-tiempos .tiempos-ux-final-log {
-      margin-bottom: 0;
+    /* ---- Date row (step 1) ---- */
+    .wz-date-row {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr 1fr;
+      gap: 10px;
+      margin-bottom: 1.1rem;
     }
 
-    #tab-tiempos .tiempos-ux-final-log label {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.65rem;
-      cursor: pointer;
-      font-size: 0.95rem;
+    .wz-date-group { display: flex; flex-direction: column; gap: 5px; }
+
+    .wz-label {
+      font-size: 0.78rem;
       font-weight: 700;
       color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
     }
 
-    #tab-tiempos .tiempos-ux-final-log input[type="checkbox"] {
-      margin-top: 2px;
-      width: 18px;
-      height: 18px;
-      min-height: 18px;
-      accent-color: var(--danger);
-      cursor: pointer;
-    }
-
-    #tab-tiempos .tiempos-ux-action-help {
-      margin: 0 0 0.9rem 0;
-      color: var(--text-secondary);
-      font-size: 0.96rem;
-    }
-
-    #tab-tiempos .tiempos-ux-actions {
-      margin-top: 0;
-      justify-content: stretch;
-    }
-
-    #tab-tiempos .tiempos-ux-save {
+    .wz-select,
+    .wz-input {
+      padding: 0.7rem 0.8rem;
+      background: var(--input-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 0.95rem;
       width: 100%;
-      min-height: 52px;
+    }
+
+    .wz-select:focus, .wz-input:focus {
+      outline: none;
+      border-color: var(--primary-blue-light);
+      box-shadow: 0 0 0 3px rgba(26,46,196,0.22);
+    }
+
+    .wz-input::placeholder { color: var(--text-muted); }
+
+    /* ---- Section label ---- */
+    .wz-section-label {
+      font-size: 0.75rem;
+      font-weight: 800;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 0.55rem;
+    }
+
+    /* ---- Part section (animated reveal) ---- */
+    .wz-part-section {
+      margin-top: 0.9rem;
+      border-top: 1px solid rgba(107,122,153,0.2);
+      padding-top: 0.9rem;
+      transition: opacity 0.2s;
+    }
+    .wz-part-section--hidden { display: none; }
+
+    /* ---- Machine chip ---- */
+    .wz-machine-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0.45rem 0.85rem;
+      border-radius: 999px;
+      background: rgba(26,46,196,0.12);
+      border: 1px solid rgba(26,46,196,0.35);
+      color: var(--primary-blue-light);
+      font-size: 0.82rem;
+      font-weight: 700;
+      margin-top: 0.65rem;
+    }
+
+    .wz-machine-chip::before {
+      content: '⚙';
+      font-size: 0.9rem;
+    }
+
+    /* ---- Two-col row (process + operation) ---- */
+    .wz-two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 0.5rem;
+    }
+
+    /* ---- Hours grid (step 3) ---- */
+    .wz-hours-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 1.2rem;
+    }
+
+    .wz-hour-btn {
+      padding: 0.95rem 0.5rem;
+      background: var(--card-bg-light);
+      border: 1.5px solid var(--border-color);
+      border-radius: 10px;
+      color: var(--text-primary);
+      font-size: 1.05rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: border-color 0.18s, background 0.18s, box-shadow 0.18s;
+      text-align: center;
+    }
+
+    .wz-hour-btn:hover {
+      border-color: rgba(26,46,196,0.6);
+      background: rgba(26,46,196,0.09);
+    }
+
+    .wz-hour-btn--selected {
+      border-color: var(--primary-blue-light) !important;
+      background: rgba(26,46,196,0.2) !important;
+      box-shadow: 0 0 0 2px rgba(26,46,196,0.25);
+      color: #fff;
+    }
+
+    /* ---- Textarea & form group ---- */
+    .wz-form-group { margin-bottom: 1rem; }
+
+    .wz-textarea {
+      width: 100%;
+      padding: 0.75rem 0.85rem;
+      background: var(--input-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 0.93rem;
+      resize: vertical;
+      font-family: inherit;
+      line-height: 1.5;
+    }
+
+    .wz-textarea:focus {
+      outline: none;
+      border-color: var(--primary-blue-light);
+      box-shadow: 0 0 0 3px rgba(26,46,196,0.22);
+    }
+
+    .wz-textarea::placeholder { color: var(--text-muted); }
+
+    /* ---- Final toggle (step 3) ---- */
+    .wz-final-toggle {
+      border-radius: 12px;
+      border: 1.5px solid var(--border-color);
+      padding: 0.9rem 1rem;
+      background: var(--card-bg-light);
+      margin-bottom: 1rem;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .wz-final-toggle--active {
+      background: rgba(0,217,163,0.1) !important;
+      border-color: rgba(0,217,163,0.4) !important;
+    }
+
+    .wz-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .wz-toggle-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .wz-toggle-subtitle {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Toggle switch button */
+    .wz-toggle {
+      position: relative;
+      width: 52px;
+      height: 28px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      border: 1.5px solid var(--border-color);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.25s, border-color 0.25s;
+    }
+
+    .wz-toggle[aria-checked="true"] {
+      background: var(--success);
+      border-color: var(--success);
+    }
+
+    .wz-toggle-knob {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: transform 0.22s cubic-bezier(.4,.2,.2,1.3), background 0.22s;
+    }
+
+    .wz-toggle[aria-checked="true"] .wz-toggle-knob {
+      transform: translateX(24px);
+      background: #fff;
+    }
+
+    /* ---- Summary table (step 4) ---- */
+    .wz-summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1.2rem;
+    }
+
+    .wz-summary-table th,
+    .wz-summary-table td {
+      padding: 0.55rem 0.8rem;
+      font-size: 0.93rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .wz-summary-table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      width: 38%;
+      white-space: nowrap;
+    }
+
+    .wz-summary-table td {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .wz-summary-table tr:last-child th,
+    .wz-summary-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* ---- Nav buttons ---- */
+    .wz-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 1rem;
+      gap: 10px;
+    }
+
+    .wz-nav--save { margin-top: 0; }
+
+    .wz-btn {
+      padding: 0.75rem 1.4rem;
+      border-radius: 9px;
+      border: none;
+      font-size: 0.93rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.18s, transform 0.12s, box-shadow 0.18s;
+    }
+
+    .wz-btn:active { transform: scale(0.97); }
+
+    .wz-btn--back {
+      background: rgba(255,255,255,0.06);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-color);
+    }
+
+    .wz-btn--back:hover { background: rgba(255,255,255,0.1); }
+
+    .wz-btn--next {
+      background: var(--primary-blue-light);
+      color: #fff;
+      box-shadow: 0 6px 18px rgba(26,46,196,0.35);
+    }
+
+    .wz-btn--next:hover {
+      opacity: 0.9;
+      box-shadow: 0 8px 22px rgba(26,46,196,0.45);
+    }
+
+    .wz-btn--save {
+      flex: 1;
+      height: 48px;
+      background: linear-gradient(135deg, var(--primary-blue-dark), var(--primary-blue-light));
+      color: #fff;
       font-size: 1rem;
       font-weight: 800;
-      letter-spacing: 0.4px;
-      background: linear-gradient(135deg, var(--primary-blue-dark), var(--primary-blue-light));
-      box-shadow: 0 10px 24px rgba(2, 9, 138, 0.35);
+      letter-spacing: 0.3px;
+      box-shadow: 0 8px 24px rgba(2,9,138,0.38);
+      border-radius: 10px;
     }
 
-    #tab-tiempos .tiempos-ux-save:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 14px 30px rgba(2, 9, 138, 0.42);
+    .wz-btn--save:hover {
+      opacity: 0.92;
+      box-shadow: 0 12px 30px rgba(2,9,138,0.48);
     }
 
-    #tab-tiempos #tmResponse {
-      margin-top: 1rem;
+    /* ---- Response box ---- */
+    #tab-tiempos #tmResponse { margin-top: 1rem; }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 680px) {
+      #tab-tiempos { max-width: 100%; }
+      .wz-body { padding: 1rem; }
+      .wz-card-grid { grid-template-columns: 1fr; }
+      .wz-hours-grid { grid-template-columns: repeat(3, 1fr); }
+      .wz-two-col { grid-template-columns: 1fr; }
+      .wz-date-row { grid-template-columns: 1fr 1.4fr 1fr; }
+      .wz-stepper { padding: 0.7rem 0.6rem; }
+      .wz-step__label { font-size: 0.62rem; }
+      .wz-step-connector { flex: 0 0 10px; }
     }
 
-    @media (max-width: 1080px) {
-      #tab-tiempos .tiempos-ux-layout {
-        grid-template-columns: 1fr;
-      }
-
-      #tab-tiempos .tiempos-ux-card-context,
-      #tab-tiempos .tiempos-ux-card-selection,
-      #tab-tiempos .tiempos-ux-card-entry,
-      #tab-tiempos .tiempos-ux-card-action {
-        grid-column: 1;
-        grid-row: auto;
-        position: static;
-      }
+    @media (max-width: 420px) {
+      .wz-hours-grid { grid-template-columns: repeat(3, 1fr); gap: 7px; }
+      .wz-hour-btn { padding: 0.8rem 0.3rem; font-size: 0.9rem; }
     }
 
-    @media (max-width: 760px) {
-      #tab-tiempos .tiempos-ux-grid-2,
-      #tab-tiempos .tiempos-ux-grid-3 {
-        grid-template-columns: 1fr;
-      }
 
-      #tab-tiempos .tiempos-ux-card {
-        padding: 0.85rem;
-      }
-
-      #tab-tiempos .tiempos-ux-field select[size] {
-        min-height: 160px;
-      }
-    }
 
     hr {
       border: none;

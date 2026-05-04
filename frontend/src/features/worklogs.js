@@ -1,9 +1,15 @@
-import { logout, hasAdminPrivileges } from './auth.js';
-import { state } from '../core/state.js';
+import { state, hasAdminPrivileges } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO, fmtDateTime, parseLocaleNumber, formatTimeHM } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO, fmtDateTime, parseLocaleNumber, formatTimeHM, hoursToPayload } from '../ui/ui.js';
 import { safeCssEscape } from './planner.js';
 import { getBogotaTodayISO } from './calendar.js';
+
+// ── Module-level cache variables ──────────────────────────────────────────────
+let tiemposMetaCache = null;
+let tiemposPlanMonthCache = new Map();
+let tiemposPlanListenersBound = false;
+
+window._tiemposMetaCache = null; // Debug global
 
 export function getTiemposSelectedYMD() {
   const diaSel = document.getElementById('tmDia');
@@ -416,11 +422,13 @@ export function setupFilterListenerObjects(filterInputId, selectId, labelKey){
 }
 
 export async function loadTiemposMeta(){
+  if (!state.currentUser) return;
   try {
     const res = await fetch(`${state.API_URL}/catalogs/meta`, { credentials: 'include' });
     if (!res.ok) return;
     const meta = await res.json();
     tiemposMetaCache = meta;
+    window._tiemposMetaCache = meta; // Sync global
 
     // Día / Mes / Año: no dependen de BD, pero el año puede enriquecerse con meta.years
     populateDayMonthYear('tmDia', 'tmMes', 'tmAnio');
@@ -429,15 +437,12 @@ export async function loadTiemposMeta(){
       const base = []; for (let y = 2016; y <= (new Date().getFullYear() + 2); y++) base.push(y);
       const merged = Array.from(new Set([...(meta.years || []), ...base])).sort((a, b) => b - a);
       tmAnioSel.innerHTML = merged.map(y => `<option value="${y}">${y}</option>`).join('');
-      // Importante: el navegador selecciona el primer option automáticamente.
-      // Por eso seteamos explícitamente la fecha a "hoy Colombia".
     }
 
     // Por defecto hoy (Colombia), pero sigue siendo editable.
     setTiemposDateToColombiaToday();
 
     // Operario: si el usuario es operario, fijamos el campo al operario logueado.
-    // Si es admin/planner, dejamos el datalist libre como antes.
     fillDatalist('tmOperarios', (meta.operators || []).map(o => o.name));
     try {
       const tmOperarioEl = document.getElementById('tmOperario');
@@ -467,7 +472,388 @@ export async function loadTiemposMeta(){
       setupFilterListenerObjects('tmParteFilter', 'tmParteSelect', 'name');
       setupFilterListenerObjects('tmMaquinaFilter', 'tmMaquinaSelect', 'name');
     } catch (_) {}
-  } catch (_) {}
+
+    // Iniciar / refrescar el wizard con los datos cargados
+  } catch (e) {
+    console.error('[WorkLogs] Error in loadTiemposMeta:', e);
+  } finally {
+    initTiemposWizard(tiemposMetaCache || {});
+  }
+}
+
+// ================================
+// WIZARD TIEMPOS — controlador UI
+// ================================
+let _wzInitialized = false;
+let _wzMeta = null; // last meta used to populate cards
+
+// Module-level wizard state — persists across tab switches
+const wz = {
+  step: 1,
+  operatorId: null,
+  operatorName: '',
+  moldId: null,
+  moldName: '',
+  partId: null,
+  partName: '',
+  machineId: null,
+  machineName: '',
+  proceso: '',
+  operacion: '',
+  horas: null,
+  motivo: '',
+  isFinal: false,
+};
+
+export function initTiemposWizard(meta) {
+  _wzMeta = meta;
+
+  // ---- helpers ----
+  const $ = id => document.getElementById(id);
+  const monthNames = state.monthNames || [];
+
+  function setStep(n) {
+    wz.step = n;
+    // Update panels
+    [1, 2, 3, 4].forEach(i => {
+      const p = $(`wzPanel${i}`);
+      if (!p) return;
+      p.classList.toggle('wz-panel--hidden', i !== n);
+    });
+    // Update stepper
+    document.querySelectorAll('#wzStepper .wz-step').forEach(el => {
+      const s = Number(el.getAttribute('data-wz-step'));
+      el.classList.remove('wz-step--active', 'wz-step--done', 'wz-step--pending');
+      if (s < n) el.classList.add('wz-step--done');
+      else if (s === n) el.classList.add('wz-step--active');
+      else el.classList.add('wz-step--pending');
+    });
+    // Scroll to top of wizard
+    const shell = $('wzShell');
+    if (shell) shell.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function selectCard(grid, id) {
+    grid.querySelectorAll('.wz-item-card').forEach(c => {
+      c.classList.toggle('wz-item-card--selected', c.dataset.id === String(id));
+    });
+  }
+
+  function buildCards(containerId, items, onSelect) {
+    const grid = $(containerId);
+    if (!grid) return;
+    if (!items || !items.length) {
+      grid.innerHTML = `<div class="wz-empty-state">Sin datos disponibles</div>`;
+      return;
+    }
+    grid.innerHTML = items.map(it => `
+      <div class="wz-item-card" data-id="${it.id}" role="button" tabindex="0">
+        <div class="wz-item-card__name">${escapeHtml(it.name || '')}</div>
+        <div class="wz-item-card__sub">${escapeHtml(it.sub || '')}</div>
+      </div>
+    `).join('');
+    grid.querySelectorAll('.wz-item-card').forEach(card => {
+      const activate = () => {
+        const id = card.dataset.id;
+        selectCard(grid, id);
+        onSelect(id, card.querySelector('.wz-item-card__name')?.textContent || '');
+      };
+      card.addEventListener('click', activate);
+      card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') activate(); });
+    });
+  }
+
+  // ---- Sync hidden inputs (bridge to saveTiempoMolde) ----
+  function syncHiddenInputs() {
+    // Operario
+    const opEl = $('tmOperario');
+    if (opEl) { opEl.value = wz.operatorName; }
+    const opIdEl = document.getElementById('wzOperatorIdHidden');
+    if (opIdEl && wz.operatorId != null) opIdEl.value = String(wz.operatorId);
+
+    // Proceso (uses wz.proceso)
+    const prEl = $('tmProceso');
+    if (prEl) prEl.value = wz.proceso;
+    // Date
+    const wzDia = $('wzDia'), wzMes = $('wzMes'), wzAnio = $('wzAnio');
+    if (wzDia && wzMes && wzAnio) {
+      const tmDia = $('tmDia'), tmMes = $('tmMes'), tmAnio = $('tmAnio');
+      if (tmDia) tmDia.value = wzDia.value;
+      if (tmMes) tmMes.value = wzMes.value;
+      if (tmAnio) tmAnio.value = wzAnio.value;
+    }
+    // Molde
+    const moldeSelect = $('tmMoldeSelect');
+    if (moldeSelect && wz.moldId != null) {
+      const opt = moldeSelect.querySelector(`option[value="${wz.moldId}"]`);
+      if (opt) opt.selected = true; else moldeSelect.selectedIndex = -1;
+    }
+    // Parte
+    const parteSelect = $('tmParteSelect');
+    if (parteSelect && wz.partId != null) {
+      const opt = parteSelect.querySelector(`option[value="${wz.partId}"]`);
+      if (opt) opt.selected = true; else parteSelect.selectedIndex = -1;
+    }
+    // Maquina
+    const maqSelect = $('tmMaquinaSelect');
+    if (maqSelect && wz.machineId != null) {
+      const opt = maqSelect.querySelector(`option[value="${wz.machineId}"]`);
+      if (opt) opt.selected = true; else maqSelect.selectedIndex = -1;
+    }
+    // Operacion
+    const opEl2 = $('tmOperacion');
+    if (opEl2) opEl2.value = wz.operacion;
+    // Horas — write to dedicated hidden input for saveTiempoMolde to read
+    const wzHorasHiddenEl = document.getElementById('wzHorasHidden');
+    if (wzHorasHiddenEl && wz.horas != null) wzHorasHiddenEl.value = String(wz.horas);
+
+    // Motivo
+    const motivoEl = $('tmMotivo');
+    if (motivoEl) motivoEl.value = wz.motivo;
+    // isFinalLog
+    const finalEl = $('tmIsFinalLog');
+    if (finalEl) finalEl.checked = wz.isFinal;
+  }
+
+  // ---- STEP 1: Operator grid ----
+  function initStep1() {
+    const isOperator = String(state.currentUser?.role || '').toLowerCase() === 'operator';
+    let operators = [];
+    if (isOperator) {
+      operators = [{ id: state.currentUser?.operatorId, name: state.currentUser?.operatorName || 'Yo', sub: 'Tu sesión activa' }];
+      wz.operatorId = operators[0].id;
+      wz.operatorName = operators[0].name;
+    } else {
+      operators = (_wzMeta?.operators || []).map(o => ({ id: o.id, name: o.name, sub: o.shift || '' }));
+    }
+
+    buildCards('wzOperatorGrid', operators, (id, name) => {
+      wz.operatorId = id;
+      wz.operatorName = name;
+      // Also sync the text input if visible
+      const wzOpText = $('wzOperatorText');
+      if (wzOpText) wzOpText.value = name;
+    });
+
+    // Show text input fallback when no operators in DB (admin filling manually)
+    const wzOpTextWrap = $('wzOperatorTextWrap');
+    const noOperators = !isOperator && operators.length === 0;
+    if (wzOpTextWrap) wzOpTextWrap.style.display = noOperators ? '' : 'none';
+
+    // Pre-select if single operator (operator role)
+    if (isOperator && operators.length === 1) {
+      const grid = $('wzOperatorGrid');
+      if (grid) selectCard(grid, operators[0].id);
+    }
+
+    // Date selects — always repopulate to ensure they are filled
+    const now = new Date();
+    const wzDia = $('wzDia'), wzMes = $('wzMes'), wzAnio = $('wzAnio');
+    // Always fill (not conditional on empty)
+    if (wzDia) {
+      wzDia.innerHTML = Array.from({ length: 31 }, (_, i) => `<option value="${i+1}">${i+1}</option>`).join('');
+    }
+    if (wzMes) {
+      wzMes.innerHTML = monthNames.map(m => `<option value="${m}">${capitalize(m)}</option>`).join('');
+    }
+    if (wzAnio) {
+      const base = []; for (let y = 2016; y <= now.getFullYear() + 2; y++) base.push(y);
+      const merged = Array.from(new Set([...(_wzMeta?.years || []), ...base])).sort((a, b) => b - a);
+      wzAnio.innerHTML = merged.map(y => `<option value="${y}">${y}</option>`).join('');
+    }
+    // Set defaults to today
+    try {
+      const iso = (typeof getBogotaTodayISO === 'function' ? getBogotaTodayISO() : '') || '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+        const [yy, mm, dd] = iso.split('-').map(Number);
+        if (wzDia) wzDia.value = String(dd);
+        if (wzMes) wzMes.value = monthNames[mm - 1] || '';
+        if (wzAnio) wzAnio.value = String(yy);
+      } else {
+        if (wzDia) wzDia.value = String(now.getDate());
+        if (wzMes) wzMes.value = monthNames[now.getMonth()] || '';
+        if (wzAnio) wzAnio.value = String(now.getFullYear());
+      }
+    } catch (_) {}
+
+    // Populate wzProcesos / wzOperaciones datalists
+    const wzProcEl = $('wzProcesos');
+    if (wzProcEl) wzProcEl.innerHTML = (_wzMeta?.processes || []).map(p => `<option value="${escapeHtml(p.name)}">`).join('');
+    const wzOpEl = $('wzOperaciones');
+    if (wzOpEl) wzOpEl.innerHTML = (_wzMeta?.operations || []).map(o => `<option value="${escapeHtml(o.name)}">`).join('');
+  }
+
+  // ---- STEP 2: Mold & part grid ----
+  function buildMoldGrid() {
+    // Use active molds from in-progress OR from meta
+    const molds = uniqueIdName(_wzMeta?.molds || []).map(m => ({ ...m, sub: `M-${m.id}` }));
+    buildCards('wzMoldGrid', molds, (id, name) => {
+      wz.moldId = Number(id);
+      wz.moldName = name;
+      // Reveal parts
+      buildPartGrid(Number(id));
+      const partSection = $('wzPartSection');
+      if (partSection) partSection.classList.remove('wz-part-section--hidden');
+    });
+    // Re-select if already chosen
+    if (wz.moldId) selectCard($('wzMoldGrid'), wz.moldId);
+  }
+
+  function buildPartGrid(moldId) {
+    const allParts = uniqueIdName(_wzMeta?.parts || []).map(p => ({ ...p, sub: '' }));
+    buildCards('wzPartGrid', allParts, (id, name) => {
+      wz.partId = Number(id);
+      wz.partName = name;
+      // Auto-detect machine from meta (first machine that has this mold+part)
+      const machines = uniqueIdName(_wzMeta?.machines || []);
+      if (machines.length) {
+        wz.machineId = machines[0].id;
+        wz.machineName = machines[0].name;
+        const chip = $('wzMachineChip');
+        if (chip) { chip.textContent = `Máquina detectada: ${wz.machineName}`; chip.style.display = 'inline-flex'; }
+      }
+    });
+    if (wz.partId) selectCard($('wzPartGrid'), wz.partId);
+  }
+
+  // ---- STEP 3: Hours grid ----
+  function initStep3() {
+    const wzFinalToggle = $('wzFinalToggle');
+    const wzWrapper = $('wzFinalToggleWrapper');
+
+    if (wzFinalToggle && !wzFinalToggle.dataset.wzBound) {
+      wzFinalToggle.dataset.wzBound = '1';
+      wzFinalToggle.addEventListener('click', () => {
+        wz.isFinal = !wz.isFinal;
+        wzFinalToggle.setAttribute('aria-checked', String(wz.isFinal));
+        if (wzWrapper) wzWrapper.classList.toggle('wz-final-toggle--active', wz.isFinal);
+      });
+    }
+
+    const hoursInput = $('wzHoursInput');
+    if (hoursInput && !hoursInput.dataset.wzBound) {
+      hoursInput.dataset.wzBound = '1';
+      hoursInput.addEventListener('input', () => {
+        const val = parseFloat(hoursInput.value);
+        wz.horas = isNaN(val) ? null : val;
+      });
+    }
+
+    if (wz.horas != null && hoursInput) {
+      hoursInput.value = wz.horas;
+    }
+  }
+
+  // ---- STEP 4: Summary ----
+  function fillSummary() {
+    const wzDia = $('wzDia'), wzMes = $('wzMes'), wzAnio = $('wzAnio');
+    const dia = wzDia?.value || '—';
+    const mes = wzMes?.value ? capitalize(wzMes.value) : '—';
+    const anio = wzAnio?.value || '—';
+    const wzProc = $('wzProceso'), wzOper = $('wzOperacion');
+    wz.proceso = wzProc?.value?.trim() || '';
+    wz.operacion = wzOper?.value?.trim() || '';
+    const wzMotEl = $('wzMotivo');
+    wz.motivo = wzMotEl?.value?.trim() || '';
+
+    const set = (id, val) => { const el = $(id); if (el) el.textContent = val || '—'; };
+    set('wzsOperario', wz.operatorName);
+    set('wzsFecha', `${dia} de ${mes} de ${anio}`);
+    set('wzsMolde', wz.moldName);
+    set('wzsParte', wz.partName);
+    set('wzsMaquina', wz.machineName);
+    set('wzsProceso', wz.proceso);
+    set('wzsOperacion', wz.operacion);
+    set('wzsHoras', wz.horas != null ? `${wz.horas}h` : '—');
+    set('wzsMotivo', wz.motivo || '(ninguno)');
+    set('wzsFinal', wz.isFinal ? '✓ Sí — cierre definitivo' : 'No');
+
+    syncHiddenInputs();
+  }
+
+  // ---- Validation ----
+  function validateStep(n) {
+    if (n === 1) {
+      // Accept operator from card selection OR from text fallback input
+      const wzOpText = $('wzOperatorText');
+      if (wzOpText && wzOpText.value.trim()) {
+        wz.operatorName = wzOpText.value.trim();
+        // operatorId stays null — saveTiempoMolde will do name-based lookup
+      }
+      if (!wz.operatorName.trim()) {
+        showToast('Selecciona o escribe el nombre del operario', false);
+        return false;
+      }
+      const wzDia = $('wzDia'), wzMes = $('wzMes'), wzAnio = $('wzAnio');
+      if (!wzDia?.value || !wzMes?.value || !wzAnio?.value) { showToast('Completa la fecha', false); return false; }
+      return true;
+    }
+    if (n === 2) {
+      if (!wz.moldId) { showToast('Selecciona un molde', false); return false; }
+      if (!wz.partId) { showToast('Selecciona una parte', false); return false; }
+      const wzProc = $('wzProceso'), wzOper = $('wzOperacion');
+      if (!wzProc?.value?.trim()) { showToast('Escribe el proceso', false); return false; }
+      if (!wzOper?.value?.trim()) { showToast('Escribe la operación', false); return false; }
+      return true;
+    }
+    if (n === 3) {
+      const hoursInput = $('wzHoursInput');
+      if (hoursInput) {
+        const val = parseFloat(hoursInput.value);
+        wz.horas = isNaN(val) ? null : val;
+      }
+      if (wz.horas == null || wz.horas <= 0) { showToast('Ingresa las horas trabajadas', false); return false; }
+      return true;
+    }
+    return true;
+  }
+
+  // ---- Wire navigation buttons (only once) ----
+  if (!_wzInitialized) {
+    _wzInitialized = true;
+
+    const wire = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+
+    wire('wzNext1', () => { if (validateStep(1)) { setStep(2); buildMoldGrid(); } });
+    wire('wzBack2', () => setStep(1));
+    wire('wzNext2', () => { if (validateStep(2)) { setStep(3); initStep3(); } });
+    wire('wzBack3', () => setStep(2));
+    wire('wzNext3', () => { if (validateStep(3)) { setStep(4); fillSummary(); } });
+    wire('wzBack4', () => setStep(3));
+
+    // Guardar: sync then call existing saveTiempoMolde
+    const saveBtn = $('tmGuardarBtn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        fillSummary(); // ensure sync
+        const resp = $('tmResponse');
+        if (resp) { resp.textContent = ''; resp.className = 'response-box hidden'; }
+        await saveTiempoMolde();
+        // Reset wizard on success (check if tmResponse shows no error)
+        setTimeout(() => {
+          const hasError = resp && resp.classList.contains('error');
+          if (!hasError) {
+            Object.assign(wz, { step: 1, operatorId: null, operatorName: '', moldId: null, moldName: '', partId: null, partName: '', machineId: null, machineName: '', proceso: '', operacion: '', horas: null, motivo: '', isFinal: false });
+            const wzFinalToggle = $('wzFinalToggle');
+            if (wzFinalToggle) { wzFinalToggle.setAttribute('aria-checked', 'false'); }
+            const wzWrapper = $('wzFinalToggleWrapper');
+            if (wzWrapper) wzWrapper.classList.remove('wz-final-toggle--active');
+            const wzMotEl = $('wzMotivo');
+            if (wzMotEl) wzMotEl.value = '';
+            const wzHH = document.getElementById('wzHorasHidden');
+            if (wzHH) wzHH.value = '';
+
+            setStep(1);
+            initStep1();
+          }
+        }, 600);
+      });
+    }
+  }
+
+  // ---- Init current step ----
+  initStep1();
+  setStep(wz.step);
 }
 
 export async function saveTiempoMolde() {
@@ -493,16 +879,27 @@ export async function saveTiempoMolde() {
   const operacion = document.getElementById('tmOperacion') ? document.getElementById('tmOperacion').value : '';
   const motivo = document.getElementById('tmMotivo') ? document.getElementById('tmMotivo').value : '';
   const horasEl = document.getElementById('tmHoras');
-  const horas = horasEl ? parseLocaleNumber(horasEl.value) : NaN;
+  // Wizard populates #wzHorasHidden; fall back to select for non-wizard path
+  const horasHidden = document.getElementById('wzHorasHidden');
+  const horas = horasHidden && horasHidden.value
+    ? parseLocaleNumber(horasHidden.value)
+    : (horasEl ? parseLocaleNumber(horasEl.value) : NaN);
+
 
   if (isNaN(dia) || !mes || isNaN(anio) || !operario || !proceso || isNaN(moldId) || isNaN(partId) || isNaN(machineId) || !operacion || isNaN(horas)) {
     return displayResponse('tmResponse', { error: 'Completa todos los campos' }, false);
   }
 
   const meta = tiemposMetaCache || {};
-  const operatorId = isOperator
-    ? Number(state.currentUser?.operatorId)
-    : Number(findByName(meta.operators, operario)?.id);
+  // Prefer wizard's direct operator ID if present
+  const wzOpIdEl = document.getElementById('wzOperatorIdHidden');
+  const wzOpIdRaw = wzOpIdEl ? Number(wzOpIdEl.value) : NaN;
+  const operatorId = Number.isFinite(wzOpIdRaw) && wzOpIdRaw > 0
+    ? wzOpIdRaw
+    : (isOperator
+      ? Number(state.currentUser?.operatorId)
+      : Number(findByName(meta.operators, operario)?.id));
+
 
   if (!Number.isFinite(operatorId) || operatorId <= 0) {
     return displayResponse('tmResponse', { error: 'Operario inválido' }, false);
@@ -1693,33 +2090,29 @@ export function renderImportDiagnostics(resp) { }
 
 // Calendario
 // Inactividad
-export function resetInactivityTimer() { clearTimeout(state.inactivityTimer); if (state.currentUser) state.inactivityTimer = setTimeout(logout, state.INACTIVITY_TIMEOUT); }
-export function startInactivityTimer() { window.onclick = resetInactivityTimer; window.onkeypress = resetInactivityTimer; resetInactivityTimer(); }
-export function setInactivityMinutes(minutes) {
-  const m = parseInt(minutes, 10);
-  if (!isNaN(m) && m > 0) {
-    state.INACTIVITY_TIMEOUT = m * 60 * 1000;
-    localStorage.setItem(state.LS_KEYS.inactivityMinutes, String(m));
-    resetInactivityTimer();
-  }
+// Inactividad (Movido a auth.js para evitar dependencias circulares)
+
+function filterWizardGrid(inputId, gridId) {
+  const input = document.getElementById(inputId);
+  const grid = document.getElementById(gridId);
+  if (!input || !grid) return;
+
+  input.addEventListener('input', () => {
+    const q = input.value.toLowerCase().trim();
+    const cards = grid.querySelectorAll('.wz-item-card');
+    cards.forEach(card => {
+      const name = card.querySelector('.wz-item-card__name')?.textContent.toLowerCase() || '';
+      const sub = card.querySelector('.wz-item-card__sub')?.textContent.toLowerCase() || '';
+      const match = name.includes(q) || sub.includes(q);
+      card.style.display = match ? '' : 'none';
+    });
+  });
 }
 
-
-
 export function initWorkLogsEvents() {
-  const tbody = document.querySelector('#workLogsTable tbody');
-  if (tbody) {
-    tbody.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-action]');
-      if (!btn) return;
-      const action = btn.getAttribute('data-action');
-      const id = btn.getAttribute('data-id');
-      if (action === 'wl-edit') startEditWorkLogRow(id);
-      else if (action === 'wl-save') saveWorkLogRow(id);
-      else if (action === 'wl-delete') deleteWorkLog(id);
-      else if (action === 'wl-more') toggleWorkLogDetail(id);
-    });
-  }
+  const wire = (id, event, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(event, fn); };
+
+  // Wizard y Formulario de Tiempos
   const tmForm = document.getElementById('tiempoMoldeForm');
   if (tmForm) {
     tmForm.addEventListener('submit', (e) => {
@@ -1727,7 +2120,49 @@ export function initWorkLogsEvents() {
       saveTiempoMolde();
     });
   }
-  const imBtn = document.getElementById('importBtn');
+  
+  // Botones de Refresco y Acción en Tiempos/Sesiones
+  wire('tmRefreshBtn', 'click', () => {
+    document.querySelectorAll('.wz-search-input').forEach(i => i.value = '');
+    loadTiemposMeta();
+  });
+  wire('wlRefreshBtn', 'click', () => loadWorkLogsHistory());
+  wire('datosRefreshBtn', 'click', () => loadDatos(true));
+  
+  // Wizard Navigation (fallback wiring if not done in initTiemposWizard)
+  wire('wzVolver', 'click', () => { /* Logic is usually inside initTiemposWizard but we ensure visibility */ });
+  
+  // Importación
+  wire('importBtn', 'click', importDatosCSV);
+
+  // Filtros de búsqueda en Wizard
+  filterWizardGrid('wzOperatorSearch', 'wzOperatorGrid');
+  filterWizardGrid('wzMoldSearch', 'wzMoldGrid');
+  filterWizardGrid('wzPartSearch', 'wzPartGrid');
+
+  // Delegación para Tabla de Registros (WorkLogs)
+  const wlTable = document.getElementById('workLogsTable');
+  if (wlTable) {
+    const tbody = wlTable.querySelector('tbody');
+    if (tbody) {
+      tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const action = btn.getAttribute('data-action');
+        const id = btn.getAttribute('data-id');
+        if (action === 'wl-edit') startEditWorkLogRow(id);
+        else if (action === 'wl-save') saveWorkLogRow(id);
+        else if (action === 'wl-delete') deleteWorkLog(id);
+        else if (action === 'wl-more') toggleWorkLogRowDetails(id);
+      });
+    }
+  }
+
+  // Datos (Tab)
+  wire('datoCrearBtn', 'click', createDatoManual);
+  wire('datosMostrarTodosBtn', 'click', () => loadDatos(true));
+
+  // Delegación para Tabla de Datos (Historial)
   const datosTable = document.getElementById('datosTable');
   if (datosTable) {
     datosTable.addEventListener('click', (e) => {
@@ -1739,6 +2174,9 @@ export function initWorkLogsEvents() {
       if (act === 'dato-delete') deleteDatoRow(id);
     });
   }
+
+  // Inicialización de metadatos al cargar
+  ensureWorkLogsMeta();
 }
 
 export function normalizeHoursOptions(items) {
@@ -1762,6 +2200,7 @@ export function fillHoursOptionsSelect(options) {
 }
 
 export async function loadHoursOptions() {
+  if (!state.currentUser) return;
   if (state.hoursOptionsCache) return state.hoursOptionsCache;
   try {
     const res = await fetch(`${state.API_URL}/datos/hours-options`, { credentials: 'include' });

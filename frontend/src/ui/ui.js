@@ -99,6 +99,12 @@ export function round2(n) {
   return Number.isFinite(num) ? Math.round(num * 100) / 100 : 0;
 }
 
+export function hoursToPayload(v) {
+  if (v === '') return '';
+  const n = parseLocaleNumber(v);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : '';
+}
+
 export function formatCurrencyCOP(raw) {
   const n = Number(raw || 0);
   if (!Number.isFinite(n)) return '$ 0';

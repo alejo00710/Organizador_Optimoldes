@@ -1,3 +1,4 @@
+console.log('🚀 [Organizador] Iniciando aplicación (V1.1)...');
 import '../styles.css';
 import { state } from './core/state.js';
 

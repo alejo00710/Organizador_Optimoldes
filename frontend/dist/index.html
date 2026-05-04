@@ -4,15 +4,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' data:; connect-src 'self' ws: http://localhost:* http://127.0.0.1:* https://cdn.jsdelivr.net; img-src 'self' data:;">
-  <title>Planificador de Moldes</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' data:; connect-src 'self' ws: http://*:* https://cdn.jsdelivr.net; img-src 'self' data:;">
+  <title>Planificador de Moldes (V1.1)</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/main.min.css">
   <link rel="icon" href="assets/logo_optimoldes_pdf_page-0001-removebg-preview.png">
-  <script type="module" crossorigin src="/assets/index-BTMSpKkf.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-Bt17IAHD.css">
+  <script>
+    window.onerror = function(msg, url, line) {
+      const div = document.getElementById('debug-error-overlay');
+      if (div) {
+        div.style.display = 'block';
+        div.innerHTML += '<p style="margin:5px 0;">🔴 Error: ' + msg + ' <br><small>' + url + ':' + line + '</small></p>';
+      }
+      return false;
+    };
+  </script>
+  <script type="module" crossorigin src="/assets/index-oeaeYrse.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CZ-A7vIK.css">
 </head>
 
 <body>
+  <div id="debug-error-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; background:rgba(255,0,0,0.9); color:white; padding:15px; z-index:99999; font-family:monospace; font-size:12px; border-bottom:2px solid black;">
+    <button onclick="this.parentElement.style.display='none'" style="float:right; background:white; border:none; padding:5px 10px; cursor:pointer;">Cerrar</button>
+    <strong>[DEBUG] Errores detectados:</strong><br>
+  </div>
   <div class="container">
     <div class="login-container" id="loginContainer">
       <div class="login-layout">
@@ -251,115 +268,197 @@
           <div class="response-box" id="datosResponse"></div>
         </div>
 
-        <!-- Tiempos de Moldes (sin cambios) -->
+        <!-- Tiempos de Moldes — Wizard 4 pasos -->
         <div class="tab-content" id="tab-tiempos">
-          <h2>Tiempos de Moldes</h2>
-          <p class="tiempos-ux-subtitle">Registra el trabajo en 4 pasos: contexto, selección, ingreso y guardar.</p>
 
-          <div class="tiempos-ux-layout">
-            <section class="tiempos-ux-card tiempos-ux-card-context">
-              <div class="tiempos-ux-card-head">
-                <h3>Contexto</h3>
-                <span class="tiempos-ux-step">Paso 1</span>
-              </div>
-
-              <div class="tiempos-ux-grid-2">
-                <div class="form-group tiempos-ux-field">
-                  <label>Operario</label>
-                  <input list="tmOperarios" id="tmOperario" placeholder="Escribe o selecciona el operario">
-                  <datalist id="tmOperarios"></datalist>
-                </div>
-                <div class="form-group tiempos-ux-field">
-                  <label>Proceso</label>
-                  <input list="tmProcesos" id="tmProceso" placeholder="Ej: Inyección, Ajuste, Pulido">
-                  <datalist id="tmProcesos"></datalist>
-                </div>
-              </div>
-
-              <div class="tiempos-ux-grid-3">
-                <div class="form-group tiempos-ux-field"><label>Día</label><select id="tmDia"></select></div>
-                <div class="form-group tiempos-ux-field"><label>Mes</label><select id="tmMes"></select></div>
-                <div class="form-group tiempos-ux-field"><label>Año</label><select id="tmAnio"></select></div>
-              </div>
-
-              <div class="form-group tiempos-ux-field">
-                <label>Molde</label>
-                <input type="text" id="tmMoldeFilter" placeholder="Busca por nombre del molde">
-                <select id="tmMoldeSelect" size="6"></select>
-              </div>
-
-              <div class="tiempos-ux-info-chip">Planning: se detecta automaticamente al guardar segun el molde y la fecha.</div>
-            </section>
-
-            <section class="tiempos-ux-card tiempos-ux-card-selection">
-              <div class="tiempos-ux-card-head">
-                <h3>Seleccion</h3>
-                <span class="tiempos-ux-step">Paso 2</span>
-              </div>
-
-              <div class="tiempos-ux-grid-2">
-                <div class="form-group tiempos-ux-field">
-                  <label>Parte</label>
-                  <input type="text" id="tmParteFilter" placeholder="Busca la parte trabajada">
-                  <select id="tmParteSelect" size="6"></select>
-                </div>
-
-                <div class="form-group tiempos-ux-field">
-                  <label>Maquina</label>
-                  <input type="text" id="tmMaquinaFilter" placeholder="Busca la maquina usada">
-                  <select id="tmMaquinaSelect" size="6"></select>
-                </div>
-              </div>
-
-              <div class="form-group tiempos-ux-field">
-                <label>Operacion</label>
-                <input list="tmOperaciones" id="tmOperacion" placeholder="Describe la operacion realizada">
-                <datalist id="tmOperaciones"></datalist>
-              </div>
-            </section>
-
-            <section class="tiempos-ux-card tiempos-ux-card-entry">
-              <div class="tiempos-ux-card-head">
-                <h3>Ingreso</h3>
-                <span class="tiempos-ux-step">Paso 3</span>
-              </div>
-
-              <div class="tiempos-ux-grid-2">
-                <div class="form-group tiempos-ux-field">
-                  <label>Horas trabajadas</label>
-                  <select id="tmHoras"></select>
-                </div>
-
-                <div class="form-group tiempos-ux-field">
-                  <label>Cantidad registrada</label>
-                  <input type="text" value="Se calcula con las horas" disabled>
-                </div>
-              </div>
-
-              <div class="form-group tiempos-ux-field">
-                <label>Detalle (si hubo novedad)</label>
-                <input type="text" id="tmMotivo" placeholder="Ej: detalle de ajuste, falla de maquina, retrabajo, espera de material">
-              </div>
-
-              <div class="form-group tiempos-ux-field tiempos-ux-final-log">
-                <label>
-                  <input type="checkbox" id="tmIsFinalLog" />
-                  Finalizar esta parte definitivamente (bloquea reprogramacion futura)
-                </label>
-              </div>
-            </section>
-
-            <section class="tiempos-ux-card tiempos-ux-card-action">
-              <div class="tiempos-ux-card-head">
-                <h3>Accion</h3>
-                <span class="tiempos-ux-step">Paso 4</span>
-              </div>
-              <p class="tiempos-ux-action-help">Verifica los datos y guarda el registro.</p>
-              <div class="form-actions tiempos-ux-actions">
-                <button class="btn btn-primary tiempos-ux-save" id="tmGuardarBtn">Guardar registro</button>
-              </div>
-            </section>
+          <!-- Hidden inputs/selects para compatibilidad con saveTiempoMolde -->
+          <div style="display:none" aria-hidden="true">
+            <input list="tmOperarios" id="tmOperario">
+            <datalist id="tmOperarios"></datalist>
+            <input list="tmProcesos" id="tmProceso">
+            <datalist id="tmProcesos"></datalist>
+            <select id="tmDia"></select>
+            <select id="tmMes"></select>
+            <select id="tmAnio"></select>
+            <input type="text" id="tmMoldeFilter">
+            <select id="tmMoldeSelect" size="6"></select>
+            <input type="text" id="tmParteFilter">
+            <select id="tmParteSelect" size="6"></select>
+            <input type="text" id="tmMaquinaFilter">
+            <select id="tmMaquinaSelect" size="6"></select>
+            <input list="tmOperaciones" id="tmOperacion">
+            <datalist id="tmOperaciones"></datalist>
+            <select id="tmHoras"></select>
+            <input type="text" id="tmMotivo">
+            <input type="checkbox" id="tmIsFinalLog">
+            <input type="text" id="wzHorasHidden">
+            <input type="text" id="wzOperatorIdHidden">
           </div>
+
+          <!-- Wizard shell -->
+          <div class="wz-shell" id="wzShell">
+            <!-- Stepper bar -->
+            <nav class="wz-stepper" id="wzStepper" aria-label="Pasos del formulario">
+              <div class="wz-step wz-step--active" data-wz-step="1">
+                <span class="wz-step__num">1</span>
+                <span class="wz-step__label">¿Quién?</span>
+              </div>
+              <div class="wz-step-connector"></div>
+              <div class="wz-step wz-step--pending" data-wz-step="2">
+                <span class="wz-step__num">2</span>
+                <span class="wz-step__label">¿Qué molde?</span>
+              </div>
+              <div class="wz-step-connector"></div>
+              <div class="wz-step wz-step--pending" data-wz-step="3">
+                <span class="wz-step__num">3</span>
+                <span class="wz-step__label">¿Cuántas horas?</span>
+              </div>
+              <div class="wz-step-connector"></div>
+              <div class="wz-step wz-step--pending" data-wz-step="4">
+                <span class="wz-step__num">4</span>
+                <span class="wz-step__label">Confirmar</span>
+              </div>
+            </nav>
+
+            <!-- Panels -->
+            <div class="wz-body">
+
+              <!-- PASO 1: ¿Quién? -->
+              <div class="wz-panel" id="wzPanel1" data-panel="1">
+                <h2 class="wz-question">¿Quién está registrando?</h2>
+                <p class="wz-hint">Selecciona tu nombre y la fecha del trabajo</p>
+                
+                <div class="wz-search-wrapper">
+                  <i class="wz-search-icon">🔍</i>
+                  <input type="text" class="wz-search-input" id="wzOperatorSearch" placeholder="Buscar operario...">
+                </div>
+                <div class="wz-scroll-container">
+                  <div id="wzOperatorGrid" class="wz-card-grid"></div>
+                </div>
+                <!-- Fallback: texto libre cuando no hay operarios en BD -->
+                <div id="wzOperatorTextWrap" style="display:none; margin-bottom:1rem">
+                  <label class="wz-label">Nombre del operario</label>
+                  <input class="wz-input" id="wzOperatorText" placeholder="Escribe el nombre del operario…" autocomplete="off">
+                </div>
+                <div class="wz-date-row">
+                  <div class="wz-date-group">
+                    <label class="wz-label">Día</label>
+                    <select class="wz-select" id="wzDia"></select>
+                  </div>
+                  <div class="wz-date-group">
+                    <label class="wz-label">Mes</label>
+                    <select class="wz-select" id="wzMes"></select>
+                  </div>
+                  <div class="wz-date-group">
+                    <label class="wz-label">Año</label>
+                    <select class="wz-select" id="wzAnio"></select>
+                  </div>
+                </div>
+                <div class="wz-nav">
+                  <span></span>
+                  <button class="wz-btn wz-btn--next" id="wzNext1">Siguiente →</button>
+                </div>
+              </div>
+
+              <!-- PASO 2: ¿Molde y parte? -->
+              <div class="wz-panel wz-panel--hidden" id="wzPanel2" data-panel="2">
+                <h2 class="wz-question">¿En qué molde y parte trabajaste?</h2>
+                <p class="wz-hint">Selecciona el molde activo, luego la parte</p>
+                <div class="wz-section-label">Molde</div>
+                <div class="wz-search-wrapper">
+                  <i class="wz-search-icon">🔍</i>
+                  <input type="text" class="wz-search-input" id="wzMoldSearch" placeholder="Buscar molde...">
+                </div>
+                <div class="wz-scroll-container">
+                  <div id="wzMoldGrid" class="wz-card-grid"></div>
+                </div>
+                <div id="wzPartSection" class="wz-part-section wz-part-section--hidden">
+                  <div class="wz-section-label">Parte</div>
+                  <div class="wz-search-wrapper">
+                    <i class="wz-search-icon">🔍</i>
+                    <input type="text" class="wz-search-input" id="wzPartSearch" placeholder="Buscar parte...">
+                  </div>
+                  <div class="wz-scroll-container">
+                    <div id="wzPartGrid" class="wz-card-grid"></div>
+                  </div>
+                  <div id="wzMachineChip" class="wz-machine-chip" style="display:none"></div>
+                </div>
+                <div class="wz-section-label" style="margin-top:1.1rem">Proceso y operación</div>
+                <div class="wz-two-col">
+                  <div>
+                    <label class="wz-label">Proceso</label>
+                    <input list="wzProcesos" class="wz-input" id="wzProceso" placeholder="Ej: Inyección, Ajuste…">
+                    <datalist id="wzProcesos"></datalist>
+                  </div>
+                  <div>
+                    <label class="wz-label">Operación</label>
+                    <input list="wzOperaciones" class="wz-input" id="wzOperacion" placeholder="Ej: Fresado, Tornería…">
+                    <datalist id="wzOperaciones"></datalist>
+                  </div>
+                </div>
+                <div class="wz-nav">
+                  <button class="wz-btn wz-btn--back" id="wzBack2">← Atrás</button>
+                  <button class="wz-btn wz-btn--next" id="wzNext2">Siguiente →</button>
+                </div>
+              </div>
+
+              <!-- PASO 3: ¿Cuántas horas? -->
+              <div class="wz-panel wz-panel--hidden" id="wzPanel3" data-panel="3">
+                <h2 class="wz-question">¿Cuántas horas trabajaste?</h2>
+                <p class="wz-hint">Escribe la cantidad de horas (puedes usar decimales como 0.5 o 1.5)</p>
+                
+                <div class="wz-form-group" style="max-width: 300px; margin: 0 auto 2rem auto;">
+                  <input type="number" step="0.5" min="0" max="24" class="wz-input wz-input--large" id="wzHoursInput" placeholder="0.0">
+                </div>
+
+                <div class="wz-form-group">
+                <div class="wz-form-group">
+                  <label class="wz-label">Detalle / Novedad (opcional)</label>
+                  <textarea class="wz-textarea" id="wzMotivo" placeholder="Ej: Falla de máquina, retrabajo, espera de material…" rows="3"></textarea>
+                </div>
+                <div class="wz-final-toggle" id="wzFinalToggleWrapper">
+                  <div class="wz-toggle-row">
+                    <div>
+                      <div class="wz-toggle-title">Esta parte quedó terminada</div>
+                      <div class="wz-toggle-subtitle">Bloquea reprogramación futura</div>
+                    </div>
+                    <button class="wz-toggle" id="wzFinalToggle" role="switch" aria-checked="false" type="button">
+                      <span class="wz-toggle-knob"></span>
+                    </button>
+                  </div>
+                </div>
+                <div class="wz-nav">
+                  <button class="wz-btn wz-btn--back" id="wzBack3">← Atrás</button>
+                  <button class="wz-btn wz-btn--next" id="wzNext3">Siguiente →</button>
+                </div>
+              </div>
+
+              <!-- PASO 4: Confirmar -->
+              <div class="wz-panel wz-panel--hidden" id="wzPanel4" data-panel="4">
+                <h2 class="wz-question">Revisa antes de guardar</h2>
+                <p class="wz-hint">Si algo está mal, regresa al paso correspondiente</p>
+                <table class="wz-summary-table" id="wzSummaryTable">
+                  <tbody>
+                    <tr><th>Operario</th><td id="wzsOperario">—</td></tr>
+                    <tr><th>Fecha</th><td id="wzsFecha">—</td></tr>
+                    <tr><th>Molde</th><td id="wzsMolde">—</td></tr>
+                    <tr><th>Parte</th><td id="wzsParte">—</td></tr>
+                    <tr><th>Máquina</th><td id="wzsMaquina">—</td></tr>
+                    <tr><th>Proceso</th><td id="wzsProceso">—</td></tr>
+                    <tr><th>Operación</th><td id="wzsOperacion">—</td></tr>
+                    <tr><th>Horas</th><td id="wzsHoras">—</td></tr>
+                    <tr><th>Detalle</th><td id="wzsMotivo">—</td></tr>
+                    <tr><th>Cierre final</th><td id="wzsFinal">—</td></tr>
+                  </tbody>
+                </table>
+                <div class="wz-nav wz-nav--save">
+                  <button class="wz-btn wz-btn--back" id="wzBack4">← Atrás</button>
+                  <button class="wz-btn wz-btn--save" id="tmGuardarBtn">Guardar registro</button>
+                </div>
+              </div>
+
+            </div><!-- /.wz-body -->
+          </div><!-- /.wz-shell -->
 
           <div class="response-box" id="tmResponse"></div>
         </div>
@@ -889,6 +988,9 @@
         <a class="footer-link" href="#" data-legal="datos">Política de Datos</a>
         <span class="footer-sep">|</span>
         <a class="footer-link" href="#" data-legal="propiedad">Información Legal</a>
+      </div>
+      <div class="footer-version" style="font-size: 10px; color: #999; text-align: center; padding: 10px;">
+        Versión: 1.1.0 - Última actualización: 2026-05-03 00:15
       </div>
     </footer>
 

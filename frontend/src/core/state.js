@@ -80,3 +80,7 @@ export const state = {
   currentDayDetailsRequestId: 0,
   sharedDays: JSON.parse(localStorage.getItem('sharedDays') || '{}')
 };
+
+export function hasAdminPrivileges(role) {
+  return ['admin', 'management', 'planner'].includes(String(role || '').toLowerCase());
+}

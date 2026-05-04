@@ -10,6 +10,13 @@ export async function initPlannerTab() {
   renderFixedPlanningGrid();
   restorePlannerStateFromStorage();
   try { await loadPlannedMoldsList(); } catch (_) {}
+  
+  // Initialize date to today (Colombia)
+  const startDateEl = document.getElementById('gridStartDate');
+  if (startDateEl && !startDateEl.value) {
+    const today = typeof getBogotaTodayISO === 'function' ? getBogotaTodayISO() : new Date().toISOString().split('T')[0];
+    startDateEl.value = today;
+  }
 }
 
 export function setPlannerLoadedMold(mold) {
@@ -1080,6 +1087,9 @@ export async function submitGridPlan(e) {
       : 'Enviando planificación...';
   }
 
+  const btn = document.getElementById('submitGridPlanBtn');
+  if (btn) btn.disabled = true;
+
   // ---------------------------
   // FETCH
   // ---------------------------
@@ -1118,6 +1128,8 @@ export async function submitGridPlan(e) {
   } catch (err) {
     console.error('ERROR FETCH:', err);
     displayResponse('gridResponse', { error: 'Error al planificar', details: String(err) }, false);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1135,7 +1147,12 @@ export function initPlannerEvents() {
     submitGridPlan();
   });
 
-  wire('clearPlannerStateBtn', 'click', (e) => {
+  wire('prioritySwitch', 'change', (e) => {
+    console.log('Priority changed:', e.target.checked);
+    // Usually no action needed, but we ensure the listener is there if we want to add UI feedback
+  });
+
+  wire('clearPlannerBtn', 'click', (e) => {
     e.preventDefault();
     if (confirm('¿Limpiar toda la parrilla?')) {
         const grid = document.getElementById('planningGridFixed');
@@ -1147,6 +1164,8 @@ export function initPlannerEvents() {
         }
     }
   });
+
+  wire('refreshPlannedMoldsBtn', 'click', () => loadPlannedMoldsList());
 
   const gridContainer = document.getElementById('planningGridContainer');
   if (gridContainer) {

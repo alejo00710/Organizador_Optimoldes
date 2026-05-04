@@ -1,13 +1,9 @@
-import { state } from '../core/state.js';
+import { state, hasAdminPrivileges } from '../core/state.js';
 import * as api from '../core/api.js';
 import { showToast, displayResponse, setupStickyTabsOffset, setupFixedTabsBar, openTab, escapeHtml } from '../ui/ui.js';
-import { resetInactivityTimer, startInactivityTimer } from './worklogs.js';
 import { preloadMoldsForSearch } from './planner.js';
 import { loadCalendar } from './calendar.js';
  
- export function hasAdminPrivileges(role) {
-   return ['admin', 'management', 'planner'].includes(String(role || '').toLowerCase());
- }
 
 export function updateConnectionStatus(connected) {
   const el = document.getElementById('status');
@@ -164,13 +160,14 @@ export function showMainApp(user) {
     const isManagementTab = tab === 'reports' || tab === 'financial';
     if (isOperator) {
       btn.classList.toggle('hidden', !(tab === 'tiempos' || tab === 'registros'));
-    } else if (isManagement) {
-      // Gerencia ve todas las pestañas estándar y también las exclusivas.
+    } else if (isManagement || role === 'admin') {
+      // Gerencia y Admin ven todas las pestañas.
       btn.classList.remove('hidden');
     } else if (canSeeAll) {
+      // Otros roles con privilegios (ej: planner/jefe) ven todo menos gestión.
       btn.classList.toggle('hidden', isManagementTab);
     } else {
-      // fallback conservador: si algún rol nuevo aparece, dejamos visibles solo tabs "seguros"
+      // fallback conservador
       btn.classList.toggle('hidden', tab === 'config');
     }
   });
@@ -200,6 +197,25 @@ export function showMainApp(user) {
   setTimeout(() => {
     try { loadCalendar(); } catch (e) { }
   }, 100);
+}
+
+// Inactividad
+export function resetInactivityTimer() { 
+  clearTimeout(state.inactivityTimer); 
+  if (state.currentUser) state.inactivityTimer = setTimeout(logout, state.INACTIVITY_TIMEOUT); 
+}
+export function startInactivityTimer() { 
+  window.onclick = resetInactivityTimer; 
+  window.onkeypress = resetInactivityTimer; 
+  resetInactivityTimer(); 
+}
+export function setInactivityMinutes(minutes) {
+  const m = parseInt(minutes, 10);
+  if (!isNaN(m) && m > 0) {
+    state.INACTIVITY_TIMEOUT = m * 60 * 1000;
+    localStorage.setItem(state.LS_KEYS.inactivityMinutes, String(m));
+    resetInactivityTimer();
+  }
 }
 
 // Auth
