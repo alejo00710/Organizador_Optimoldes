@@ -1,6 +1,6 @@
 import { state, hasAdminPrivileges } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO, fmtDateTime, parseLocaleNumber, formatTimeHM, hoursToPayload } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, round2, capitalize, fmtDateOnly, formatDateDisplay, parseUiDateToISO, fmtDateTime, parseLocaleNumber, formatTimeHM, hoursToPayload, formatNumberCOP } from '../ui/ui.js';
 import { safeCssEscape } from './planner.js';
 import { getBogotaTodayISO } from './calendar.js';
 
@@ -209,7 +209,8 @@ export function bindWorkLogPlannedListeners(row) {
   if (hoursEl) hoursEl.addEventListener('input', () => scheduleWorkLogPlannedRefresh(row));
 }
 
-export async function refreshTiemposPlannedOptions() {
+export async function refreshTiemposPlannedOptions() { return; }
+async function _refreshTiemposPlannedOptions_DEPRECATED() {
   const { year, monthNo, day } = getTiemposSelectedYMD();
   const moldeSel = document.getElementById('tmMoldeSelect');
   const parteSel = document.getElementById('tmParteSelect');
@@ -298,15 +299,13 @@ export function bindTiemposPlannedListeners() {
 
   if (moldeSel) {
     moldeSel.addEventListener('change', () => {
-      // Al cambiar molde, recalcula partes y máquinas.
+      // Al cambiar molde, NO reseteamos máquina ni filtramos, permitimos selección libre.
       if (parteSel) parteSel.value = '';
-      if (maquinaSel) maquinaSel.value = '';
       refreshTiemposPlannedOptions();
     });
   }
   if (parteSel) {
     parteSel.addEventListener('change', () => {
-      if (maquinaSel) maquinaSel.value = '';
       refreshTiemposPlannedOptions();
     });
   }
@@ -704,16 +703,21 @@ export function initTiemposWizard(meta) {
     buildCards('wzPartGrid', allParts, (id, name) => {
       wz.partId = Number(id);
       wz.partName = name;
-      // Auto-detect machine from meta (first machine that has this mold+part)
-      const machines = uniqueIdName(_wzMeta?.machines || []);
-      if (machines.length) {
-        wz.machineId = machines[0].id;
-        wz.machineName = machines[0].name;
-        const chip = $('wzMachineChip');
-        if (chip) { chip.textContent = `Máquina detectada: ${wz.machineName}`; chip.style.display = 'inline-flex'; }
-      }
+      // Reveal machines
+      buildMachineGrid();
+      const machineSection = $('wzMachineSection');
+      if (machineSection) machineSection.classList.remove('wz-part-section--hidden');
     });
     if (wz.partId) selectCard($('wzPartGrid'), wz.partId);
+  }
+
+  function buildMachineGrid() {
+    const machines = uniqueIdName(_wzMeta?.machines || []).map(m => ({ ...m, sub: '' }));
+    buildCards('wzMachineGrid', machines, (id, name) => {
+      wz.machineId = Number(id);
+      wz.machineName = name;
+    });
+    if (wz.machineId) selectCard($('wzMachineGrid'), wz.machineId);
   }
 
   // ---- STEP 3: Hours grid ----
@@ -791,6 +795,7 @@ export function initTiemposWizard(meta) {
     if (n === 2) {
       if (!wz.moldId) { showToast('Selecciona un molde', false); return false; }
       if (!wz.partId) { showToast('Selecciona una parte', false); return false; }
+      if (!wz.machineId) { showToast('Selecciona una máquina', false); return false; }
       const wzProc = $('wzProceso'), wzOper = $('wzOperacion');
       if (!wzProc?.value?.trim()) { showToast('Escribe el proceso', false); return false; }
       if (!wzOper?.value?.trim()) { showToast('Escribe la operación', false); return false; }
@@ -1974,7 +1979,7 @@ export async function createDatoManual() {
       credentials: 'include',
       body: JSON.stringify(payload)
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     displayResponse('datoCrearResponse', data, res.ok);
     if (res.ok) {
       map.forEach(([id]) => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -1986,7 +1991,7 @@ export async function createDatoManual() {
       try { loadTiemposMeta(); } catch (_) {}
     }
   } catch (e) {
-    displayResponse('datoCrearResponse', { error: 'Error de conexión' }, false);
+    displayResponse('datoCrearResponse', { error: 'Error de conexión', details: String(e) }, false);
   }
 }
 export async function saveDatoRow(id) {
@@ -2135,10 +2140,10 @@ export function initWorkLogsEvents() {
   // Importación
   wire('importBtn', 'click', importDatosCSV);
 
-  // Filtros de búsqueda en Wizard
   filterWizardGrid('wzOperatorSearch', 'wzOperatorGrid');
   filterWizardGrid('wzMoldSearch', 'wzMoldGrid');
   filterWizardGrid('wzPartSearch', 'wzPartGrid');
+  filterWizardGrid('wzMachineSearch', 'wzMachineGrid');
 
   // Delegación para Tabla de Registros (WorkLogs)
   const wlTable = document.getElementById('workLogsTable');

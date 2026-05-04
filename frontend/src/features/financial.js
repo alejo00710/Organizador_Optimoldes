@@ -1,6 +1,6 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, round2, parseLocaleNumber, formatDateDisplay, setPendingSave } from '../ui/ui.js';
+import { displayResponse, escapeHtml, formatCurrencyCOP, round2, parseLocaleNumber, formatDateDisplay, setPendingSave, formatNumberCOP } from '../ui/ui.js';
 
 // --- VARIABLES Y ESTADO FINANCIERO ---
 let financialMachinesCache = [];

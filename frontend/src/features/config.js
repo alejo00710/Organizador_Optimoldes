@@ -1,6 +1,6 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, setPendingSave, parseLocaleNumber, formatNumberCOP } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, setPendingSave, parseLocaleNumber } from '../ui/ui.js';
 import { loadDatosMeta, findRowByDataId } from './worklogs.js';
 import { preloadMoldsForSearch } from './planner.js';
 import { loadOperatorsForIndicators, loadIndicatorsSelectedOperatorIds, saveIndicatorsSelectedOperatorIds } from './indicators.js';

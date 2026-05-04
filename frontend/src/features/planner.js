@@ -1,7 +1,7 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
 import { socket } from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, parseLocaleNumber } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, formatCurrencyCOP, parseLocaleNumber, round2, renderMoldPartsProgressList, fmtHours, clampPct } from '../ui/ui.js';
 import { populateSelectWithFilter, setupFilterListener } from './worklogs.js';
 import { getBogotaTodayISO, fetchMoldProgressDetail, loadCalendar } from './calendar.js';
 
@@ -107,7 +107,7 @@ export async function loadPlannedMoldsList() {
       const name = escapeHtml(String(m.moldName || ''));
       const clientName = escapeHtml(String(m.clientName || ''));
       const range = `${escapeHtml(String(m.startDate || '—'))} → ${escapeHtml(String(m.endDate || '—'))}`;
-      const hours = (m.totalHours != null) ? `${formatNumberCOP(m.totalHours, 1)}h` : '';
+      const hours = (m.totalHours != null) ? `${Number(m.totalHours).toFixed(1)}h` : '';
       return `
         <div class="planned-mold-item" data-action="loadPlannedMold" data-mold-id="${mid}" data-mold-name="${name}" data-client-name="${clientName}" data-start-date="${escapeHtml(String(m.startDate || ''))}" data-end-date="${escapeHtml(String(m.endDate || ''))}" style="padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background: var(--card-bg); margin-bottom:8px; cursor:pointer;">
           <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
@@ -301,66 +301,8 @@ export async function preloadMoldsForSearch() {
   state.cachedMolds = [];
 }
 
-export function fmtHours(n) {
-  const x = Number(n);
-  return Number.isFinite(x) ? x.toFixed(2) : '0.00';
-}
-
-export function clampPct(p) {
-  const x = Number(p);
-  if (!Number.isFinite(x)) return 0;
-  return Math.max(0, Math.min(100, x));
-}
-
 export function normKey(s) {
   return String(s || '').trim().toLowerCase();
-}
-
-export function renderMoldPartsProgressList(breakdown) {
-  const parts = Array.isArray(breakdown?.parts) ? breakdown.parts : [];
-  if (!parts.length) return '<div style="color:var(--text-muted)">(Sin detalle por partes)</div>';
-
-  return `
-    <div class="parts-progress-list">
-      ${parts.map(p => {
-        const planH = fmtHours(p?.plannedHoursTotal || 0);
-        const realH = fmtHours(p?.actualHoursTotal || 0);
-        const machines = Array.isArray(p?.machines) ? p.machines : [];
-        return `
-          <div class="parts-progress-item">
-            <div class="parts-progress-head">
-              <div class="parts-progress-name">${escapeHtml(String(p?.partName || 'Parte'))}</div>
-              <div class="parts-progress-meta">
-                <span class="parts-progress-hours">${escapeHtml(realH)}h / ${escapeHtml(planH)}h</span>
-              </div>
-            </div>
-            ${machines.length ? `
-              <div class="pm-progress-list">
-                ${machines.map(m => {
-                  const mPlan = Number(m?.plannedHours || 0);
-                  const mReal = Number(m?.actualHours || 0);
-                  const done = !!m?.isComplete;
-                  const mPct = done ? 100 : clampPct(m?.percentComplete == null ? 0 : m.percentComplete);
-                  return `
-                    <div class="pm-progress-item ${done ? 'done' : 'pending'}">
-                      <div class="pm-head">
-                        <div class="pm-name">${escapeHtml(String(m?.machineName || 'Máquina'))}</div>
-                        <div class="pm-meta">
-                          <span class="pm-status">${done ? 'Terminado' : 'Pendiente'}</span>
-                          <span>${escapeHtml(fmtHours(mReal))}h / ${escapeHtml(fmtHours(mPlan))}h</span>
-                        </div>
-                      </div>
-                      <div class="pm-bar"><div style="width:${mPct}%;"></div></div>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            ` : '<div style="color:var(--text-muted); margin-top:8px;">(Sin máquinas en plan)</div>'}
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `;
 }
 
 export function renderPlanningHistory(history, fallbackData = null) {
@@ -477,7 +419,7 @@ export function buildMoldProgressContent(data, fallbackMoldName, opts) {
           <div class="label">Desviación (real - plan)</div>
           <div class="value" style="color:${varianceTotalHours > 0.01 ? 'var(--danger)' : (varianceTotalHours < -0.01 ? 'var(--success)' : 'var(--text)')}">
             ${Number.isFinite(varianceTotalHours) ? `${varianceTotalHours >= 0 ? '+' : ''}${fmtHours(varianceTotalHours)}h` : '—'}
-            ${Number.isFinite(varianceTotalPct) ? ` <span style="color:var(--text-muted); font-weight:600; font-size:0.95rem;">(${varianceTotalPct >= 0 ? '+' : ''}${formatNumberCOP(varianceTotalPct, 2)}%)</span>` : ''}
+            ${Number.isFinite(varianceTotalPct) ? ` <span style="color:var(--text-muted); font-weight:600; font-size:0.95rem;">(${varianceTotalPct >= 0 ? '+' : ''}${Number(varianceTotalPct).toFixed(2)}%)</span>` : ''}
           </div>
         </div>
       ` : `
@@ -814,7 +756,7 @@ export function updateFixedRowTotal(row) {
   });
   const total = qty * sumBase;
   const cell = row.querySelector('.total-hours-cell');
-  if (cell) cell.textContent = formatNumberCOP(total, 2);
+  if (cell) cell.textContent = Number(total).toFixed(2);
 }
 export function updateFixedColumnTotals() {
   const grid = document.getElementById('planningGridFixed');
@@ -830,7 +772,7 @@ export function updateFixedColumnTotals() {
       colSum += (isNaN(v) ? 0 : v) * qty;
     });
     const cell = document.getElementById(`total-machine-${String(m.id)}`);
-    if (cell) cell.textContent = formatNumberCOP(colSum, 2);
+    if (cell) cell.textContent = Number(colSum).toFixed(2);
 
     const machinePrice = Number(m?.hourly_price || 0);
     const estimatedPrice = (Number.isFinite(machinePrice) && machinePrice > 0) ? (colSum * machinePrice) : 0;
@@ -851,7 +793,7 @@ export function updateFixedGrandTotal() {
     grand += isNaN(v) ? 0 : v;
   });
   const totalEl = document.getElementById('grand-total');
-  if (totalEl) totalEl.textContent = formatNumberCOP(grand, 2);
+  if (totalEl) totalEl.textContent = Number(grand).toFixed(2);
 }
 
 // Persistencia local

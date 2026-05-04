@@ -1,6 +1,6 @@
 import { state } from '../core/state.js';
 import * as api from '../core/api.js';
-import { showToast, displayResponse, escapeHtml, openTab, formatCurrencyCOP, hideModal, capitalize } from '../ui/ui.js';
+import { showToast, displayResponse, escapeHtml, hideModal, capitalize, renderMoldPartsProgressList, fmtHours, clampPct } from '../ui/ui.js';
 import { renderInProgressMoldList, isDateLaborable } from './planner.js';
 import { isWeekendISO } from './worklogs.js';
 
@@ -1190,7 +1190,7 @@ export async function openMoldEditorView(moldId, moldName, opts = {}) {
         // Validaciones Estrictas para el Movimiento Manual
         const val = await validateManualMove(newDate, newMachineName, !!document.getElementById('peAllowOverlap')?.checked);
         if (!val.ok) {
-          showToast(val.error, 'error');
+          showToast(val.error, false);
           displayResponse('moldEditorResponse', { error: val.error }, false);
           return;
         }
@@ -1319,7 +1319,7 @@ export async function openMoldEditorView(moldId, moldName, opts = {}) {
         if (mode === 'date') {
            const val = await validateManualMove(date, null, allowOverlap, { skipMachineCheck: true });
            if (!val.ok) {
-             showToast(val.error, 'error');
+             showToast(val.error, false);
              displayResponse('moldEditorResponse', { error: val.error }, false);
              return;
            }

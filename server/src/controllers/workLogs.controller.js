@@ -113,17 +113,16 @@ async function validatePlanningCell({ planningId, moldId, partId, machineId }) {
         return { ok: false, reason: 'planning_mismatch' };
     }
 
+    // Nueva regla de negocio: Se permite el registro "fuera de plan".
+    // La validación estricta de cell_not_planned se ha desactivado para dar flexibilidad al taller.
     const plannedHours = await getPlannedHoursSnapshot({
         moldId,
         partId,
         machineId,
         planningId,
     });
-    if (!(Number(plannedHours) > 0)) {
-        return { ok: false, reason: 'cell_not_planned' };
-    }
 
-    return { ok: true, plannedHours: Number(plannedHours) };
+    return { ok: true, plannedHours: Number(plannedHours) || 0 };
 }
 
 function toISODateOnly(value) {

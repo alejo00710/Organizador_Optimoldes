@@ -120,17 +120,9 @@ export function formatCurrencyCOP(raw) {
   }
 }
 
-export function formatNumberCOP(raw, decimals = 2) {
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return '0';
-  try {
-    return new Intl.NumberFormat('es-CO', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: decimals,
-    }).format(n);
-  } catch (_) {
-    return n.toLocaleString('es-CO');
-  }
+export function formatNumberCOP(n) {
+  const num = Number(n);
+  return Number.isFinite(num) ? num.toFixed(2) : '0.00';
 }
 
 export function openTab(tabName) {
@@ -558,3 +550,62 @@ export function initGlobalDelegation() {
     // La mayoría de las acciones ahora se manejan en sus propios listeners de tabla/form.
   });
 }
+
+export function fmtHours(n) {
+  const x = Number(n);
+  return Number.isFinite(x) ? x.toFixed(2) : '0.00';
+}
+
+export function clampPct(p) {
+  const x = Number(p);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(100, x));
+}
+
+export function renderMoldPartsProgressList(breakdown) {
+  const parts = Array.isArray(breakdown?.parts) ? breakdown.parts : [];
+  if (!parts.length) return '<div style="color:var(--text-muted)">(Sin detalle por partes)</div>';
+
+  return `
+    <div class="parts-progress-list">
+      ${parts.map(p => {
+        const planH = fmtHours(p?.plannedHoursTotal || 0);
+        const realH = fmtHours(p?.actualHoursTotal || 0);
+        const machines = Array.isArray(p?.machines) ? p.machines : [];
+        return `
+          <div class="parts-progress-item">
+            <div class="parts-progress-head">
+              <div class="parts-progress-name">${escapeHtml(String(p?.partName || 'Parte'))}</div>
+              <div class="parts-progress-meta">
+                <span class="parts-progress-hours">${escapeHtml(realH)}h / ${escapeHtml(planH)}h</span>
+              </div>
+            </div>
+            ${machines.length ? `
+              <div class="pm-progress-list">
+                ${machines.map(m => {
+                  const mPlan = Number(m?.plannedHours || 0);
+                  const mReal = Number(m?.actualHours || 0);
+                  const done = !!m?.isComplete;
+                  const mPct = done ? 100 : clampPct(m?.percentComplete == null ? 0 : m.percentComplete);
+                  return `
+                    <div class="pm-progress-item ${done ? 'done' : 'pending'}">
+                      <div class="pm-head">
+                        <div class="pm-name">${escapeHtml(String(m?.machineName || 'Máquina'))}</div>
+                        <div class="pm-meta">
+                          <span class="pm-status">${done ? 'Terminado' : 'Pendiente'}</span>
+                          <span>${escapeHtml(fmtHours(mReal))}h / ${escapeHtml(fmtHours(mPlan))}h</span>
+                        </div>
+                      </div>
+                      <div class="pm-bar"><div style="width:${mPct}%;"></div></div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            ` : '<div style="color:var(--text-muted); margin-top:8px;">(Sin máquinas en plan)</div>'}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
