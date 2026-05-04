@@ -1276,6 +1276,54 @@ export function initPlannerEvents() {
     try { renderCompletedMoldList(); } catch (e) {}
     try { loadCalendar(); } catch (e) {}
   });
+
+  // Reactividad para checkboxes de configuración de parrilla
+  const boxes = [
+    document.getElementById('plannerMachinesSelected'),
+    document.getElementById('plannerMachinesAvailable'),
+    document.getElementById('plannerPartsSelected'),
+    document.getElementById('plannerPartsAvailable')
+  ];
+  
+  boxes.forEach(box => {
+    if (!box) return;
+    box.addEventListener('change', (ev) => {
+      const t = ev.target;
+      if (!(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
+      
+      let cfg = readPlannerGridConfig();
+      if (!cfg) cfg = getDefaultPlannerGridConfig();
+
+      const mid = t.getAttribute('data-planner-machine-id');
+      const pname = t.getAttribute('data-planner-part-name');
+
+      if (mid) {
+        const id = String(mid);
+        const set = new Set((cfg.machineIds || []).map(String));
+        if (t.checked) set.add(id); else set.delete(id);
+        cfg.machineIds = Array.from(set);
+      }
+
+      if (pname != null) {
+        const name = String(pname);
+        const norm = name.trim().toLowerCase();
+        const current = Array.isArray(cfg.partNames) ? cfg.partNames.map(String) : [];
+        const next = current.filter(n => String(n).trim().toLowerCase() !== norm);
+        if (t.checked) next.push(name);
+        cfg.partNames = next;
+      }
+
+      // Estas funciones deben ejecutarse para que el cambio sea visual e instantáneo
+      writePlannerGridConfig(cfg);
+      applyPlannerGridConfig(cfg);
+      renderPlannerGridConfigUI(cfg);
+
+      // Repintar la parrilla de abajo preservando datos
+      persistPlannerStateToStorage();
+      renderFixedPlanningGrid();
+      restorePlannerStateFromStorage();
+    });
+  });
 }
 
 export function applyPlannerPreviewMode(enabled) {
