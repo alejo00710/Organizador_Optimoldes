@@ -424,7 +424,15 @@ const updateWorkLog = async (req, res, next) => {
         const log = logs[0];
 
         // Verificar permisos
-        if (req.user.role === ROLES.OPERATOR) {
+        const userRole = req.user.role;
+        
+        if (userRole === ROLES.ADMIN || userRole === ROLES.PLANNER) {
+            return res.status(403).json({
+                error: 'Tu rol no tiene permitido editar registros',
+            });
+        }
+
+        if (userRole === ROLES.OPERATOR) {
             // El operario solo puede editar sus propios registros
             if (log.operator_id !== req.user.operatorId) {
                 return res.status(403).json({
@@ -609,9 +617,10 @@ const deleteWorkLog = async (req, res, next) => {
         const { id } = req.params;
 
         const role = String(req?.user?.role || '').toLowerCase();
-        const canDelete = [ROLES.ADMIN, ROLES.PLANNER, ROLES.MANAGEMENT].includes(role);
+        // Nueva regla: Nadie puede eliminar registros
+        const canDelete = false;
         if (!canDelete) {
-            return res.status(403).json({ error: 'No autorizado' });
+            return res.status(403).json({ error: 'La eliminación de registros está deshabilitada' });
         }
 
         const existing = await query('SELECT * FROM work_logs WHERE id = ? LIMIT 1', [id]);

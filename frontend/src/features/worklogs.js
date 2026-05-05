@@ -1550,8 +1550,6 @@ export function renderWorkLogsTable(rows) {
   const role = String(state.currentUser?.role || '').toLowerCase();
   const isAdmin = hasAdminPrivileges(role);
   const isOperator = role === 'operator';
-  const canEditAll = isAdmin;
-  const canDeleteAll = isAdmin;
 
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="13" class="text-muted">(sin registros)</td></tr>';
@@ -1595,8 +1593,9 @@ export function renderWorkLogsTable(rows) {
     const isOverrun = !isFinalLog && Number.isFinite(plannedNum2) && plannedNum2 > 0 && Number.isFinite(actualNum) && actualNum > (plannedNum2 + 0.01);
     const canAdmin = String(state.currentUser?.role || '').toLowerCase() !== 'operator';
 
-    const canEdit = canEditAll;
-    const canDelete = canDeleteAll;
+    // Regla: Gerencia y Operarios pueden editar. Admin y Planner no. Nadie elimina.
+    const canEdit = role === 'management' || role === 'operator';
+    const canDelete = false;
 
     // Campos bloqueados por defecto; se habilitan solo al presionar "Editar".
     const disabled = 'disabled';
